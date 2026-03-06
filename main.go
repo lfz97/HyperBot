@@ -11,25 +11,9 @@ import (
 	"trpcagent/toolsets"
 	"trpcagent/utils"
 
-	"encoding/json"
-
-	"os"
 	"trpc.group/trpc-go/trpc-agent-go/runner"
 	"trpc.group/trpc-go/trpc-agent-go/tool"
 )
-
-func SaveHistoryToJsonFile(history [][]model.Choice, path string) error {
-	fd, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE, 0666)
-	if err != nil {
-		return err
-	}
-	data, err := json.Marshal(history)
-	if err != nil {
-		return err
-	}
-	fd.Write(data)
-	return nil
-}
 
 func main() {
 	ctx := context.Background()
@@ -50,28 +34,13 @@ func main() {
 		})
 	runnerds_p := runner.NewRunner("图书管理员", deepseekAgent_p)
 
-	dshistory := handler.AgentRunIteratively(ctx, runnerds_p, "ABC", "001")
+	//dshistory := handler.AgentRunIteratively(ctx, runnerds_p, "ABC", "001")
+	history1 := handler.AgentRunOnce(ctx, runnerds_p, "ABC", "001", "查一下2026.3.6上海天气")
+	history2 := handler.AgentRunOnce(ctx, runnerds_p, "ABC", "001", "刚刚我们聊了什么？")
+	historyAll := append(history1, history2...)
 
-	/*
-		MinimaxAgent_p := agent.MinimaxAgent(
-			"图书管理员",
-			"你是图书管理员",
-			model.GenerationConfig{
-				Stream: true,
-			},
-			[]tool.Tool{
-				functionTools.CreateCalculatorTool(),
-				functionTools.CreateGetWeatherTool(),
-				functionTools.GetBookSearchTool(),
-			},
-			[]tool.ToolSet{
-				toolsets.BochaMCP(),
-			})
-		runnermx_p := runner.NewRunner("图书管理员", MinimaxAgent_p)
-		mxhistory := handler.AgentRunIteratively(ctx, runnermx_p, "ABC", "001")
-	*/
 	/*=============================测试区域======================================*/
-	err := utils.SaveHistoryToJsonFile(dshistory, "dshistory.json")
+	err := utils.SaveHistoryToJsonFile(historyAll, "history2.json")
 	if err != nil {
 		panic(err)
 	}

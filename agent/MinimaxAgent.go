@@ -4,11 +4,12 @@ import (
 	"trpc.group/trpc-go/trpc-agent-go/agent/llmagent"
 	"trpc.group/trpc-go/trpc-agent-go/model"
 	"trpc.group/trpc-go/trpc-agent-go/tool"
+	"trpcagent/config"
 	"trpcagent/models"
 )
 
 func MinimaxAgent(agentName string, systemPrompt string, genConfig model.GenerationConfig, tools []tool.Tool, toolsets []tool.ToolSet) *llmagent.LLMAgent {
-	MinimaxModel_p := models.Minimax()
+	MinimaxModel_p := models.Anthropic(config.MinimaxBaseURL, config.MinimaxAPIKey)
 	agent_p := llmagent.New(agentName,
 		llmagent.WithModel(MinimaxModel_p),
 		llmagent.WithGenerationConfig(genConfig),

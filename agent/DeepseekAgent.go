@@ -4,11 +4,12 @@ import (
 	"trpc.group/trpc-go/trpc-agent-go/agent/llmagent"
 	"trpc.group/trpc-go/trpc-agent-go/model"
 	"trpc.group/trpc-go/trpc-agent-go/tool"
+	"trpcagent/config"
 	"trpcagent/models"
 )
 
 func DeepseekAgent(agentName string, systemPrompt string, genConfig model.GenerationConfig, tools []tool.Tool, toolsets []tool.ToolSet) *llmagent.LLMAgent {
-	deepseekModel_p := models.Deepseek()
+	deepseekModel_p := models.Openai(config.DeepSeekBaseURL, config.DeepSeekAPIKey)
 	agent_p := llmagent.New(agentName,
 		llmagent.WithModel(deepseekModel_p),
 		llmagent.WithGenerationConfig(genConfig),

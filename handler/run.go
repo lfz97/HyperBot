@@ -18,9 +18,9 @@ const (
 )
 
 // AgentRunOnce 处理单轮对话，返回历史消息
-func AgentRunOnce(Ctx context.Context, r runner.Runner, sessionID string, userID string, msg string) []model.Message {
+func AgentRunOnce(Ctx context.Context, r runner.Runner, sessionID string, userID string, requestID string, msg string) []model.Message {
 
-	eventChan, err := r.Run(Ctx, userID, sessionID, model.NewUserMessage(msg), agent.WithRequestID("request-ID"))
+	eventChan, err := r.Run(Ctx, userID, sessionID, model.NewUserMessage(msg), agent.WithRequestID(requestID))
 	if err != nil {
 		panic(err)
 
@@ -170,7 +170,7 @@ func AgentRunOnce(Ctx context.Context, r runner.Runner, sessionID string, userID
 	return history
 }
 
-func AgentRunIteratively(Ctx context.Context, r runner.Runner, sessionID string, userID string) []model.Message {
+func AgentRunIteratively(Ctx context.Context, r runner.Runner, sessionID string, userID string, requestID string) []model.Message {
 	historyAll := []model.Message{}
 	fmt.Println(colorBlue + "\n新对话已开始" + colorReset)
 
@@ -186,7 +186,7 @@ func AgentRunIteratively(Ctx context.Context, r runner.Runner, sessionID string,
 
 		}
 		//因为runner内部自动追加了历史消息，所以这里直接覆盖即可
-		historyAll = append(historyAll, AgentRunOnce(Ctx, r, sessionID, userID, userPrompt)...)
+		historyAll = append(historyAll, AgentRunOnce(Ctx, r, sessionID, userID, requestID, userPrompt)...)
 
 	}
 	return historyAll

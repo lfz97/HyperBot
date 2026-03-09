@@ -15,7 +15,13 @@ import (
 	"trpc.group/trpc-go/trpc-agent-go/tool"
 )
 
-func main() {
+// 程序启动前的环境检查和初始化
+func checkEnv() {
+	// 替换SystemPrompt中的系统相关占位符
+	sysenvCheck()
+}
+
+func run() {
 	ctx := context.Background()
 
 	deepseekAgent_p := agent.DeepseekAgent(
@@ -36,5 +42,10 @@ func main() {
 	runnerds_p := runner.NewRunner("图书管理员", deepseekAgent_p)
 
 	handler.AgentRunIteratively(ctx, runnerds_p, "ABC", "001", "request-001")
+}
+
+func main() {
+	checkEnv()
+	run()
 
 }

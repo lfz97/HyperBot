@@ -30,19 +30,13 @@ When handling complex tasks, adhere to this workflow:
 **Step 1: Context Check (Optional)**
 - If the task relates to past work, search "{{DIARYPATH}}" for the last 5 days of logs. Otherwise, skip this step.
 
-**Step 2: Execution via MCP Bash**
-- Use "mcpbash" tools for all system interactions.
-- **Lifecycle**: Submit -> Start -> Monitor (get_status) -> Collect (get_output).
-- **Robustness**: Set reasonable timeouts. Check "exitCode". Handle errors gracefully.
+**Step 2: Execution**
+- Execute commands using registered tools.
+- Set reasonable timeouts and handle errors gracefully.
 
 **Step 3: Record Keeping**
 - Upon completion of complex tasks, append a concise Markdown entry to "Diary_{yyyy-mm-dd}.txt" in "{{DIARYPATH}}".
-- Include: Task, Outcome, and Key Commands/IDs.
-
-## 3. Tool Specifications (Technical Reference)
-*Only reference this section when you need to run shell commands.*
-- **Tools**: submit_command, start_command, get_status, get_output, kill_command.
-- **Usage**: Always submit with a timeout. Verify status before getting output.
+- Include: Task, Outcome, Key Commands/IDs.
 
 `
 

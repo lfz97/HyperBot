@@ -11,7 +11,7 @@ import (
 
 // 工具：提交命令
 func submit_command(ctx context.Context, req struct {
-	Cmd   string `json:"cmd" jsonschema:"description:要执行的完整命令字符串。命令会被自动包装。PowerShell ——> powershell -NoLogo -NoProfile -Command <cmd> ; Bash ——> bash -lc <cmd>"`
+	Cmd   string `json:"cmd" jsonschema:"description:要执行的完整命令字符串。命令会被自动包装。PowerShell ——> 自动设置UTF-8编码([Console]::OutputEncoding/InputEncoding等)；Bash ——> <bash -lc {cmd}>"`
 	Dir   string `json:"dir" jsonschema:"description:可选：工作目录"`
 	Shell string `json:"shell" jsonschema:"description:可选：shell类型。支持的选项：bash、powershell。默认Windows选择powershell，其他系统选择bash。"`
 }) (map[string]any, error) {

@@ -241,9 +241,22 @@ func buildCmd(opts SubmitOptions) *exec.Cmd {
 			shell = "bash"
 		}
 	}
-	if runtime.GOOS == "windows" && shell == "powershell" {
-		// 使用 -NoLogo -NoProfile 保持干净环境
-		return exec.Command("powershell", "-NoLogo", "-NoProfile", "-Command", "$OutputEncoding = [System.Text.Encoding]::UTF8; "+opts.Command)
+
+	if runtime.GOOS == "windows" {
+		if shell == "powershell" {
+			// PowerShell 完整的中文编码设置
+			psCommand := `
+				[Console]::OutputEncoding = [System.Text.Encoding]::UTF8;
+				[Console]::InputEncoding = [System.Text.Encoding]::UTF8;
+				$PSDefaultParameterValues = @{ 'Out-File:Encoding' = 'utf8' };
+				chcp 65001 > $null;
+				` + opts.Command
+			return exec.Command("powershell", "-NoLogo", "-NoProfile", "-Command", psCommand)
+
+		} else if shell == "cmd" {
+			// 处理cmd中文输出乱码问题
+			return exec.Command("cmd", "/C", "chcp 65001>nul && "+opts.Command)
+		}
 	}
 	if shell == "bash" {
 		return exec.Command("bash", "-lc", opts.Command)

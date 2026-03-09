@@ -9,6 +9,7 @@ import (
 	//"trpcagent/functionTools"
 	"trpcagent/handler"
 	"trpcagent/toolsets"
+	"trpcagent/toolsets/localexec"
 
 	"trpc.group/trpc-go/trpc-agent-go/runner"
 	"trpc.group/trpc-go/trpc-agent-go/tool"
@@ -30,6 +31,7 @@ func main() {
 		}, []tool.ToolSet{
 			toolsets.BochaMCP(),
 			toolsets.ShellMCP(),
+			localexec.LocalExec(),
 		})
 	runnerds_p := runner.NewRunner("图书管理员", deepseekAgent_p)
 

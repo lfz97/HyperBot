@@ -15,6 +15,7 @@ func AnthropicAgent(agentName string, systemPrompt string, genConfig model.Gener
 		llmagent.WithTools(tools),
 		llmagent.WithInstruction(systemPrompt), //系统提示词
 		llmagent.WithToolSets(toolsets),
+		llmagent.WithRefreshToolSetsOnRun(true),
 	)
 	return agent_p
 }

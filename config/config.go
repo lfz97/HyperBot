@@ -16,9 +16,7 @@ type MCPExec struct {
 type ChromeMCP struct {
 	Enabled     bool
 	MCPtype     string
-	Command     string
-	Args        []string
-	ExitCommand string
+	MCPEndpoint string
 }
 
 type Model struct {

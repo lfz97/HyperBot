@@ -20,15 +20,9 @@ mcpexec:
   mcptype: "streamable_http"
   mcpendpoint: 
 
-# Chrome MCP 配置 (需要安装chrome和nodejs)
+# Chrome MCP 配置 (需参考此项目进行配置 https://github.com/hangwin/mcp-chrome)
 chromemcp:
-  enabled: false
-  mcptype: "stdio"
-  command: "npx"
-  args:
-    - "-y"
-    - "chrome-devtools-mcp@latest"
-    - "--slim"
-    - "--headless"
-  exitcommand: 'powershell -Command Get-CimInstance Win32_Process -Filter "CommandLine like ''%chrome-devtools-mcp%''" | Stop-Process -Id { $_.ProcessId } -Force'
+  enabled: true
+  mcptype: "streamable_http"
+  mcpendpoint: "http://127.0.0.1:12306/mcp"
 `

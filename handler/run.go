@@ -18,7 +18,7 @@ const (
 )
 
 // AgentRunOnce 处理单轮对话，返回历史消息
-func AgentRunOnce(Ctx context.Context, r runner.Runner, sessionID string, userID string, requestID string, msg string) []model.Message {
+func AgentRunOnce(Ctx context.Context, r runner.Runner, sessionID string, userID string, requestID string, msg string) ([]model.Message, error) {
 
 	eventChan, err := r.Run(Ctx, userID, sessionID, model.NewUserMessage(msg), agent.WithRequestID(requestID))
 	if err != nil {
@@ -37,13 +37,13 @@ func AgentRunOnce(Ctx context.Context, r runner.Runner, sessionID string, userID
 	MsgTmpMap := map[int]*model.Message{} //定义一个临时map用来存储消息，key为Index，value为消息指针
 	Index := 0                            //指向消息在map中的位置
 	var Role model.Role                   //记录消息对应的角色
-
 	startReasoning := false
 	for event := range eventChan {
 
 		if event.Error != nil {
 			fmt.Printf("错误: %s\n", event.Error.Message)
-			continue
+			err = fmt.Errorf(event.Error.Message)
+			break
 		}
 
 		if len((*(*event).Response).Choices) > 0 {
@@ -167,7 +167,10 @@ func AgentRunOnce(Ctx context.Context, r runner.Runner, sessionID string, userID
 	for _, msg_p := range MsgTmpMap {
 		history = append(history, *msg_p)
 	}
-	return history
+	if err != nil {
+		return history, err
+	}
+	return history, nil
 }
 
 type EndReason struct {
@@ -192,14 +195,21 @@ func AgentRunIteratively(Ctx context.Context, r runner.Runner, sessionID string,
 			break
 
 		} else if userPrompt == "/new" {
-			fmt.Println(colorBlue + "新对话已开始" + colorReset)
 			EndReason.Code = 1
 			EndReason.Reason = "用户主动开始新对话"
 			break
 		}
-		//因为runner内部自动追加了历史消息，所以这里直接覆盖即可
-		historyAll = append(historyAll, AgentRunOnce(Ctx, r, sessionID, userID, requestID, userPrompt)...)
+
+		h, e := AgentRunOnce(Ctx, r, sessionID, userID, requestID, userPrompt)
+		if err != nil {
+			fmt.Printf(colorRed+"对话过程中发生错误: %v\n"+colorReset, e)
+			EndReason.Code = 2
+			EndReason.Reason = fmt.Sprintf("对话过程中发生错误: %v", e)
+			break
+		}
+		historyAll = append(historyAll, h...)
 
 	}
+
 	return &EndReason, historyAll
 }

@@ -16,7 +16,7 @@ import (
 	"trpcagent/toolsets/localexec"
 )
 
-func Init(AgentName string) (runner.Runner, []string) {
+func Init(AgentName string) runner.Runner {
 	configSystemPrompt()
 	exist, err := checkConfig()
 	if err != nil {
@@ -35,9 +35,9 @@ func Init(AgentName string) (runner.Runner, []string) {
 		fmt.Println("加载配置文件错误：", err)
 		fmt.Println("按回车键退出...")
 	}
-	Tools, Toolsets, Model, ToolExitCommands := parseConfig(*config_p)
+	Tools, Toolsets, Model := parseConfig(*config_p)
 	runner := initAgent(Tools, Toolsets, Model, AgentName)
-	return runner, ToolExitCommands
+	return runner
 }
 
 // 配置系统提示词，替换其中的占位符
@@ -104,23 +104,21 @@ func loadConfig() (*config.Config, error) {
 	return &YamlConfig, nil
 }
 
-func parseConfig(RunningConfig config.Config) ([]tool.Tool, []tool.ToolSet, config.Model, []string) {
+func parseConfig(RunningConfig config.Config) ([]tool.Tool, []tool.ToolSet, config.Model) {
 	Tools := []tool.Tool{}
 	Toolsets := []tool.ToolSet{}
-	ToolExitCommands := []string{}
 	/*以下是toolsets类型的配置读取*/
 	if RunningConfig.BochaMCP.Enabled == true {
 		Toolsets = append(Toolsets, toolsets.BochaMCP(RunningConfig.BochaMCP.MCPtype, RunningConfig.BochaMCP.MCPEndpoint, RunningConfig.BochaMCP.APIKey))
 	}
 	if RunningConfig.ChromeMCP.Enabled == true {
-		Toolsets = append(Toolsets, toolsets.ChromeMCP(RunningConfig.ChromeMCP.MCPtype, RunningConfig.ChromeMCP.Command, RunningConfig.ChromeMCP.Args))
-		ToolExitCommands = append(ToolExitCommands, RunningConfig.ChromeMCP.ExitCommand)
+		Toolsets = append(Toolsets, toolsets.ChromeMCP(RunningConfig.ChromeMCP.MCPtype, RunningConfig.ChromeMCP.MCPEndpoint))
 	}
 	if RunningConfig.MCPExec.Enabled == true {
 		Toolsets = append(Toolsets, toolsets.ShellMCP(RunningConfig.MCPExec.MCPtype, RunningConfig.MCPExec.MCPEndpoint))
 	}
 	Toolsets = append(Toolsets, localexec.LocalExec()) //localexec 必须启用
-	return Tools, Toolsets, RunningConfig.Model, ToolExitCommands
+	return Tools, Toolsets, RunningConfig.Model
 }
 
 func initAgent(Tools []tool.Tool, Toolsets []tool.ToolSet, Model config.Model, AgentName string) runner.Runner {

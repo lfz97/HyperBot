@@ -15,6 +15,7 @@ func OpenaiAgent(agentName string, systemPrompt string, genConfig model.Generati
 		llmagent.WithTools(tools),
 		llmagent.WithInstruction(systemPrompt), //系统提示词
 		llmagent.WithToolSets(toolsets),
+		llmagent.WithRefreshToolSetsOnRun(true),
 	)
 	return agent_p
 }

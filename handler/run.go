@@ -170,24 +170,36 @@ func AgentRunOnce(Ctx context.Context, r runner.Runner, sessionID string, userID
 	return history
 }
 
-func AgentRunIteratively(Ctx context.Context, r runner.Runner, sessionID string, userID string, requestID string) []model.Message {
+type EndReason struct {
+	Code   int
+	Reason string
+}
+
+func AgentRunIteratively(Ctx context.Context, r runner.Runner, sessionID string, userID string, requestID string) (*EndReason, []model.Message) {
 	historyAll := []model.Message{}
 	fmt.Println(colorBlue + "\n新对话已开始" + colorReset)
-
+	EndReason := EndReason{}
 	for {
-		userPrompt, err := myutils.StdinInput(colorBlue + "\nUser(欲退出请输入" + colorGreen + "`/exit`):" + colorReset)
+		userPrompt, err := myutils.StdinInput(colorBlue + "\nUser(欲退出请输入" + colorGreen + "`/exit`,新对话请输入`/new`):" + colorReset)
 		if err != nil {
 			fmt.Printf(colorRed+"读取输入错误: %v\n"+colorReset, err)
 			continue
 		}
 		if userPrompt == "/exit" {
 			fmt.Println(colorBlue + "对话已结束" + colorReset)
+			EndReason.Code = 0
+			EndReason.Reason = "用户主动结束对话"
 			break
 
+		} else if userPrompt == "/new" {
+			fmt.Println(colorBlue + "新对话已开始" + colorReset)
+			EndReason.Code = 1
+			EndReason.Reason = "用户主动开始新对话"
+			break
 		}
 		//因为runner内部自动追加了历史消息，所以这里直接覆盖即可
 		historyAll = append(historyAll, AgentRunOnce(Ctx, r, sessionID, userID, requestID, userPrompt)...)
 
 	}
-	return historyAll
+	return &EndReason, historyAll
 }

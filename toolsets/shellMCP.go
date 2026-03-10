@@ -3,15 +3,14 @@ package toolsets
 import (
 	"time"
 	"trpc.group/trpc-go/trpc-agent-go/tool/mcp"
-	"trpcagent/config"
 )
 
-func ShellMCP() *mcp.ToolSet {
+func ShellMCP(mcptype string, url string) *mcp.ToolSet {
 
 	mcpToolSet := mcp.NewMCPToolSet(
 		mcp.ConnectionConfig{
-			Transport: "streamable_http", // 注意：使用完整名称
-			ServerURL: config.ShellMCPEndpoint,
+			Transport: mcptype, // 注意：使用完整名称
+			ServerURL: url,
 			Timeout:   10 * time.Second,
 		},
 		mcp.WithSessionReconnect(3),

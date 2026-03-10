@@ -3,6 +3,7 @@ module trpcagent
 go 1.25.0
 
 require (
+	gopkg.in/yaml.v2 v2.4.0
 	trpc.group/trpc-go/trpc-agent-go v1.5.0
 	trpc.group/trpc-go/trpc-agent-go/model/anthropic v1.6.0
 )

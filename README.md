@@ -28,17 +28,20 @@
 无需安装 Go、无需配置环境！直接下载对应平台的编译产物即可运行：
 
 ```bash
-# Windows (.exe)
-# 下载 release/windows x64/trpcagent.exe
+# Windows x64
+release/windows-x64/trpcagent.exe
 
-# Linux
-# 下载 release/linux x64/trpcagent
+# Linux x64
+release/linux-x64/trpcagent
 
-# macOS (Intel)
-# 下载 release/macos/trpcagent
+# Linux ARM64 (如树莓派)
+release/linux-arm64/trpcagent
 
-# macOS (Apple Silicon)
-# 下载 release/arm64/trpcagent
+# macOS x64 (Intel)
+release/macos-x64/trpcagent
+
+# macOS ARM64 (Apple Silicon)
+release/macos-arm64/trpcagent
 ```
 
 ### 配置
@@ -90,7 +93,7 @@ chromemcp:
 |--------|-----------|----------|
 | 安装方式 | 下载即用 | 需要 `pip install`、`npm install` 等 |
 | 依赖环境 | ✅ 无需 | ❌ 需要 Python/Node.js 运行时 |
-| 产物大小 | ~10MB 单文件 | 通常几十MB + 大量依赖文件夹 |
+| 产物大小 | ~24MB 单文件 | 通常几十MB + 大量依赖文件夹 |
 | 跨平台 | 一份编译产物多平台运行 | 可能需要分别配置不同环境 |
 | 清理卸载 | 删除文件即可 | 需要逐一卸载依赖包 |
 
@@ -116,13 +119,15 @@ trpcagent/
 ## 编译
 
 ```bash
-# 本地编译
-go build -trimpath -ldflags="-s -w"
+# 本地编译 (Windows)
+go build -trimpath -ldflags="-s -w" -o release/windows-x64/trpcagent.exe
 
 # 交叉编译
-GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o release/linux\ x64/trpcagent
-GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o release/macos/trpcagent
-GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o "release/windows x64/trpcagent.exe"
+GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o release/linux-x64/trpcagent
+GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o release/linux-arm64/trpcagent
+GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o release/macos-x64/trpcagent
+GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o release/macos-arm64/trpcagent
+GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o release/windows-x64/trpcagent.exe
 ```
 
 ## 🛠️ 技术栈

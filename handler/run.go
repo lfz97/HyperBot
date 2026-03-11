@@ -19,21 +19,17 @@ const (
 )
 
 // AgentRunOnce 处理单轮对话，返回历史消息
-func AgentRunOnce(Ctx context.Context, r runner.Runner, sessionID string, userID string, requestID string, msg string) ([]model.Message, error) {
+func AgentRunOnce(Ctx context.Context, r runner.Runner, sessionID string, userID string, requestID string, msg []model.Message) ([]model.Message, error) {
 
-	eventChan, err := r.Run(Ctx, userID, sessionID, model.NewUserMessage(msg), agent.WithRequestID(requestID))
+	eventChan, err := runner.RunWithMessages(Ctx, r, userID, sessionID, msg, agent.WithRequestID(requestID))
 	if err != nil {
 		return nil, fmt.Errorf("运行时发生错误: %v", err)
 
 	}
 
 	//初始化历史消息slice，把用户输入作为第一条消息
-	history := []model.Message{
-		model.Message{
-			Role:    model.RoleUser,
-			Content: msg,
-		},
-	}
+	history := []model.Message{}
+	history = append(history, msg...)
 
 	MsgTmpMap := map[int]*model.Message{} //定义一个临时map用来存储消息，key为Index，value为消息指针
 	Index := 0                            //指向消息在map中的位置
@@ -48,13 +44,11 @@ func AgentRunOnce(Ctx context.Context, r runner.Runner, sessionID string, userID
 		select {
 		case <-Ctx.Done():
 			fmt.Printf(colorRed + "会话已取消，停止接收消息...\n" + colorReset)
-			err = fmt.Errorf("会话已取消，停止接收消息")
 			for _, msg_p := range MsgTmpMap {
 				history = append(history, *msg_p)
 			}
-			if err != nil {
-				return history, err
-			}
+			return history, nil
+
 		default:
 		}
 		if len((*(*event).Response).Choices) > 0 {
@@ -184,18 +178,38 @@ func AgentRunOnce(Ctx context.Context, r runner.Runner, sessionID string, userID
 	return history, nil
 }
 
-type EndReason struct {
-	Code   int
-	Reason string
+type EndInfo struct {
+	Code           ExitCode
+	Reason         string
+	RecoverMessage []model.Message //非正常结束时的历史消息，用于恢复对话
 }
+type ExitCode int
 
-func AgentRunIteratively(sigChan chan os.Signal, Ctx context.Context, r runner.Runner, sessionID string, userID string, requestID string) (*EndReason, []model.Message) {
+const (
+	ExitCodeNormal ExitCode = 0
+	ExitCodeNew    ExitCode = 1
+	ExitCodeInt    ExitCode = 2
+	ExitCodeError  ExitCode = 3
+	ExitCodeExit   ExitCode = 4
+)
+
+func AgentRunIteratively(sigChan chan os.Signal, Ctx context.Context, r runner.Runner, sessionID string, userID string, requestID string, MsgContext EndInfo) *EndInfo {
 
 	defer r.Close()
+	//定义要返回的结束信息，初始值为正常结束
+	EndInfo := EndInfo{
+		Code:           ExitCodeNormal,
+		Reason:         "对话正常结束",
+		RecoverMessage: []model.Message{},
+	}
 
-	historyAll := []model.Message{}
-	fmt.Println(colorBlue + "\n新对话已开始" + colorReset)
-	EndReason := EndReason{}
+	MsgBuffer := []model.Message{}
+	if MsgContext.Code == ExitCodeNormal || MsgContext.Code == ExitCodeNew {
+		fmt.Println(colorBlue + "\n新对话已开始" + colorReset)
+	} else {
+		fmt.Println(colorBlue + "\n继续对话" + colorReset)
+
+	}
 
 	//定义一个可取消的context。启用一个独立goroutine当捕获到退出信号时，取消这个上下文，从而停止接收输入和消息
 	ctx, cancel := context.WithCancel(Ctx)
@@ -210,51 +224,102 @@ func AgentRunIteratively(sigChan chan os.Signal, Ctx context.Context, r runner.R
 	}()
 
 	for {
-		userPrompt, err := myutils.StdinInput(colorBlue + "\nUser(欲退出请输入" + colorGreen + "`/exit`,新对话请输入`/new`):" + colorReset)
-		if err != nil {
-			fmt.Printf(colorRed+"读取输入错误: %v\n"+colorReset, err)
-			continue
+
+		//如果是正常或新对话，不继承历史消息的交互式运行
+		if MsgContext.Code == ExitCodeNormal || MsgContext.Code == ExitCodeNew {
+			userPrompt, err := myutils.StdinInput(colorBlue + "\nUser(欲退出请输入" + colorGreen + "`/exit`,新对话请输入`/new`):" + colorReset)
+			if err != nil {
+				fmt.Printf(colorRed+"读取输入错误: %v\n"+colorReset, err)
+				continue
+			}
+			if userPrompt == "/exit" {
+				fmt.Println(colorBlue + "对话已结束" + colorReset)
+				EndInfo.Code = ExitCodeExit
+				EndInfo.Reason = "用户主动结束对话"
+
+				break
+
+			} else if userPrompt == "/new" {
+				EndInfo.Code = ExitCodeNew
+				EndInfo.Reason = "用户主动开始新对话"
+
+				break
+			} else if userPrompt == "" {
+				continue
+			}
+			MsgBuffer = append(MsgBuffer, model.Message{
+				Role:    model.RoleUser,
+				Content: userPrompt,
+			})
+
+			//如果是因为错误中断的对话，则继承历史消息，并设定默认提示词
+		} else if MsgContext.Code == ExitCodeError {
+			MsgBuffer = append(MsgBuffer, MsgContext.RecoverMessage...)
+			MsgBuffer = append(MsgBuffer, model.Message{
+				Role:    model.RoleUser,
+				Content: "请根据以上历史进度，继续进行任务。",
+			})
+			//如果是因为中断信号导致的对话中断，则继承历史消息的交互式运行
+		} else if MsgContext.Code == ExitCodeInt {
+			userPrompt, err := myutils.StdinInput(colorBlue + "\nUser(欲退出请输入" + colorGreen + "`/exit`,新对话请输入`/new`):" + colorReset)
+			if err != nil {
+				fmt.Printf(colorRed+"读取输入错误: %v\n"+colorReset, err)
+				continue
+			}
+			if userPrompt == "/exit" {
+				fmt.Println(colorBlue + "对话已结束" + colorReset)
+				EndInfo.Code = ExitCodeExit
+				EndInfo.Reason = "用户主动结束对话"
+
+				break
+
+			} else if userPrompt == "/new" {
+				EndInfo.Code = ExitCodeNew
+				EndInfo.Reason = "用户主动开始新对话"
+
+				break
+			} else if userPrompt == "" {
+				continue
+			}
+			MsgBuffer = append(MsgBuffer, MsgContext.RecoverMessage...)
+			MsgBuffer = append(MsgBuffer, model.Message{
+				Role:    model.RoleUser,
+				Content: userPrompt,
+			})
 		}
-		if userPrompt == "/exit" {
-			fmt.Println(colorBlue + "对话已结束" + colorReset)
-			EndReason.Code = 0
-			EndReason.Reason = "用户主动结束对话"
 
-			break
-
-		} else if userPrompt == "/new" {
-			EndReason.Code = 1
-			EndReason.Reason = "用户主动开始新对话"
-
-			break
-		} else if userPrompt == "" {
-			continue
-		}
-
-		h, e := AgentRunOnce(ctx, r, sessionID, userID, requestID, userPrompt)
+		// AgentRunOnce返回的消息会自动叠加MsgBuffer里面的消息，因此后续请不要再次叠加RecoveryMessage
+		h, e := AgentRunOnce(ctx, r, sessionID, userID, requestID, MsgBuffer)
 		if e != nil {
 			fmt.Printf(colorRed+"对话过程中发生错误: %v\n"+colorReset, e)
-			EndReason.Code = 2
-			EndReason.Reason = fmt.Sprintf("对话过程中发生错误: %v", e)
-
+			EndInfo.Code = ExitCodeError
+			EndInfo.Reason = fmt.Sprintf("对话过程中发生错误: %v", e)
+			if len(h) != 0 {
+				MsgBuffer = append(MsgBuffer, h...)
+				EndInfo.RecoverMessage = MsgBuffer
+			}
 			break
 		}
-		//每轮对话结束后检查上下文是否被取消，如果被取消则整理消息并直接返回
+		MsgBuffer = []model.Message{} //清空消息缓冲区，为下一轮对话做准备
+
+		//每轮对话结束后检查上下文是否被取消，被取消说明用户手动Ctrl+C了，此时应追加历史消息便于继续对话
 		select {
 		case <-ctx.Done():
 			fmt.Printf(colorRed + "\n会话已取消，停止接收输入...\n" + colorReset)
-			EndReason.Code = 2
-			EndReason.Reason = "会话已取消，停止接收输入"
-			historyAll = append(historyAll, h...)
+			EndInfo.Code = ExitCodeInt
+			EndInfo.Reason = "会话已取消，停止接收输入"
+			if len(h) != 0 {
+				MsgBuffer = append(MsgBuffer, h...)
+				EndInfo.RecoverMessage = MsgBuffer
+			}
 
-			return &EndReason, historyAll
+			return &EndInfo
 		default:
 
 		}
-		historyAll = append(historyAll, h...)
 
 	}
 
 	cancel() //当对话正常结束时，取消上下文以释放goroutine资源
-	return &EndReason, historyAll
+	return &EndInfo
 }

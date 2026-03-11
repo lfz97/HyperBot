@@ -22,7 +22,7 @@ mcpexec:
 
 # Chrome MCP 配置 (需参考此项目进行配置 https://github.com/hangwin/mcp-chrome 重要：如果要开始新对话，请在chrome重启mcp端点，否则会报错)
 chromemcp:
-  enabled: true
+  enabled: false
   mcptype: "streamable_http"
   mcpendpoint: "http://127.0.0.1:12306/mcp"
 `

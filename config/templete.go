@@ -4,13 +4,13 @@ const Template string = `# 模型配置
 model:
   model: "deepseek-reasoner"
   baseurl: "https://api.deepseek.com"
-  apikey: ""
-  apitype: "openai"
+  apikey: "your-api-key"
+  apitype: "openai" # openai 或者 anthropic
 
 # 博查 MCP 配置
 bochamcp:
   enabled: false
-  apikey: ""
+  apikey: "your-api-key"
   mcptype: "streamable_http"
   mcpendpoint: "https://mcp.bochaai.com/mcp"
 
@@ -18,9 +18,9 @@ bochamcp:
 mcpexec:
   enabled: false
   mcptype: "streamable_http"
-  mcpendpoint: 
+  mcpendpoint: "endpoint" #   例如 "http://1.2.3.4:8080/mcp"
 
-# Chrome MCP 配置 (需参考此项目进行配置 https://github.com/hangwin/mcp-chrome)
+# Chrome MCP 配置 (需参考此项目进行配置 https://github.com/hangwin/mcp-chrome 重要：如果要开始新对话，请在chrome重启mcp端点，否则会报错)
 chromemcp:
   enabled: true
   mcptype: "streamable_http"

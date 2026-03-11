@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"fmt"
+	"os"
 	"trpc.group/trpc-go/trpc-agent-go/agent"
 	"trpc.group/trpc-go/trpc-agent-go/model"
 	"trpc.group/trpc-go/trpc-agent-go/runner"
@@ -22,7 +23,7 @@ func AgentRunOnce(Ctx context.Context, r runner.Runner, sessionID string, userID
 
 	eventChan, err := r.Run(Ctx, userID, sessionID, model.NewUserMessage(msg), agent.WithRequestID(requestID))
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("运行时发生错误: %v", err)
 
 	}
 
@@ -41,11 +42,21 @@ func AgentRunOnce(Ctx context.Context, r runner.Runner, sessionID string, userID
 	for event := range eventChan {
 
 		if event.Error != nil {
-			fmt.Printf("错误: %s\n", event.Error.Message)
-			err = fmt.Errorf(event.Error.Message)
+			err = fmt.Errorf("运行时发生错误: %v", event.Error)
 			break
 		}
-
+		select {
+		case <-Ctx.Done():
+			fmt.Printf(colorRed + "会话已取消，停止接收消息...\n" + colorReset)
+			err = fmt.Errorf("会话已取消，停止接收消息")
+			for _, msg_p := range MsgTmpMap {
+				history = append(history, *msg_p)
+			}
+			if err != nil {
+				return history, err
+			}
+		default:
+		}
 		if len((*(*event).Response).Choices) > 0 {
 
 			Choice := (*(*event).Response).Choices[0]
@@ -178,10 +189,26 @@ type EndReason struct {
 	Reason string
 }
 
-func AgentRunIteratively(Ctx context.Context, r runner.Runner, sessionID string, userID string, requestID string) (*EndReason, []model.Message) {
+func AgentRunIteratively(sigChan chan os.Signal, Ctx context.Context, r runner.Runner, sessionID string, userID string, requestID string) (*EndReason, []model.Message) {
+
+	defer r.Close()
+
 	historyAll := []model.Message{}
 	fmt.Println(colorBlue + "\n新对话已开始" + colorReset)
 	EndReason := EndReason{}
+
+	//定义一个可取消的context。启用一个独立goroutine当捕获到退出信号时，取消这个上下文，从而停止接收输入和消息
+	ctx, cancel := context.WithCancel(Ctx)
+	go func() {
+		select {
+		case <-sigChan:
+			fmt.Printf(colorRed + "\n捕获到信号: %v，退出本次会话...\n" + colorReset)
+			cancel()
+		case <-ctx.Done(): //当对话正常结束时，ctx.Done()会被触发，此时直接返回，释放goroutine资源
+			return
+		}
+	}()
+
 	for {
 		userPrompt, err := myutils.StdinInput(colorBlue + "\nUser(欲退出请输入" + colorGreen + "`/exit`,新对话请输入`/new`):" + colorReset)
 		if err != nil {
@@ -192,24 +219,42 @@ func AgentRunIteratively(Ctx context.Context, r runner.Runner, sessionID string,
 			fmt.Println(colorBlue + "对话已结束" + colorReset)
 			EndReason.Code = 0
 			EndReason.Reason = "用户主动结束对话"
+
 			break
 
 		} else if userPrompt == "/new" {
 			EndReason.Code = 1
 			EndReason.Reason = "用户主动开始新对话"
+
 			break
+		} else if userPrompt == "" {
+			continue
 		}
 
-		h, e := AgentRunOnce(Ctx, r, sessionID, userID, requestID, userPrompt)
-		if err != nil {
+		h, e := AgentRunOnce(ctx, r, sessionID, userID, requestID, userPrompt)
+		if e != nil {
 			fmt.Printf(colorRed+"对话过程中发生错误: %v\n"+colorReset, e)
 			EndReason.Code = 2
 			EndReason.Reason = fmt.Sprintf("对话过程中发生错误: %v", e)
+
 			break
+		}
+		//每轮对话结束后检查上下文是否被取消，如果被取消则整理消息并直接返回
+		select {
+		case <-ctx.Done():
+			fmt.Printf(colorRed + "\n会话已取消，停止接收输入...\n" + colorReset)
+			EndReason.Code = 2
+			EndReason.Reason = "会话已取消，停止接收输入"
+			historyAll = append(historyAll, h...)
+
+			return &EndReason, historyAll
+		default:
+
 		}
 		historyAll = append(historyAll, h...)
 
 	}
 
+	cancel() //当对话正常结束时，取消上下文以释放goroutine资源
 	return &EndReason, historyAll
 }

@@ -122,19 +122,40 @@ func parseConfig(RunningConfig config.Config) ([]tool.Tool, []tool.ToolSet, conf
 }
 
 func initAgent(Tools []tool.Tool, Toolsets []tool.ToolSet, Model config.Model, AgentName string) runner.Runner {
+	var Runner runner.Runner
+	if Model.APIType == "openai" {
+		Agent_p := agent.OpenaiAgent(
+			AgentName,
+			config.SystemPrompt,
+			model.GenerationConfig{
+				Stream: true,
+			},
+			Tools,
+			Toolsets,
+			Model.Model,
+			Model.BaseURL,
+			Model.APIKey,
+		)
+		Runner = runner.NewRunner(AgentName, Agent_p)
+	} else if Model.APIType == "anthropic" {
+		Agent_p := agent.AnthropicAgent(
+			AgentName,
+			config.SystemPrompt,
+			model.GenerationConfig{
+				Stream: true,
+			},
+			Tools,
+			Toolsets,
+			Model.Model,
+			Model.BaseURL,
+			Model.APIKey,
+		)
+		Runner = runner.NewRunner(AgentName, Agent_p)
+	} else {
+		fmt.Println("不支持的API类型，请检查配置文件中的Model.APIType字段，按回车键退出...")
+		fmt.Scanln()
+		os.Exit(0)
+	}
 
-	deepseekAgent_p := agent.OpenaiAgent(
-		AgentName,
-		config.SystemPrompt,
-		model.GenerationConfig{
-			Stream: true,
-		},
-		Tools,
-		Toolsets,
-		Model.Model,
-		Model.BaseURL,
-		Model.APIKey,
-	)
-	runner := runner.NewRunner(AgentName, deepseekAgent_p)
-	return runner
+	return Runner
 }

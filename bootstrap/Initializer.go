@@ -1,16 +1,16 @@
 package bootstrap
 
 import (
+	"HyperBot/agent"
+	"HyperBot/config"
+	"HyperBot/handler"
+	"HyperBot/toolsets"
+	"HyperBot/toolsets/localexec"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"trpcagent/agent"
-	"trpcagent/config"
-	"trpcagent/handler"
-	"trpcagent/toolsets"
-	"trpcagent/toolsets/localexec"
 
 	"gopkg.in/yaml.v2"
 	"trpc.group/trpc-go/trpc-agent-go/model"

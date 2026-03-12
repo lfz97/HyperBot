@@ -1,11 +1,11 @@
 package handler
 
 import (
+	"HyperBot/myutils"
 	"context"
 	"fmt"
 	"os"
 	"trpc.group/trpc-go/trpc-agent-go/model"
-	"trpcagent/myutils"
 )
 
 // 交互式对话
@@ -61,14 +61,14 @@ func AgentRunIteratively(sigChan chan os.Signal, Ctx context.Context, AgentRunne
 				fmt.Println(colorBlue + "对话已结束" + colorReset)
 				EndInfo.Code = ExitCodeExit
 				EndInfo.Reason = "用户主动结束对话"
-
-				break
+				cancel() //取消上下文，停止接收输入和消息
+				return &EndInfo
 
 			} else if userPrompt == "/new" {
 				EndInfo.Code = ExitCodeNew
 				EndInfo.Reason = "用户主动开始新对话"
-
-				break
+				cancel() //取消上下文，停止接收输入和消息
+				return &EndInfo
 			} else if userPrompt == "" {
 				continue
 			}
@@ -80,10 +80,19 @@ func AgentRunIteratively(sigChan chan os.Signal, Ctx context.Context, AgentRunne
 			//如果是因为错误中断的对话，则继承历史消息，并设定默认提示词
 		} else if MsgContext.Code == ExitCodeError {
 			MsgBuffer = append(MsgBuffer, MsgContext.RecoverMessage...)
-			MsgBuffer = append(MsgBuffer, model.Message{
-				Role:    model.RoleUser,
-				Content: "请根据以上历史进度，继续进行任务。",
-			})
+			if MsgBuffer[len(MsgBuffer)-1].Role == model.RoleUser {
+				if MsgBuffer[len(MsgBuffer)-1].Content != "继续" {
+					MsgBuffer = append(MsgBuffer, model.Message{
+						Role:    model.RoleUser,
+						Content: "继续",
+					})
+				}
+			} else if MsgBuffer[len(MsgBuffer)-1].Role != model.RoleUser {
+				MsgBuffer = append(MsgBuffer, model.Message{
+					Role:    model.RoleUser,
+					Content: "继续",
+				})
+			}
 			//如果是因为中断信号导致的对话中断，则继承历史消息的交互式运行
 		} else if MsgContext.Code == ExitCodeInt {
 			userPrompt, err := myutils.StdinInput(colorBlue + "\nUser(欲退出请输入" + colorGreen + "`/exit`,新对话请输入`/new`):" + colorReset)
@@ -95,14 +104,14 @@ func AgentRunIteratively(sigChan chan os.Signal, Ctx context.Context, AgentRunne
 				fmt.Println(colorBlue + "对话已结束" + colorReset)
 				EndInfo.Code = ExitCodeExit
 				EndInfo.Reason = "用户主动结束对话"
-
-				break
+				cancel() //取消上下文，停止接收输入和消息
+				return &EndInfo
 
 			} else if userPrompt == "/new" {
 				EndInfo.Code = ExitCodeNew
 				EndInfo.Reason = "用户主动开始新对话"
-
-				break
+				cancel() //取消上下文，停止接收输入和消息
+				return &EndInfo
 			} else if userPrompt == "" {
 				continue
 			}
@@ -122,7 +131,8 @@ func AgentRunIteratively(sigChan chan os.Signal, Ctx context.Context, AgentRunne
 			if len(h) != 0 {
 				EndInfo.RecoverMessage = h //将本轮对话的历史消息保存到EndInfo中，以便下一轮对话恢复
 			}
-			break
+			cancel()
+			return &EndInfo
 		} else {
 			//如果AgentRunOnce成功，重置MsgBuffer，并将MsgContext设为正常结束，否则会一直走ExitCodeError的逻辑无限循环
 			MsgBuffer = []model.Message{}
@@ -146,6 +156,4 @@ func AgentRunIteratively(sigChan chan os.Signal, Ctx context.Context, AgentRunne
 
 	}
 
-	cancel() //当对话正常结束时，取消上下文以释放goroutine资源
-	return &EndInfo
 }

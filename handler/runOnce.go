@@ -3,7 +3,7 @@ package handler
 import (
 	"context"
 	"fmt"
-
+	"sort"
 	"trpc.group/trpc-go/trpc-agent-go/agent"
 	"trpc.group/trpc-go/trpc-agent-go/model"
 	"trpc.group/trpc-go/trpc-agent-go/runner"
@@ -35,9 +35,8 @@ func AgentRunOnce(Ctx context.Context, r runner.Runner, stream bool, sessionID s
 		select {
 		case <-Ctx.Done():
 			fmt.Printf(colorRed + "会话已取消，停止接收消息...\n" + colorReset)
-			for _, msg_p := range MsgTmpMap {
-				history = append(history, *msg_p)
-			}
+			//将MsgTmpMap中的消息按照顺序追加到history中
+			sortMessagesToHistory(&history, &MsgTmpMap)
 			return history, nil
 
 		default:
@@ -58,11 +57,22 @@ func AgentRunOnce(Ctx context.Context, r runner.Runner, stream bool, sessionID s
 	}
 
 	//将MsgTmpMap中的消息按照顺序追加到history中
-	for _, msg_p := range MsgTmpMap {
-		history = append(history, *msg_p)
-	}
+	sortMessagesToHistory(&history, &MsgTmpMap)
 	if err != nil {
 		return history, err
+	} else {
+		return history, nil
 	}
-	return history, nil
+
+}
+
+func sortMessagesToHistory(history *[]model.Message, MsgTmpMap *map[int]*model.Message) {
+	sortedKeys := []int{}
+	for k, _ := range *MsgTmpMap {
+		sortedKeys = append(sortedKeys, k)
+	}
+	sort.Ints(sortedKeys)
+	for _, key := range sortedKeys {
+		*history = append(*history, *(*MsgTmpMap)[key])
+	}
 }

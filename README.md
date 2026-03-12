@@ -1,4 +1,4 @@
-# trpcagent
+# HyperBot
 
 > 🏃 **一个干净、跨平台的 AI Agent 工具** | 下载即可运行，无需安装依赖！
 
@@ -29,19 +29,19 @@
 
 ```bash
 # Windows x64
-release/windows-x64/trpcagent.exe
+release/windows-x64/HyperBot.exe
 
 # Linux x64
-release/linux-x64/trpcagent
+release/linux-x64/HyperBot
 
 # Linux ARM64 (如树莓派)
-release/linux-arm64/trpcagent
+release/linux-arm64/HyperBot
 
 # macOS x64 (Intel)
-release/macos-x64/trpcagent
+release/macos-x64/HyperBot
 
 # macOS ARM64 (Apple Silicon)
-release/macos-arm64/trpcagent
+release/macos-arm64/HyperBot
 ```
 
 ### 配置
@@ -79,17 +79,17 @@ chromemcp:
 
 ```bash
 # Windows
-.\trpcagent.exe
+.\HyperBot.exe
 
 # Linux / macOS
-./trpcagent
+./HyperBot
 ```
 
 > 💡 **提示**: 首次运行会自动创建 `config.yaml` 配置文件，修改配置后重新运行即可！
 
-## 为什么选择 trpcagent？
+## 为什么选择 HyperBot？
 
-| 对比项 | trpcagent | 其他方案 |
+| 对比项 | HyperBot | 其他方案 |
 |--------|-----------|----------|
 | 安装方式 | 下载即用 | 需要 `pip install`、`npm install` 等 |
 | 依赖环境 | ✅ 无需 | ❌ 需要 Python/Node.js 运行时 |
@@ -102,7 +102,7 @@ chromemcp:
 ## 📁 项目结构
 
 ```
-trpcagent/
+HyperBot/
 ├── main.go              # 程序入口
 ├── bootstrap/           # 启动初始化
 ├── handler/             # 核心运行逻辑

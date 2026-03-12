@@ -13,15 +13,20 @@ import (
 func submit_command(ctx context.Context, req struct {
 	Cmd   string `json:"cmd" jsonschema:"description:要执行的完整命令字符串。命令会被自动包装。PowerShell ——> 自动设置UTF-8编码([Console]::OutputEncoding/InputEncoding等)；Bash ——> <bash -lc {cmd}>"`
 	Dir   string `json:"dir" jsonschema:"description:可选：工作目录"`
-	Shell string `json:"shell" jsonschema:"description:可选：shell类型。支持的选项：bash、powershell。默认Windows选择powershell，其他系统选择bash。"`
+	Shell string `json:"shell" jsonschema:"description:可选：shell类型。仅可传：bash , cmd 或 powershell 三个固定字段. 不传则根据系统默认设置：Windows默认powershell，Linux/macOS默认bash"`
 }) (map[string]any, error) {
 
-	if req.Shell == "" {
-		if runtime.GOOS == "windows" {
-			req.Shell = "powershell"
-		} else {
-			req.Shell = "bash"
+	if req.Shell != "bash" && req.Shell != "powershell" && req.Shell != "cmd" {
+		if req.Shell != "" { // 不是bash powershell cmd三者之一且用户有传shell字段，则报错；如果用户没传shell字段，则根据系统默认设置
+			return nil, errors.New("`shell` must be one of: bash, cmd, powershell")
+		} else if req.Shell == "" {
+			if runtime.GOOS == "windows" {
+				req.Shell = "powershell"
+			} else {
+				req.Shell = "bash"
+			}
 		}
+
 	}
 	if req.Cmd == "" {
 		return nil, errors.New("`cmd` cannot be empty")

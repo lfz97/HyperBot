@@ -2,21 +2,23 @@ package bootstrap
 
 import (
 	"fmt"
-	"gopkg.in/yaml.v2"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"trpcagent/agent"
+	"trpcagent/config"
+	"trpcagent/handler"
+	"trpcagent/toolsets"
+	"trpcagent/toolsets/localexec"
+
+	"gopkg.in/yaml.v2"
 	"trpc.group/trpc-go/trpc-agent-go/model"
 	"trpc.group/trpc-go/trpc-agent-go/runner"
 	"trpc.group/trpc-go/trpc-agent-go/tool"
-	"trpcagent/agent"
-	"trpcagent/config"
-	"trpcagent/toolsets"
-	"trpcagent/toolsets/localexec"
 )
 
-func Init(AgentName string) runner.Runner {
+func Init(AgentName string) handler.AgentRunner {
 	configSystemPrompt()
 	exist, err := checkConfig()
 	if err != nil {
@@ -37,7 +39,11 @@ func Init(AgentName string) runner.Runner {
 	}
 	Tools, Toolsets, Model := parseConfig(*config_p)
 	runner := initAgent(Tools, Toolsets, Model, AgentName)
-	return runner
+	ar := handler.AgentRunner{
+		Runner: runner,
+		Stream: Model.Stream,
+	}
+	return ar
 }
 
 // 配置系统提示词，替换其中的占位符
@@ -128,7 +134,7 @@ func initAgent(Tools []tool.Tool, Toolsets []tool.ToolSet, Model config.Model, A
 			AgentName,
 			config.SystemPrompt,
 			model.GenerationConfig{
-				Stream: true,
+				Stream: Model.Stream,
 			},
 			Tools,
 			Toolsets,
@@ -142,7 +148,7 @@ func initAgent(Tools []tool.Tool, Toolsets []tool.ToolSet, Model config.Model, A
 			AgentName,
 			config.SystemPrompt,
 			model.GenerationConfig{
-				Stream: true,
+				Stream: Model.Stream,
 			},
 			Tools,
 			Toolsets,

@@ -11,9 +11,11 @@ func Openai(Model string, BaseUrl string, APIkey string) *openai.Model {
 		openai.WithBaseURL(BaseUrl),
 		openai.WithAPIKey(APIkey),
 	}
+
 	if strings.Contains(Model, "deepseek") == true {
 		opts = append(opts, openai.WithVariant(openai.VariantDeepSeek))
 	}
+
 	modelInstance := openai.New(
 		Model,
 		opts...,

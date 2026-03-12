@@ -6,7 +6,7 @@ model:
   baseurl: "https://api.deepseek.com"
   apikey: "your-api-key"
   apitype: "openai" # openai 或者 anthropic
-
+  stream: true # 是否开启流式输出，开启后可以实时看到模型的推理过程和工具调用信息
 # 博查 MCP 配置
 bochamcp:
   enabled: false

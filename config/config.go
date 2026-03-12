@@ -24,6 +24,7 @@ type Model struct {
 	BaseURL string
 	APIKey  string
 	APIType string // "openai" or "anthropic"
+	Stream  bool   //true or false
 }
 
 type Config struct {

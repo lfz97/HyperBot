@@ -14,7 +14,8 @@ func AgentRunOnce(Ctx context.Context, r runner.Runner, stream bool, sessionID s
 
 	eventChan, err := runner.RunWithMessages(Ctx, r, userID, sessionID, msg, agent.WithRequestID(requestID))
 	if err != nil {
-		return []model.Message{}, fmt.Errorf("调用runner时发生错误: %v", err)
+		fmt.Println("runOnece.go 17 error:" + err.Error())
+		return msg, fmt.Errorf("调用runner时发生错误: %v", err)
 
 	}
 
@@ -25,6 +26,9 @@ func AgentRunOnce(Ctx context.Context, r runner.Runner, stream bool, sessionID s
 	MsgTmpMap := map[int]*model.Message{} //定义一个临时map用来存储消息，key为Index，value为消息指针
 	Index := 0                            //指向消息在map中的位置
 	var Role model.Role                   //记录消息对应的角色
+	reasoningStartTag := true
+	reasoningEndTag := true
+
 	startReasoning := false
 	for event := range eventChan {
 
@@ -47,7 +51,7 @@ func AgentRunOnce(Ctx context.Context, r runner.Runner, stream bool, sessionID s
 			/*------------------打印响应---------------------------------------------------------------------------*/
 			printMessage(Choice, &startReasoning, stream)
 			/*------------------此处汇聚消息---------------------------------------------------------------------------*/
-			gatherMessage(Choice, &MsgTmpMap, &Index, &Role, stream)
+			gatherMessage(Choice, &MsgTmpMap, &Index, &Role, stream, &reasoningStartTag, &reasoningEndTag)
 		}
 		// event.IsRunnerCompletion()判断是否完成输出
 		if event.IsRunnerCompletion() {

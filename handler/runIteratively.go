@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+
 	"trpc.group/trpc-go/trpc-agent-go/model"
 )
 
@@ -24,8 +25,8 @@ func AgentRunIteratively(sigChan chan os.Signal, Ctx context.Context, AgentRunne
 	ctx, cancel := context.WithCancel(Ctx)
 	go func() {
 		select {
-		case <-sigChan:
-			fmt.Printf(colorRed + "\n捕获到信号: %v，退出本次会话...\n" + colorReset)
+		case sig := <-sigChan:
+			fmt.Printf(colorRed+"\n捕获到信号: %v，退出本次会话...\n"+colorReset, sig)
 			cancel()
 		case <-ctx.Done(): //当对话正常结束时，ctx.Done()会被触发，此时直接返回，释放goroutine资源
 			return
@@ -54,8 +55,12 @@ func AgentRunIteratively(sigChan chan os.Signal, Ctx context.Context, AgentRunne
 		if MsgContext.Code == ExitCodeNormal || MsgContext.Code == ExitCodeNew {
 			userPrompt, err := myutils.StdinInput(colorBlue + "\nUser(欲退出请输入" + colorGreen + "`/exit`,新对话请输入`/new`):" + colorReset)
 			if err != nil {
+				//读取输入错误一般是在stdin阻塞读的时候用户按了Ctrl+C导致的，此时将结束状态设定为中断，并保存历史消息直接返回
 				fmt.Printf(colorRed+"读取输入错误: %v\n"+colorReset, err)
-				continue
+				EndInfo.Code = ExitCodeInt
+				EndInfo.Reason = fmt.Sprintf("读取输入错误: %v", err)
+				EndInfo.RecoverMessage = MsgContext.RecoverMessage
+				return &EndInfo
 			}
 			if userPrompt == "/exit" {
 				fmt.Println(colorBlue + "对话已结束" + colorReset)
@@ -79,7 +84,7 @@ func AgentRunIteratively(sigChan chan os.Signal, Ctx context.Context, AgentRunne
 
 			//如果是因为错误中断的对话，则继承历史消息，并设定默认提示词
 		} else if MsgContext.Code == ExitCodeError {
-			MsgBuffer = append(MsgBuffer, MsgContext.RecoverMessage...)
+			MsgBuffer = MsgContext.RecoverMessage
 			if MsgBuffer[len(MsgBuffer)-1].Role == model.RoleUser {
 				if MsgBuffer[len(MsgBuffer)-1].Content != "继续" {
 					MsgBuffer = append(MsgBuffer, model.Message{
@@ -97,8 +102,13 @@ func AgentRunIteratively(sigChan chan os.Signal, Ctx context.Context, AgentRunne
 		} else if MsgContext.Code == ExitCodeInt {
 			userPrompt, err := myutils.StdinInput(colorBlue + "\nUser(欲退出请输入" + colorGreen + "`/exit`,新对话请输入`/new`):" + colorReset)
 			if err != nil {
+				//读取输入错误一般是在stdin阻塞读的时候用户按了Ctrl+C导致的，此时将结束状态设定为中断，并保存历史消息直接返回
 				fmt.Printf(colorRed+"读取输入错误: %v\n"+colorReset, err)
-				continue
+
+				EndInfo.Code = ExitCodeInt
+				EndInfo.Reason = fmt.Sprintf("读取输入错误: %v", err)
+				EndInfo.RecoverMessage = MsgContext.RecoverMessage
+				return &EndInfo
 			}
 			if userPrompt == "/exit" {
 				fmt.Println(colorBlue + "对话已结束" + colorReset)
@@ -115,7 +125,7 @@ func AgentRunIteratively(sigChan chan os.Signal, Ctx context.Context, AgentRunne
 			} else if userPrompt == "" {
 				continue
 			}
-			MsgBuffer = append(MsgBuffer, MsgContext.RecoverMessage...)
+			MsgBuffer = MsgContext.RecoverMessage
 			MsgBuffer = append(MsgBuffer, model.Message{
 				Role:    model.RoleUser,
 				Content: userPrompt,
@@ -135,7 +145,8 @@ func AgentRunIteratively(sigChan chan os.Signal, Ctx context.Context, AgentRunne
 			return &EndInfo
 		} else {
 			//如果AgentRunOnce成功，重置MsgBuffer，并将MsgContext设为正常结束，否则会一直走ExitCodeError的逻辑无限循环
-			MsgBuffer = []model.Message{}
+			MsgBuffer = h
+			MsgContext.RecoverMessage = h //将本轮对话的历史消息保存到MsgContext中，以便下一轮对话继承
 			MsgContext.Code = ExitCodeNormal
 		}
 
@@ -148,7 +159,7 @@ func AgentRunIteratively(sigChan chan os.Signal, Ctx context.Context, AgentRunne
 			if len(h) != 0 {
 				EndInfo.RecoverMessage = h
 			}
-
+			cancel()
 			return &EndInfo
 		default:
 

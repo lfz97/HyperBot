@@ -64,7 +64,7 @@ func printMessage(Choice model.Choice, startReasoning *bool, stream bool) {
 }
 
 // 把Choice中的消息按照角色进行汇聚，存储到MsgTmpMap map[int]*model.Message中
-func gatherMessage(Choice model.Choice, MsgTmpMap *map[int]*model.Message, Index *int, Role *model.Role, stream bool) {
+func gatherMessage(Choice model.Choice, MsgTmpMap *map[int]*model.Message, Index *int, Role *model.Role, stream bool, reasoningStartTag_p *bool, reasoningEndTag_p *bool) {
 
 	if stream {
 		if Choice.Delta.Role != "" {
@@ -77,11 +77,17 @@ func gatherMessage(Choice model.Choice, MsgTmpMap *map[int]*model.Message, Index
 					Role: Choice.Delta.Role,
 				}
 				if Choice.Delta.Content == "" && Choice.Delta.ReasoningContent != "" {
-					(*MsgTmpMap)[*Index].Content = Choice.Delta.ReasoningContent
+					if *reasoningStartTag_p {
+						(*MsgTmpMap)[*Index].Content += "<think>\n"
+						*reasoningStartTag_p = false
+					}
+					(*MsgTmpMap)[*Index].Content += Choice.Delta.ReasoningContent
 				} else if Choice.Delta.Content != "" && Choice.Delta.ReasoningContent == "" {
-					(*MsgTmpMap)[*Index].Content = Choice.Delta.Content
-				} else if Choice.Delta.Content != "" && Choice.Delta.ReasoningContent != "" {
-					(*MsgTmpMap)[*Index].Content = Choice.Delta.ReasoningContent + Choice.Delta.Content
+					if *reasoningEndTag_p {
+						(*MsgTmpMap)[*Index].Content += "</think>\n"
+						*reasoningEndTag_p = false
+					}
+					(*MsgTmpMap)[*Index].Content += Choice.Delta.Content
 				}
 				//delta 和 message中都可能包含工具信息，都要处理
 				{
@@ -102,11 +108,17 @@ func gatherMessage(Choice model.Choice, MsgTmpMap *map[int]*model.Message, Index
 			} else if Choice.Delta.Role == *Role {
 
 				if Choice.Delta.ReasoningContent != "" && Choice.Delta.Content == "" {
+					if *reasoningStartTag_p {
+						(*MsgTmpMap)[*Index].Content += "<think>\n"
+						*reasoningStartTag_p = false
+					}
 					(*MsgTmpMap)[*Index].Content += Choice.Delta.ReasoningContent
 				} else if Choice.Delta.ReasoningContent == "" && Choice.Delta.Content != "" {
+					if *reasoningEndTag_p {
+						(*MsgTmpMap)[*Index].Content += "</think>\n"
+						*reasoningEndTag_p = false
+					}
 					(*MsgTmpMap)[*Index].Content += Choice.Delta.Content
-				} else if Choice.Delta.ReasoningContent != "" && Choice.Delta.Content != "" {
-					(*MsgTmpMap)[*Index].Content += Choice.Delta.ReasoningContent + Choice.Delta.Content
 				}
 				//delta 和 message中都可能包含工具信息，都要处理
 				{
@@ -131,11 +143,17 @@ func gatherMessage(Choice model.Choice, MsgTmpMap *map[int]*model.Message, Index
 					Role: Choice.Message.Role,
 				}
 				if Choice.Message.Content == "" && Choice.Message.ReasoningContent != "" {
+					if *reasoningStartTag_p {
+						(*MsgTmpMap)[*Index].Content += "<think>\n"
+						*reasoningStartTag_p = false
+					}
 					(*MsgTmpMap)[*Index].Content = Choice.Message.ReasoningContent
 				} else if Choice.Message.Content != "" && Choice.Message.ReasoningContent == "" {
+					if *reasoningEndTag_p {
+						(*MsgTmpMap)[*Index].Content += "</think>\n"
+						*reasoningEndTag_p = false
+					}
 					(*MsgTmpMap)[*Index].Content = Choice.Message.Content
-				} else if Choice.Message.Content != "" && Choice.Message.ReasoningContent != "" {
-					(*MsgTmpMap)[*Index].Content = Choice.Message.ReasoningContent + Choice.Message.Content
 				}
 				//delta 和 message中都可能包含工具信息，都要处理
 				{
@@ -155,11 +173,17 @@ func gatherMessage(Choice model.Choice, MsgTmpMap *map[int]*model.Message, Index
 			} else if Choice.Message.Role == *Role {
 
 				if Choice.Message.ReasoningContent != "" && Choice.Message.Content == "" {
+					if *reasoningStartTag_p {
+						(*MsgTmpMap)[*Index].Content += "<think>\n"
+						*reasoningStartTag_p = false
+					}
 					(*MsgTmpMap)[*Index].Content += Choice.Message.ReasoningContent
 				} else if Choice.Message.ReasoningContent == "" && Choice.Message.Content != "" {
+					if *reasoningEndTag_p {
+						(*MsgTmpMap)[*Index].Content += "</think>\n"
+						*reasoningEndTag_p = false
+					}
 					(*MsgTmpMap)[*Index].Content += Choice.Message.Content
-				} else if Choice.Message.ReasoningContent != "" && Choice.Message.Content != "" {
-					(*MsgTmpMap)[*Index].Content += Choice.Message.ReasoningContent + Choice.Message.Content
 				}
 				//delta 和 message中都可能包含工具信息，都要处理
 				{

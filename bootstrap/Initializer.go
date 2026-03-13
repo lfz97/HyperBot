@@ -19,8 +19,15 @@ import (
 )
 
 func Init(AgentName string) handler.AgentRunner {
-	configSystemPrompt()
-	exist, err := checkConfig()
+	ExeDirPath, err := getExeDirPath()
+	if err != nil {
+		fmt.Println("获取可执行文件目录错误：", err)
+		fmt.Println("按回车键退出...")
+		fmt.Scanln()
+		os.Exit(0)
+	}
+	configSystemPrompt(ExeDirPath)
+	exist, err := checkConfig(ExeDirPath)
 	if err != nil {
 		fmt.Println("检查配置文件错误：", err)
 		fmt.Println("按回车键退出...")
@@ -31,6 +38,16 @@ func Init(AgentName string) handler.AgentRunner {
 		fmt.Println("已创建默认配置文件，请前往修改后重新启动程序,按回车键退出...")
 		fmt.Scanln()
 		os.Exit(0)
+	}
+	exist, err = checkSkillsFolder(ExeDirPath)
+	if err != nil {
+		fmt.Println("检查skills文件夹错误：", err)
+		fmt.Println("按回车键退出...")
+		fmt.Scanln()
+		os.Exit(0)
+	}
+	if exist == false && err == nil {
+		fmt.Println("检查到skills文件夹不存在，已创建默认skills文件夹")
 	}
 	config_p, err := loadConfig()
 	if err != nil {
@@ -47,32 +64,30 @@ func Init(AgentName string) handler.AgentRunner {
 }
 
 // 配置系统提示词，替换其中的占位符
-func configSystemPrompt() {
+func configSystemPrompt(ExeDirPath string) {
 	os_type := runtime.GOOS
 	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{OSTYPE}}", os_type)
-	if os_type == "windows" {
-		diarypath := os.Getenv("USERPROFILE")
-		config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{DIARYPATH}}", diarypath+"\\Diary")
-	} else if os_type == "linux" || os_type == "darwin" {
-		diarypath := os.Getenv("HOME")
-		config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{DIARYPATH}}", diarypath+"/Diary")
-	} else {
-		config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{DIARYPATH}}", "Diary")
+	DiaryPath := filepath.Join(ExeDirPath, "Diary")
+	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{DIARYPATH}}", DiaryPath)
+}
+
+// 获取当前可执行文件所在的目录完整路径
+func getExeDirPath() (string, error) {
+
+	exePath, err := os.Executable() // 获取当前可执行文件的路径
+	if err != nil {
+		return "", fmt.Errorf("获取可执行文件路径错误：%v", err)
 	}
+	ExeDirPath := filepath.Dir(exePath) // 获取当前可执行文件的目录路径（不包含程序名）
+	return ExeDirPath, nil
 }
 
 // 检查配置文件是否存在，不存在则创建一个默认的配置文件
-func checkConfig() (bool, error) {
+func checkConfig(ExeDirPath string) (bool, error) {
 	configName := "config.yaml"
-	// 获取当前可执行文件的目录路径（不包含程序名）
-	exePath, err := os.Executable()
-	if err != nil {
-		return false, fmt.Errorf("获取可执行文件路径错误：%v", err)
-	}
-	exeDir := filepath.Dir(exePath)
-	configPath := filepath.Join(exeDir, configName)
+	configPath := filepath.Join(ExeDirPath, configName)
 	// TODO: 读取并解析 configPath 中的 YAML 配置
-	_, err = os.Stat(configPath)
+	_, err := os.Stat(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// 文件不存在，创建一个默认的 config.yaml
@@ -83,6 +98,22 @@ func checkConfig() (bool, error) {
 			_, err = fd.WriteString(config.Template)
 			if err != nil {
 				return false, fmt.Errorf("写入默认配置文件错误：%v", err)
+			}
+			return false, nil
+
+		}
+	}
+	return true, nil
+}
+func checkSkillsFolder(ExeDirPath string) (bool, error) {
+	SkillFolderPath := filepath.Join(ExeDirPath, "skills")
+	_, err := os.Stat(SkillFolderPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			//skills 文件夹不存在，创建一个默认的 skills 文件夹
+			err := os.MkdirAll(SkillFolderPath, os.ModePerm)
+			if err != nil {
+				return false, fmt.Errorf("创建默认配置文件错误：%v", err)
 			}
 			return false, nil
 

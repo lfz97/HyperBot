@@ -99,6 +99,63 @@ chromemcp:
 
 > 🏆 **真正的"绿色软件"**：不污染你的系统环境，拷贝即走！
 
+## 🔧 从源码构建
+
+如果你需要自定义构建或为其他平台编译，可以使用以下方法：
+
+### 环境要求
+- Go 1.20+ (推荐 1.25+)
+- Git
+
+### 构建方法
+
+#### 方法1：使用批处理脚本（Windows）
+```bash
+# 一键构建所有平台
+build-all.bat
+```
+
+#### 方法2：使用Makefile
+```bash
+# 构建所有平台
+make
+
+# 仅构建Windows版本
+make build-windows
+
+# 仅构建Linux版本
+make build-linux
+
+# 仅构建macOS版本
+make build-macos
+
+# 清理构建文件
+make clean
+```
+
+#### 方法3：手动构建
+```bash
+# Linux x64
+GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o release/linux-x64/HyperBot
+
+# Linux ARM64
+GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o release/linux-arm64/HyperBot
+
+# macOS x64
+GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o release/macos-x64/HyperBot
+
+# macOS ARM64
+GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o release/macos-arm64/HyperBot
+
+# Windows x64
+GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o release/windows-x64/HyperBot.exe
+```
+
+### 构建选项说明
+- `-trimpath`: 移除文件系统中的路径信息，使构建更可重现
+- `-ldflags="-s -w"`: 移除调试符号和DWARF信息，减小文件大小
+- `-o`: 指定输出路径
+
 ## 📁 项目结构
 
 ```
@@ -115,20 +172,6 @@ HyperBot/
 ```
 
 > 📥 **使用方式**: 直接从 `release/` 目录下载对应平台的可执行文件即可！
-
-## 编译
-
-```bash
-# 本地编译 (Windows)
-go build -trimpath -ldflags="-s -w" -o release/windows-x64/trpcagent.exe
-
-# 交叉编译
-GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o release/linux-x64/trpcagent
-GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o release/linux-arm64/trpcagent
-GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o release/macos-x64/trpcagent
-GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o release/macos-arm64/trpcagent
-GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o release/windows-x64/trpcagent.exe
-```
 
 ## 🛠️ 技术栈
 

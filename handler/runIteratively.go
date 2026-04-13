@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
-	"sync"
 )
 
 // 交互式对话
@@ -32,24 +31,22 @@ func AgentRunIteratively(Ctx context.Context, app_p *tview.Application, AgentMes
 	for {
 		//如果是新对话、继续对话或中断后恢复，用户自行输入prompt
 		if inputContext.Code == New || inputContext.Code == Continue || inputContext.Code == Int {
-			var once sync.Once
+
 			app_p.QueueUpdateDraw(func() {
 				app_p.SetFocus(InputArea_p)
+				InputArea_p.SetDisabled(false) //启用输入框
 				//注册一个输入捕获器，每次用户在输入框敲击键盘时都会触发
 				InputArea_p.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 					//当用户按下ctrl+enter时，获取输入内容，清空输入框，并发送信号继续执行后续逻辑
 					if event.Key() == tcell.KeyEnter && event.Modifiers() == tcell.ModCtrl { //按下Ctrl+Enter时触发输入获取和信号发送
-						//用sync.Once确保通道操作只有一次，
-						// 以防用户在userPrompt = <-keyboardInputMessage消费后，
-						// InputArea_p.SetInputCapture(nil)注销前，
-						// 疯狂按ctrl+enter重复触发捕获器导致keyboardInputMessage <- InputArea_p.GetText()被阻塞
-						once.Do(func() {
-							keyboardInputMessage <- InputArea_p.GetText()
-							InputArea_p.SetText("", false)
-						})
+
+						keyboardInputMessage <- InputArea_p.GetText()
+						InputArea_p.SetText("", false)
+						InputArea_p.SetDisabled(true) //输入完成后就禁用输入框，防止用户多次输入ctrl+enter导致keyboardInputMessage <- InputArea_p.GetText()阻塞(因为只会被消费一次)
+
 						return nil //吞掉ctrl+enter事件
 					}
-					//其他按键正常传递并通过return event显示在输入框中
+					//return event 将event里面的按键字符数据抽出来，存放进textArea的内部处理器中
 					return event
 				})
 			})
@@ -59,7 +56,7 @@ func AgentRunIteratively(Ctx context.Context, app_p *tview.Application, AgentMes
 			app_p.QueueUpdateDraw(func() {
 				fmt.Fprint(AgentMessageView_p, pretty.TUserInput(userPrompt))
 				AgentMessageView_p.ScrollToEnd()
-				InputArea_p.SetInputCapture(nil)
+				InputArea_p.SetInputCapture(nil) //注销捕获器
 			})
 
 			{

@@ -17,8 +17,9 @@ const RUN RunningStatus = "run"
 
 func AgentStart(app_p *tview.Application, AgentMessageView_p *tview.TextView, InputArea_p *tview.TextArea, AgentRunner handler.AgentRunner) {
 	MsgContext := handler.TurnResult{
-		Code:   handler.New,
-		Reason: "新对话",
+		Code:       handler.New,
+		Reason:     "新对话",
+		OutputPart: "",
 	}
 	sessionID, requestID := RandomStartID()
 	for {
@@ -37,8 +38,9 @@ func AgentStart(app_p *tview.Application, AgentMessageView_p *tview.TextView, In
 		} else if (*EndTurn_p).Code == handler.New { //用户开始新对话，重置sessionID,  requestID，更新MsgContext为新对话的初始状态
 			sessionID, requestID = RandomStartID()
 			MsgContext = handler.TurnResult{
-				Code:   handler.New,
-				Reason: "新对话",
+				Code:       handler.New,
+				Reason:     "新对话",
+				OutputPart: "",
 			}
 
 		} else { //其他情况，继续使用当前的sessionID, userID, requestID，更新MsgContext为当前对话的结束状态，供下一轮对话使用

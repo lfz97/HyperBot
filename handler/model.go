@@ -5,8 +5,9 @@ import (
 )
 
 type TurnResult struct {
-	Code   TurnCode
-	Reason string
+	Code       TurnCode
+	Reason     string
+	OutputPart string
 }
 type TurnCode int
 

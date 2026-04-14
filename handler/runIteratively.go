@@ -82,7 +82,11 @@ func AgentRunIteratively(Ctx context.Context, app_p *tview.Application, AgentMes
 			}
 
 		} else if inputContext.Code == Error {
-			userPrompt = "继续"
+			if inputContext.OutputPart != "" {
+				userPrompt = fmt.Sprintf("之前的对话发生了错误，错误信息是: %s, 之前的输出内容是: %s, 请基于这些信息调整你的回答并继续完成对话", inputContext.Reason, inputContext.OutputPart)
+			} else {
+				userPrompt = fmt.Sprintf("之前的对话发生了错误，错误信息是: %s, 请基于这个信息调整你的回答并继续完成对话", inputContext.Reason)
+			}
 			break
 		}
 	}
@@ -103,11 +107,12 @@ func AgentRunIteratively(Ctx context.Context, app_p *tview.Application, AgentMes
 	})
 
 	// AgentRunOnce返回的消息包含本次对话输入输出的所有消息
-	err := AgentRunOnce(Ctx, app_p, AgentMessageView_p, AgentRunner, sessionID, userID, requestID, userPrompt)
-	if err != nil { //如果运行过程中发生错误
+	AgentError_p := AgentRunOnce(Ctx, app_p, AgentMessageView_p, AgentRunner, sessionID, userID, requestID, userPrompt)
+	if AgentError_p != nil { //如果运行过程中发生错误
 		return &TurnResult{
-			Code:   Error,
-			Reason: fmt.Sprintf("对话过程中发生错误: %v", err),
+			Code:       Error,
+			Reason:     fmt.Sprintf("对话过程中发生错误: %v", (*AgentError_p).Error),
+			OutputPart: (*AgentError_p).OutputPart,
 		}
 	}
 

@@ -112,3 +112,12 @@ func printMessage(app_p *tview.Application, view_p *tview.TextView, Choice model
 		}
 	}
 }
+
+// 收集输出正文，如果出现错误，可以通过这段文本在下一轮对llm进行提示，帮助模型更好地理解之前发生了什么，从而调整后续输出
+func gatherContentMessage(Container_p *string, Choice model.Choice, Stream bool) {
+	if Stream {
+		*Container_p += Choice.Delta.Content
+	} else {
+		*Container_p += Choice.Message.Content
+	}
+}

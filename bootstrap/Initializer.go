@@ -6,11 +6,11 @@ import (
 	"HyperBot/handler"
 	"HyperBot/toolsets"
 	"HyperBot/toolsets/localexec"
+	"HyperBot/tui/global_object"
 	"HyperBot/utils/pretty"
 	"fmt"
 	"github.com/gdamore/tcell/v2"
 	"github.com/google/uuid"
-	"github.com/rivo/tview"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/yaml.v2"
@@ -25,38 +25,38 @@ import (
 	"trpc.group/trpc-go/trpc-agent-go/tool"
 )
 
-func Init(AgentName string, app_p *tview.Application, view_p *tview.TextView) handler.AgentRunner {
+func Init(AgentName string) handler.AgentRunner {
 	// 将框架日志重定向到文件，避免输出到终端干扰 TUI
 	redirectFrameworkLog()
 
 	ExeDirPath, err := getExeDirPath()
 	if err != nil {
 		done := make(chan struct{})
-		app_p.QueueUpdateDraw(func() {
-			fmt.Fprint(view_p, pretty.TErrorF("获取可执行文件目录错误: %v", err))
-			view_p.ScrollToEnd()
-			app_p.Stop()
+		global_object.App_p.QueueUpdateDraw(func() {
+			fmt.Fprint(global_object.LogView_p, pretty.TErrorF("获取可执行文件目录错误: %v", err))
+			global_object.LogView_p.ScrollToEnd()
+			global_object.App_p.Stop()
 		})
 		<-done
 	}
 	configSystemPrompt(ExeDirPath)
 	exist, err := checkConfig(ExeDirPath)
 	if err != nil {
-		app_p.QueueUpdateDraw(func() {
-			fmt.Fprint(view_p, pretty.TErrorF("检查配置文件错误: %v", err))
-			view_p.ScrollToEnd()
+		global_object.App_p.QueueUpdateDraw(func() {
+			fmt.Fprint(global_object.LogView_p, pretty.TErrorF("检查配置文件错误: %v", err))
+			global_object.LogView_p.ScrollToEnd()
 		})
 	}
 	if exist == false && err == nil {
 		done := make(chan struct{})
-		app_p.QueueUpdateDraw(func() {
-			fmt.Fprint(view_p, pretty.TWelcome("已创建默认配置文件，请修改后重新启动程序。按回车键退出"))
-			view_p.ScrollToEnd()
+		global_object.App_p.QueueUpdateDraw(func() {
+			fmt.Fprint(global_object.LogView_p, pretty.TWelcome("已创建默认配置文件，请修改后重新启动程序。按回车键退出"))
+			global_object.LogView_p.ScrollToEnd()
 			//只要有按键就退出程序
-			app_p.SetFocus(view_p)
-			view_p.SetInputCapture(
+			global_object.App_p.SetFocus(global_object.LogView_p)
+			global_object.LogView_p.SetInputCapture(
 				func(event *tcell.EventKey) *tcell.EventKey {
-					app_p.Stop()
+					global_object.App_p.Stop()
 					//close(done)
 					return nil
 
@@ -67,22 +67,22 @@ func Init(AgentName string, app_p *tview.Application, view_p *tview.TextView) ha
 	}
 	config_p, err := loadConfig(ExeDirPath)
 	if err != nil {
-		app_p.QueueUpdateDraw(func() {
-			fmt.Fprint(view_p, pretty.TErrorF("加载配置文件错误: %v", err))
-			view_p.ScrollToEnd()
+		global_object.App_p.QueueUpdateDraw(func() {
+			fmt.Fprint(global_object.LogView_p, pretty.TErrorF("加载配置文件错误: %v", err))
+			global_object.LogView_p.ScrollToEnd()
 		})
 	}
 	exist, err = checkSkillsFolder(ExeDirPath)
 	if err != nil {
-		app_p.QueueUpdateDraw(func() {
-			fmt.Fprint(view_p, pretty.TErrorF("检查skills文件夹错误: %v", err))
-			view_p.ScrollToEnd()
+		global_object.App_p.QueueUpdateDraw(func() {
+			fmt.Fprint(global_object.LogView_p, pretty.TErrorF("检查skills文件夹错误: %v", err))
+			global_object.LogView_p.ScrollToEnd()
 		})
 	}
 	if exist == false && err == nil {
-		app_p.QueueUpdateDraw(func() {
-			fmt.Fprint(view_p, pretty.TSuccess("检查到skills文件夹不存在，已创建默认skills文件夹"))
-			view_p.ScrollToEnd()
+		global_object.App_p.QueueUpdateDraw(func() {
+			fmt.Fprint(global_object.LogView_p, pretty.TSuccess("检查到skills文件夹不存在，已创建默认skills文件夹"))
+			global_object.LogView_p.ScrollToEnd()
 		})
 	}
 
@@ -93,9 +93,9 @@ func Init(AgentName string, app_p *tview.Application, view_p *tview.TextView) ha
 		Stream: Model.Stream,
 		UserId: User.UserID,
 	}
-	app_p.QueueUpdateDraw(func() {
-		fmt.Fprint(view_p, pretty.TReady(AgentName))
-		view_p.ScrollToEnd()
+	global_object.App_p.QueueUpdateDraw(func() {
+		fmt.Fprint(global_object.LogView_p, pretty.TReady(AgentName))
+		global_object.LogView_p.ScrollToEnd()
 	})
 	return ar
 }

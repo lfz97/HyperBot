@@ -2,12 +2,11 @@ package bootstrap
 
 import (
 	"HyperBot/handler"
+	"HyperBot/tui/global_object"
 	"HyperBot/utils/pretty"
-
 	"context"
 	"fmt"
 	"github.com/google/uuid"
-	"github.com/rivo/tview"
 )
 
 type RunningStatus string
@@ -15,7 +14,7 @@ type RunningStatus string
 const END RunningStatus = "end"
 const RUN RunningStatus = "run"
 
-func AgentStart(app_p *tview.Application, AgentMessageView_p *tview.TextView, InputArea_p *tview.TextArea, AgentRunner handler.AgentRunner) {
+func AgentStart(AgentRunner handler.AgentRunner) {
 	MsgContext := handler.TurnResult{
 		Code:       handler.New,
 		Reason:     "新对话",
@@ -23,15 +22,15 @@ func AgentStart(app_p *tview.Application, AgentMessageView_p *tview.TextView, In
 	}
 	sessionID, requestID := RandomStartID()
 	for {
-		EndTurn_p := handler.AgentRunIteratively(context.Background(), app_p, AgentMessageView_p, InputArea_p, AgentRunner, sessionID, AgentRunner.UserId, requestID, MsgContext)
+		EndTurn_p := handler.AgentRunIteratively(context.Background(), AgentRunner, sessionID, AgentRunner.UserId, requestID, MsgContext)
 		if (*EndTurn_p).Code == handler.Exit { //用户主动结束对话，退出程序
 			//关闭AgentRunner，释放资源
 			done := make(chan struct{})
 			AgentRunner.Runner.Close()
-			app_p.QueueUpdateDraw(func() {
-				fmt.Fprint(AgentMessageView_p, pretty.TExit("对话已结束，感谢使用！后会有期！"))
-				AgentMessageView_p.ScrollToEnd()
-				app_p.Stop()
+			global_object.App_p.QueueUpdateDraw(func() {
+				fmt.Fprint(global_object.AgentMessageView_p, pretty.TExit("对话已结束，感谢使用！后会有期！"))
+				global_object.AgentMessageView_p.ScrollToEnd()
+				global_object.App_p.Stop()
 			})
 			<-done
 

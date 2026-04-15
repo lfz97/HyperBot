@@ -1,27 +1,28 @@
 package handler
 
 import (
+	"HyperBot/tui/global_object"
+	"HyperBot/tui/tip"
 	"HyperBot/utils/pretty"
 	"context"
 	"fmt"
 	"github.com/gdamore/tcell/v2"
-	"github.com/rivo/tview"
 )
 
 // 交互式对话
-func AgentRunIteratively(Ctx context.Context, app_p *tview.Application, AgentMessageView_p *tview.TextView, InputArea_p *tview.TextArea, AgentRunner AgentRunner, sessionID string, userID string, requestID string, inputContext TurnResult) *TurnResult {
+func AgentRunIteratively(Ctx context.Context, AgentRunner AgentRunner, sessionID string, userID string, requestID string, inputContext TurnResult) *TurnResult {
 	Ctx, cancel := context.WithCancel(Ctx)
 	defer cancel()
 	//根据传入消息的类型输出不同提示语
 	if inputContext.Code == New {
-		app_p.QueueUpdateDraw(func() {
-			fmt.Fprint(AgentMessageView_p, pretty.TNewConversation())
-			AgentMessageView_p.ScrollToEnd()
+		global_object.App_p.QueueUpdateDraw(func() {
+			fmt.Fprint(global_object.AgentMessageView_p, pretty.TNewConversation())
+			global_object.AgentMessageView_p.ScrollToEnd()
 		})
 	} else if inputContext.Code == Error {
-		app_p.QueueUpdateDraw(func() {
-			fmt.Fprint(AgentMessageView_p, pretty.TErrorF("对话发生错误: %s", inputContext.Reason))
-			AgentMessageView_p.ScrollToEnd()
+		global_object.App_p.QueueUpdateDraw(func() {
+			fmt.Fprint(global_object.AgentMessageView_p, pretty.TErrorF("对话发生错误: %s", inputContext.Reason))
+			global_object.AgentMessageView_p.ScrollToEnd()
 		})
 	} else if inputContext.Code == Int { //对话因中断信号而中断,不输出提示语
 	}
@@ -31,18 +32,22 @@ func AgentRunIteratively(Ctx context.Context, app_p *tview.Application, AgentMes
 	for {
 		//如果是新对话、继续对话或中断后恢复，用户自行输入prompt
 		if inputContext.Code == New || inputContext.Code == Continue || inputContext.Code == Int {
-
-			app_p.QueueUpdateDraw(func() {
-				app_p.SetFocus(InputArea_p)
-				InputArea_p.SetDisabled(false) //启用输入框
+			//更新侧边栏提示语，引导用户输入
+			global_object.App_p.QueueUpdateDraw(func() {
+				global_object.Sidebar_p.Clear() //先清空侧边栏内容，再输出提示语
+				fmt.Fprint(global_object.Sidebar_p, tip.SidebarUserInputTip())
+			})
+			global_object.App_p.QueueUpdateDraw(func() {
+				global_object.App_p.SetFocus(global_object.InputArea_p)
+				global_object.InputArea_p.SetDisabled(false) //启用输入框
 				//注册一个输入捕获器，每次用户在输入框敲击键盘时都会触发
-				InputArea_p.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+				global_object.InputArea_p.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 					//当用户按下ctrl+enter时，获取输入内容，清空输入框，并发送信号继续执行后续逻辑
 					if event.Key() == tcell.KeyEnter && event.Modifiers() == tcell.ModCtrl { //按下Ctrl+Enter时触发输入获取和信号发送
 
-						keyboardInputMessage <- InputArea_p.GetText()
-						InputArea_p.SetText("", false)
-						InputArea_p.SetDisabled(true) //输入完成后就禁用输入框，防止用户多次输入ctrl+enter导致keyboardInputMessage <- InputArea_p.GetText()阻塞(因为只会被消费一次)
+						keyboardInputMessage <- global_object.InputArea_p.GetText()
+						global_object.InputArea_p.SetText("", false)
+						global_object.InputArea_p.SetDisabled(true) //输入完成后就禁用输入框，防止用户多次输入ctrl+enter导致keyboardInputMessage <- global_object.InputArea_p.GetText()阻塞(因为只会被消费一次)
 
 						return nil //吞掉ctrl+enter事件
 					}
@@ -53,10 +58,10 @@ func AgentRunIteratively(Ctx context.Context, app_p *tview.Application, AgentMes
 
 			userPrompt = <-keyboardInputMessage //通过等待信号的方式阻塞代码，直到用户输入完成
 
-			app_p.QueueUpdateDraw(func() {
-				fmt.Fprint(AgentMessageView_p, pretty.TUserInput(userPrompt))
-				AgentMessageView_p.ScrollToEnd()
-				InputArea_p.SetInputCapture(nil) //注销捕获器
+			global_object.App_p.QueueUpdateDraw(func() {
+				fmt.Fprint(global_object.AgentMessageView_p, pretty.TUserInput(userPrompt))
+				global_object.AgentMessageView_p.ScrollToEnd()
+				global_object.InputArea_p.SetInputCapture(nil) //注销捕获器
 			})
 
 			{
@@ -92,8 +97,8 @@ func AgentRunIteratively(Ctx context.Context, app_p *tview.Application, AgentMes
 	}
 
 	// 注册一个全局的输入捕获器，监听ESC键以取消后续agent的输出。
-	app_p.QueueUpdateDraw(func() {
-		app_p.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+	global_object.App_p.QueueUpdateDraw(func() {
+		global_object.App_p.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 			if event.Key() == tcell.KeyEscape {
 				cancel() // 取消 context
 				return nil
@@ -102,12 +107,12 @@ func AgentRunIteratively(Ctx context.Context, app_p *tview.Application, AgentMes
 		})
 	})
 	// 函数返回前清除全局捕获器，避免ESC事件被持续拦截
-	defer app_p.QueueUpdateDraw(func() {
-		app_p.SetInputCapture(nil)
+	defer global_object.App_p.QueueUpdateDraw(func() {
+		global_object.App_p.SetInputCapture(nil)
 	})
 
 	// AgentRunOnce返回的消息包含本次对话输入输出的所有消息
-	AgentError_p := AgentRunOnce(Ctx, app_p, AgentMessageView_p, AgentRunner, sessionID, userID, requestID, userPrompt)
+	AgentError_p := AgentRunOnce(Ctx, AgentRunner, sessionID, userID, requestID, userPrompt)
 	if AgentError_p != nil { //如果运行过程中发生错误
 		return &TurnResult{
 			Code:       Error,
@@ -119,9 +124,9 @@ func AgentRunIteratively(Ctx context.Context, app_p *tview.Application, AgentMes
 	//如果ctx被取消，则设置结束状态为中断
 	select {
 	case <-Ctx.Done():
-		app_p.QueueUpdateDraw(func() {
-			fmt.Fprint(AgentMessageView_p, pretty.TInterrupted())
-			AgentMessageView_p.ScrollToEnd()
+		global_object.App_p.QueueUpdateDraw(func() {
+			fmt.Fprint(global_object.AgentMessageView_p, pretty.TInterrupted())
+			global_object.AgentMessageView_p.ScrollToEnd()
 		})
 		return &TurnResult{
 			Code:   Int,

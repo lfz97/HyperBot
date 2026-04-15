@@ -31,6 +31,30 @@ const (
 	Underline = "\033[4m"
 )
 
+// ========== TView 颜色定义 (tview 格式) ==========
+const (
+	TColorRed     = "red"
+	TColorGreen   = "green"
+	TColorYellow  = "yellow"
+	TColorBlue    = "blue"
+	TColorMagenta = "magenta"
+	TColorCyan    = "cyan"
+	TColorWhite   = "white"
+	TColorGray    = "gray"
+	TColorBlack   = "black"
+	TColorOrange  = "orange"
+
+	// 浅色版本
+	TColorLightRed     = "lightred"
+	TColorLightGreen   = "lightgreen"
+	TColorLightYellow  = "lightyellow"
+	TColorLightBlue    = "lightblue"
+	TColorLightMagenta = "lightmagenta"
+	TColorLightCyan    = "lightcyan"
+	TColorLightWhite   = "lightwhite"
+	TColorLightGray    = "lightgray"
+)
+
 // ========== 分隔线样式 ==========
 const (
 	SeparatorLine  = "─"
@@ -521,4 +545,9 @@ func TToolResult(text string) string {
 // TDivider TUI 分隔线
 func TDivider() string {
 	return fmt.Sprintf("[gray::d]%s[-:-:-]\n", thinLine+"───────────")
+}
+
+// TColoredText TUI 彩色文本
+func TColoredText(color string, text string) string {
+	return fmt.Sprintf("[%s]%s[-:-:-]", color, text)
 }

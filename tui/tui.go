@@ -4,22 +4,19 @@ import (
 	"HyperBot/bootstrap"
 	"HyperBot/handler"
 	"HyperBot/tui/global_object"
+	"HyperBot/tui/tip"
+	"HyperBot/utils/pretty"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"strings"
 )
 
-const banner string = `$$   $$ |$$\                                         $$$$$$$\             $$\
-  $$ |  $$ |                                        $$  __$$\            $$ |
-  $$ |  $$ |$$\   $$\  $$$$$$\   $$$$$$\   $$$$$$\  $$ |  $$ | $$$$$$\ $$$$$$\
-  $$$$$$$$ |$$ |  $$ |$$  __$$\ $$  __$$\ $$  __$$\ $$$$$$$\ |$$  __$$\\_$$  _|
-  $$  __$$ |$$ |  $$ |$$ /  $$ |$$$$$$$$ |$$ |  \__|$$  __$$\ $$ /  $$ | $$ |
-  $$ |  $$ |$$ |  $$ |$$ |  $$ |$$   ____|$$ |      $$ |  $$ |$$ |  $$ | $$ |$$\
-  $$ |  $$ |\$$$$$$$ |$$$$$$$  |\$$$$$$$\ $$ |      $$$$$$$  |\$$$$$$  | \$$$$  |
-  \__|  \__| \____$$ |$$  ____/  \_______|\__|      \_______/  \______/   \____/
-            $$\   $$ |$$ |
-            \$$$$$$  |$$ |
-             \______/ \__|`
+const banner string = `    //    / /                                  //   ) )                 
+   //___ / /         ___      ___      __     //___/ /   ___    __  ___ 
+  / ___   //   / / //   ) ) //___) ) //  ) ) / __  (   //   ) )  / /    
+ //    / ((___/ / //___/ / //       //      //    ) ) //   / /  / /     
+//    / /    / / //       ((____   //      //____/ / ((___/ /  / /      
+`
 
 // 定义颜色，遵循w3c的颜色规范，使用十六进制颜色值，确保界面风格统一且美观
 var (
@@ -41,22 +38,30 @@ func createSeparator() *tview.TextView {
 }
 
 func CreateConfigPage(pages *tview.Pages) tview.Primitive {
-	//创建两个视图
+	// Banner 区域
 	global_object.StatusView_p = tview.NewTextView().
 		SetDynamicColors(true).
 		SetScrollable(false).
-		SetText(banner)
+		SetTextAlign(tview.AlignCenter).
+		SetText(pretty.TColoredText(pretty.TColorClaudeCodeOrange, banner))
+	global_object.StatusView_p.SetBackgroundColor(bg)
+	global_object.StatusView_p.SetBorder(true)
+	global_object.StatusView_p.SetBorderColor(borderColor)
 
+	// 日志区域
 	global_object.LogView_p = tview.NewTextView().
-		SetDynamicColors(true). // 启用颜色
-		SetScrollable(true).    // 可滚动
-		SetWrap(false)          // 长行不换行
+		SetDynamicColors(true).
+		SetScrollable(true).
+		SetWrap(false)
+	global_object.LogView_p.SetBackgroundColor(bg)
+	global_object.LogView_p.SetBorder(true)
+	global_object.LogView_p.SetBorderColor(borderColor)
 
-	//创建一个垂直布局，把两个视图放进去
-	ConfigPageFlex := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(global_object.StatusView_p, 14, 0, false). // 状态视图占1行
-		AddItem(createSeparator(), 1, 0, false).
-		AddItem(global_object.LogView_p, 0, 1, false) // 日志视图占剩余空间
+	// 垂直布局: Banner(10行) + 日志(剩余空间)
+	ConfigPageFlex := tview.NewFlex().SetDirection(tview.FlexRow)
+	ConfigPageFlex.SetBackgroundColor(bg)
+	ConfigPageFlex.AddItem(global_object.StatusView_p, 10, 0, false)
+	ConfigPageFlex.AddItem(global_object.LogView_p, 0, 1, false)
 
 	go func() {
 		//初始化AgentRunner
@@ -76,7 +81,7 @@ func createAgentPage(runner handler.AgentRunner) tview.Primitive {
 
 	//设置标题状态栏
 	global_object.StatusBar_p = tview.NewTextView()
-	global_object.StatusBar_p.SetDynamicColors(true).SetWrap(false).SetText("[green]HyperBot[-]")
+	global_object.StatusBar_p.SetDynamicColors(true).SetWrap(false).SetText(tip.DefaultStatusBarTip)
 	global_object.StatusBar_p.SetTextAlign(tview.AlignCenter)
 	global_object.StatusBar_p.SetBackgroundColor(StatusBarBg)
 

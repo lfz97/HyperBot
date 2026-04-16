@@ -2,6 +2,7 @@ package handler
 
 import (
 	"HyperBot/tui/global_object"
+	"HyperBot/tui/tip"
 	"HyperBot/utils/pretty"
 	"context"
 	"fmt"
@@ -16,6 +17,11 @@ type AgentError struct {
 }
 
 func AgentRunOnce(Ctx context.Context, r AgentRunner, sessionID string, userID string, requestID string, userPrompt string) *AgentError {
+	// 修改状态栏提示，显示正在运行中
+	statusBarCtx := context.Background()
+	statusBarCtx, cancel := context.WithCancel(statusBarCtx)
+	defer cancel() // 确保函数退出时取消状态栏提示的上下文
+	go tip.StatusBarScrollingTip(statusBarCtx, "正在运行中......", pretty.TColorLightMagenta, global_object.App_p, global_object.StatusBar_p)
 
 	eventChan, err := r.Runner.Run(Ctx, userID, sessionID, model.Message{
 		Role:    model.RoleUser,

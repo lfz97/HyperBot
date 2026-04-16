@@ -43,16 +43,21 @@ const (
 	TColorGray    = "gray"
 	TColorBlack   = "black"
 	TColorOrange  = "orange"
+	TColorSkyBlue = "#4FC3F7"
 
 	// 浅色版本
 	TColorLightRed     = "lightred"
 	TColorLightGreen   = "lightgreen"
 	TColorLightYellow  = "lightyellow"
 	TColorLightBlue    = "lightblue"
-	TColorLightMagenta = "lightmagenta"
+	TColorLightMagenta = "#B39DDB"
 	TColorLightCyan    = "lightcyan"
 	TColorLightWhite   = "lightwhite"
 	TColorLightGray    = "lightgray"
+
+	//特殊版本
+	TColorClaudeCodeOrange = "#f7b786" // Claude Code 橙色
+
 )
 
 // ========== 分隔线样式 ==========

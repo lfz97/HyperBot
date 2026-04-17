@@ -61,9 +61,11 @@ func get_status(ctx context.Context, req struct {
 		st := manager.Status(req.Id)
 
 		return map[string]any{
-			"id":     st.ID,
-			"status": st.Status,
-			"pid":    st.PID,
+			"id":       st.ID,
+			"status":   st.Status,
+			"pid":      st.PID,
+			"error":    st.Error,
+			"exitCode": st.ExitCode,
 		}, nil
 	}
 	list := manager.StatusAll()

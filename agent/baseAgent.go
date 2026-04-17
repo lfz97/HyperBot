@@ -2,16 +2,14 @@ package agent
 
 import (
 	"HyperBot/models"
-	"path/filepath"
 	"trpc.group/trpc-go/trpc-agent-go/agent/llmagent"
 	"trpc.group/trpc-go/trpc-agent-go/model"
 	"trpc.group/trpc-go/trpc-agent-go/skill"
 	"trpc.group/trpc-go/trpc-agent-go/tool"
 )
 
-func ConfigBaseAgent(agentName string, systemPrompt string, genConfig model.GenerationConfig, tools []tool.Tool, toolsets []tool.ToolSet, Model string, BaseUrl string, APIkey string, ApiType string, ExeDirPath string) *llmagent.LLMAgent {
+func ConfigBaseAgent(agentName string, systemPrompt string, genConfig model.GenerationConfig, tools []tool.Tool, toolsets []tool.ToolSet, Model string, BaseUrl string, APIkey string, ApiType string, skillsPath string) *llmagent.LLMAgent {
 
-	skillsPath := filepath.Join(ExeDirPath, "skills")
 	repo, _ := skill.NewFSRepository(skillsPath)
 
 	opts := []llmagent.Option{

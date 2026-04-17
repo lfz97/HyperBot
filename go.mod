@@ -6,6 +6,7 @@ require (
 	github.com/gdamore/tcell/v2 v2.13.8
 	github.com/google/uuid v1.6.0
 	github.com/rivo/tview v0.42.0
+	go.uber.org/zap v1.27.0
 	gopkg.in/yaml.v2 v2.4.0
 	trpc.group/trpc-go/trpc-agent-go v1.8.1
 	trpc.group/trpc-go/trpc-agent-go/model/anthropic v1.8.0
@@ -46,7 +47,6 @@ require (
 	go.opentelemetry.io/otel/trace v1.29.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.3.1 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
-	go.uber.org/zap v1.27.0 // indirect
 	golang.org/x/net v0.41.0 // indirect
 	golang.org/x/sync v0.18.0 // indirect
 	golang.org/x/sys v0.38.0 // indirect

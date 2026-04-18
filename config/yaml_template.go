@@ -10,6 +10,7 @@ model:
   baseurl: "https://api.deepseek.com"
   apikey: "your-api-key"
   apitype: "openai" # openai 或者 anthropic
+  contextwindow: 64000 # 上下文窗口大小，请参考模型文档设置，影响自动摘要功能的触发时机
   stream: true # 是否开启流式输出，开启后可以实时看到模型的推理过程和工具调用信息
 
 # MCP 服务配置

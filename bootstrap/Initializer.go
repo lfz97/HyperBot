@@ -4,6 +4,7 @@ import (
 	"HyperBot/agent"
 	"HyperBot/config"
 	"HyperBot/handler"
+	"HyperBot/session"
 	"HyperBot/toolsets"
 	"HyperBot/toolsets/localexec"
 	"HyperBot/tui/global_object"
@@ -15,6 +16,7 @@ import (
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/yaml.v2"
 	"os"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -34,6 +36,8 @@ const (
 	HyperBotConfig       string = "hyperbot.yaml"
 	SkillsFolder         string = "skills"
 	HyperBotLogFile      string = "hyperbot.log"
+	OperationRecord      string = "OperationRecord.md"
+	outputDir            string = "output"
 )
 
 func Init(AgentName string) handler.AgentRunner {
@@ -173,7 +177,7 @@ func Init(AgentName string) handler.AgentRunner {
 	}
 
 	//设置系统提示词
-	configSystemPrompt(cwd)
+	configSystemPrompt(AgentName, cwd)
 
 	// 将框架日志重定向到文件，避免输出到终端干扰 TUI显示
 	redirectFrameworkLog()
@@ -194,13 +198,54 @@ func Init(AgentName string) handler.AgentRunner {
 }
 
 // 配置系统提示词，替换其中的占位符
-func configSystemPrompt(cwd string) {
-	date := time.Now().Local().String()
-	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{DATE}}", date)
-	os_type := runtime.GOOS
-	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{OSTYPE}}", os_type)
-	DiaryPath := filepath.Join(cwd, "Diary")
-	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{DIARYPATH}}", DiaryPath)
+func configSystemPrompt(AgentName string, cwd string) {
+
+	//Agent名称
+	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{NAME}}", AgentName)
+
+	//当前日期
+	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{DATE}}", time.Now().Format("2006-01-02 15:04:05 (Mon)"))
+
+	//当前时区
+	zone, _ := time.Now().Zone()
+	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{TIMEZONE}}", fmt.Sprintf("%s (%s)", time.Now().Location().String(), zone))
+
+	//操作系统
+	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{OSTYPE}}", runtime.GOOS)
+
+	//CPU架构
+	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{AARCH}}", runtime.GOARCH)
+
+	//主目录
+	homeDir, _ := os.UserHomeDir()
+	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{HOME}}", homeDir)
+
+	//临时目录
+	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{TMPDIR}}", os.TempDir())
+
+	//当前用户
+	u, _ := user.Current()
+	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{CURRENTUSER}}", u.Username)
+
+	//主机名
+	hostName, _ := os.Hostname()
+	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{HOSTNAME}}", hostName)
+
+	//运行目录
+	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{CWD}}", cwd)
+
+	//配置目录
+	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{CONFIGPATH}}", ConfigFolderPath)
+
+	//配置文件
+	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{HyperBotConfig}}", HyperBotConfig)
+	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{SkillsFolder}}", SkillsFolder)
+	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{HyperBotLogFile}}", HyperBotLogFile)
+	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{OperationRecord}}", OperationRecord)
+
+	//输出目录
+	outputDir := filepath.Join(cwd, outputDir)
+	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{OUTPUTDIR}}", outputDir)
 }
 
 // 获取当前可执行文件所在的目录完整路径
@@ -323,6 +368,7 @@ func parseConfig(RunningConfig config.Config) ([]tool.Tool, []tool.ToolSet, conf
 
 func initAgent(Tools []tool.Tool, Toolsets []tool.ToolSet, Model config.Model, AgentName string, skillsPath string) runner.Runner {
 	var Runner runner.Runner
+
 	if Model.APIType == "openai" {
 		Agent_p := agent.OpenaiAgent(
 			AgentName,
@@ -337,7 +383,9 @@ func initAgent(Tools []tool.Tool, Toolsets []tool.ToolSet, Model config.Model, A
 			Model.APIKey,
 			skillsPath,
 		)
-		Runner = runner.NewRunner(AgentName, Agent_p)
+		Runner = runner.NewRunner(AgentName, Agent_p,
+			runner.WithSessionService(session.NewMemorySessionService(Model)), // 使用内存会话服务，其中包含自动摘要功能
+		)
 	} else if Model.APIType == "anthropic" {
 		Agent_p := agent.AnthropicAgent(
 			AgentName,
@@ -352,7 +400,9 @@ func initAgent(Tools []tool.Tool, Toolsets []tool.ToolSet, Model config.Model, A
 			Model.APIKey,
 			skillsPath,
 		)
-		Runner = runner.NewRunner(AgentName, Agent_p)
+		Runner = runner.NewRunner(AgentName, Agent_p,
+			runner.WithSessionService(session.NewMemorySessionService(Model)), // 使用内存会话服务，其中包含自动摘要功能
+		)
 	} else {
 		pretty.ErrorWithExit("不支持的API类型，请检查配置文件中的 Model.APIType 字段")
 	}

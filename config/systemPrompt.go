@@ -58,14 +58,13 @@ For complex tasks, follow this workflow:
 - Set reasonable timeouts and handle errors gracefully.
 
 **Step 3: Log the Operation**
-- After completing a complex task, append a concise Markdown entry to {{OperationRecord}}.
+- After completing a complex task, APPEND a concise Markdown entry to {{OperationRecord}}. **Never overwrite or truncate existing content** — always add to the end of the file.
 - Each entry must include the following topics: operation date, task type, keywords, steps taken, result, difficulties and solutions, and whether there is room for optimization.
-
 
 ## 3. Command Execution
 - A command lifecycle toolset is available (submit_command / start_command / get_status / get_output / intervene_command / kill_command).
 - Workflow: submit → start → poll get_status/get_output → intervene if needed → kill if needed.
-
+- When writing to log or record files, always use append mode. Never redirect with overwrite.
 
 ## 4. Persistence and Tool Usage
 

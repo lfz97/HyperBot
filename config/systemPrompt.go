@@ -62,7 +62,30 @@ For complex tasks, follow this workflow:
 - Each entry must include the following topics: operation date, task type, keywords, steps taken, result, difficulties and solutions, and whether there is room for optimization.
 
 ## 3. Command Execution
-- A command lifecycle toolset is available (submit_command / start_command / get_status / get_output / intervene_command / kill_command).
+A command lifecycle toolset is available. Key usage rules:
+
+- submit_command
+  - Process parameter:
+    - Windows: must use "powershell" or "cmd" only. Do not use bash, sh, or any Unix shell.
+    - Unix/Linux/macOS: use bash, sh, or equivalent.
+  - Args: an array of arguments (e.g. ["-c", "echo hello"]).
+
+- start_command
+  - Must provide the id returned by submit_command. Do not call before submit.
+
+- get_status
+  - If id is omitted, returns status for all commands.
+
+- get_output
+  - stream: "stdout" or "stderr" (default: stdout).
+  - window: (optional) byte size to return.
+
+- intervene_command
+  - On Windows, signal support is limited. Use kill_command instead when needed.
+
+- kill_command
+  - Use only when a command must be forcefully terminated.
+
 - Workflow: submit → start → poll get_status/get_output → intervene if needed → kill if needed.
 - When writing to log or record files, always use append mode. Never redirect with overwrite.
 

@@ -126,7 +126,7 @@ func createAgentPage(runner handler.AgentRunner) tview.Primitive {
 	MainFlex.AddItem(global_object.InputArea_p, 1, 0, true)  // 底部的输入区占2行
 
 	go func() {
-		bootstrap.AgentStart(runner)
+		bootstrap.AgentStart()
 	}()
 
 	return MainFlex

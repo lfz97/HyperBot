@@ -14,9 +14,10 @@ var DefaultStatusBarTip string = pretty.TColoredText(pretty.TColorSkyBlue, "✦ 
 // SidebarUserInputTip 返回侧边栏的用户输入提示信息
 func SidebarUserInputTip() string {
 	coloredtip := fmt.Sprintf(
-		"%s %s  [gray]新对话[-]\n%s %s  [gray]退出[-]\n%s %s  [gray]发送[-]",
+		"%s %s  [gray]新对话[-]\n%s %s  [gray]退出[-]\n%s %s [gray]刷新工具[-]\n%s %s [gray]发送[-]",
 		pretty.TColoredText(pretty.TColorSkyBlue, "➤"), pretty.TColoredText(pretty.TColorSkyBlue, "/new"),
 		pretty.TColoredText(pretty.TColorSkyBlue, "➤"), pretty.TColoredText(pretty.TColorSkyBlue, "/exit"),
+		pretty.TColoredText(pretty.TColorSkyBlue, "➤"), pretty.TColoredText(pretty.TColorSkyBlue, "/flush"),
 		pretty.TColoredText(pretty.TColorSkyBlue, "⏎"), pretty.TColoredText(pretty.TColorSkyBlue, "Ctrl+Enter"),
 	)
 	return coloredtip

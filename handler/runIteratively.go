@@ -24,6 +24,12 @@ func AgentRunIteratively(Ctx context.Context, AgentRunner AgentRunner, sessionID
 			fmt.Fprint(global_object.AgentMessageView_p, pretty.TErrorF("对话发生错误: %s", inputContext.Reason))
 			global_object.AgentMessageView_p.ScrollToEnd()
 		})
+	} else if inputContext.Code == Flush {
+		global_object.App_p.QueueUpdateDraw(func() {
+			fmt.Fprint(global_object.AgentMessageView_p, pretty.TSuccess("工具已刷新，请继续对话"))
+			global_object.AgentMessageView_p.ScrollToEnd()
+		})
+
 	} else if inputContext.Code == Int { //对话因中断信号而中断,不输出提示语
 	}
 
@@ -31,7 +37,7 @@ func AgentRunIteratively(Ctx context.Context, AgentRunner AgentRunner, sessionID
 	var userPrompt string
 	for {
 		//如果是新对话、继续对话或中断后恢复，用户自行输入prompt
-		if inputContext.Code == New || inputContext.Code == Continue || inputContext.Code == Int {
+		if inputContext.Code == New || inputContext.Code == Continue || inputContext.Code == Int || inputContext.Code == Flush {
 			//更新侧边栏提示语，引导用户输入
 			global_object.App_p.QueueUpdateDraw(func() {
 				global_object.Sidebar_p.Clear() //先清空侧边栏内容，再输出提示语
@@ -78,6 +84,13 @@ func AgentRunIteratively(Ctx context.Context, AgentRunner AgentRunner, sessionID
 						Code:   New,
 						Reason: "用户主动开始新对话",
 					}
+
+				} else if userPrompt == "/flush" {
+					return &TurnResult{
+						Code:   Flush,
+						Reason: "用户主动刷新工具",
+					}
+
 				} else if userPrompt == "" {
 					continue //如果用户输入为空，重新开始本轮循环，等待用户输入
 

@@ -17,6 +17,7 @@ const (
 	Error    TurnCode = 3 //错误
 	Exit     TurnCode = 4 //用户退出
 	Continue TurnCode = 5 //继续对话
+	Flush    TurnCode = 6 //刷新工具
 )
 
 type AgentRunner struct {

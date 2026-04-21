@@ -50,11 +50,13 @@ func AgentRunIteratively(Ctx context.Context, AgentRunner AgentRunner, sessionID
 				global_object.InputArea_p.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 					//当用户按下ctrl+enter时，获取输入内容，清空输入框，并发送信号继续执行后续逻辑
 					if event.Key() == tcell.KeyEnter && event.Modifiers() == tcell.ModCtrl { //按下Ctrl+Enter时触发输入获取和信号发送
-
-						keyboardInputMessage <- global_object.InputArea_p.GetText()
+						//先移除InputCapture避免在GetText时阻塞事件循环
+						global_object.InputArea_p.SetInputCapture(nil)
+						//获取输入文本（文本量大时GetText可能耗时）
+						text := global_object.InputArea_p.GetText()
 						global_object.InputArea_p.SetText("", false)
 						global_object.InputArea_p.SetDisabled(true) //输入完成后就禁用输入框，防止用户多次输入ctrl+enter导致keyboardInputMessage <- global_object.InputArea_p.GetText()阻塞(因为只会被消费一次)
-
+						keyboardInputMessage <- text
 						return nil //吞掉ctrl+enter事件
 					}
 					//return event 将event里面的按键字符数据抽出来，存放进textArea的内部处理器中

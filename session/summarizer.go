@@ -2,6 +2,7 @@ package session
 
 import (
 	"HyperBot/config"
+	"time"
 	"trpc.group/trpc-go/trpc-agent-go/model"
 	"trpc.group/trpc-go/trpc-agent-go/model/anthropic"
 	"trpc.group/trpc-go/trpc-agent-go/model/openai"
@@ -11,6 +12,7 @@ import (
 // claude code 模式的摘要生成提示词
 const (
 	systemSummarizerPrompt string = "CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.\n" +
+		"CRITICAL:MAX SUMMARY WORDS: {max_summary_words}\n" +
 		"- You already have all the context you need in the conversation above.\n" +
 		"- Tool calls will be REJECTED and will waste your only turn.\n" +
 		"- Your entire response must be plain text: an <analysis> block followed by a <summary> block.\n\n" +
@@ -56,9 +58,9 @@ const (
 )
 
 const (
-	summaryPercentageThreshold float64 = 0.85
-	summaryMinTokensThreshold  int     = 40000
-	maxSummaryWords            int     = 2000
+	CheckTokenThreshold       int = 100000
+	summaryMinTokensThreshold int = 16000
+	maxSummaryWords           int = 2000
 )
 
 func NewSummarizer(m config.Model) summary.SessionSummarizer {
@@ -79,19 +81,19 @@ func NewSummarizer(m config.Model) summary.SessionSummarizer {
 			anthropic.WithAPIKey(m.APIKey),
 		)
 	}
-	// ── 创建 summarizer，92% 阈值 ───────────────
+	// ── 创建 summarizer阈值 ───────────────
 	sum := summary.NewSummarizer(
 		summarizerModel,
-		summary.WithContextThreshold(
-			summary.WithContextThresholdRatio(summaryPercentageThreshold),    // 触发百分比
-			summary.WithContextThresholdMinTokens(summaryMinTokensThreshold), // 设置距离触发的最小剩余上下文长度，单位为 token
-			summary.WithContextThresholdFallbackWindow(m.ContextWindow),      // 设置fallback 上下文大小，如果框架中没有内置你使用的模型的上下文窗口大小参数，那么上下文窗口会fallback到这个值
+		summary.WithChecksAny( // 任一条件满足即触发
+			summary.CheckEventThreshold(50),                  // 自上次摘要后新增
+			summary.CheckTokenThreshold(CheckTokenThreshold), // 自上次摘要后新增 n 个 token 后触发
+			summary.CheckTimeThreshold(10*time.Minute),       //n 分钟无活动
 		),
 		summary.WithMaxSummaryWords(maxSummaryWords),     //设置摘要的最大长度，单位为词
 		summary.WithSystemPrompt(systemSummarizerPrompt), //设置系统提示词，指导模型如何进行摘要，默认为空，可以根据需要自定义
 		summary.WithPrompt(userSummarizerPrompt),         //设置用户提示词，指导模型如何根据会话内容生成摘要，默认为空，可以根据需要自定义
-	)
 
+	)
 	return sum
 
 }

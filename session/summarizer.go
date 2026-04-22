@@ -2,13 +2,8 @@ package session
 
 import (
 	"HyperBot/config"
-	"bytes"
-	"io"
-	"net/http"
-	"os"
 	"time"
 
-	"github.com/anthropics/anthropic-sdk-go/option"
 	"trpc.group/trpc-go/trpc-agent-go/model"
 	"trpc.group/trpc-go/trpc-agent-go/model/anthropic"
 	"trpc.group/trpc-go/trpc-agent-go/model/openai"
@@ -68,6 +63,7 @@ const (
 	CheckTokenThreshold       int = 100000
 	summaryMinTokensThreshold int = 16000
 	maxSummaryWords           int = 2000
+	EventThreshold            int = 20
 )
 
 func NewSummarizer(m config.Model) summary.SessionSummarizer {
@@ -75,10 +71,6 @@ func NewSummarizer(m config.Model) summary.SessionSummarizer {
 	//设置tiktoken计算方式，默认的方式太不准确了
 	counter, _ := tiktoken.New(m.Model)
 	summary.SetTokenCounter(counter)
-
-	fd, _ := os.OpenFile("reqlogs.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	defer fd.Close()
-
 	var summarizerModel model.Model
 
 	if m.APIType == "openai" {
@@ -93,25 +85,6 @@ func NewSummarizer(m config.Model) summary.SessionSummarizer {
 			m.Model,
 			anthropic.WithBaseURL(m.BaseURL),
 			anthropic.WithAPIKey(m.APIKey),
-			anthropic.WithAnthropicClientOptions(option.WithMiddleware(func(req *http.Request, next option.MiddlewareNext) (*http.Response, error) {
-				// 读取并打印请求 body
-				bodyBytes, _ := io.ReadAll(req.Body)
-				req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-				fd.WriteString(time.Now().Format(time.RFC3339) + " " + req.Method + " " + req.URL.String() + "\n" + string(bodyBytes) + "\n\n")
-				resp, err := next(req)
-				if err != nil {
-					fd.WriteString(time.Now().Format(time.RFC3339) + " " + "Request Error: " + err.Error() + "\n\n")
-					return resp, err
-				}
-
-				// 读取并打印响应 body
-				respBytes, _ := io.ReadAll(resp.Body)
-				resp.Body = io.NopCloser(bytes.NewReader(respBytes))
-				fd.WriteString(time.Now().Format(time.RFC3339) + " " + "Response Status: " + resp.Status + "\n" + string(respBytes) + "\n\n")
-
-				return resp, nil
-			}),
-			),
 		)
 	}
 	// ── 创建 summarizer阈值 ───────────────
@@ -120,7 +93,7 @@ func NewSummarizer(m config.Model) summary.SessionSummarizer {
 		summary.WithToolCallFormatter(toolcallFormatter),     //自定义工具调用在摘要输入中的格式
 		summary.WithToolResultFormatter(toolResultFormatter), //自定义工具结果在摘要输入中的格式
 		summary.WithChecksAny( // 任一条件满足即触发
-			summary.CheckEventThreshold(50),                  // 自上次摘要后新增
+			summary.CheckEventThreshold(EventThreshold),      // 自上次摘要后新增
 			summary.CheckTokenThreshold(CheckTokenThreshold), // 自上次摘要后新增 n 个 token 后触发
 			summary.CheckTimeThreshold(10*time.Minute),       //n 分钟无活动
 		),

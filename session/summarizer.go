@@ -57,7 +57,7 @@ const (
 
 const (
 	summaryPercentageThreshold float64 = 0.85
-	summaryMinTokensThreshold  int     = 2000
+	summaryMinTokensThreshold  int     = 40000
 	maxSummaryWords            int     = 2000
 )
 

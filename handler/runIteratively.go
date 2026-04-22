@@ -50,8 +50,9 @@ func AgentRunIteratively(Ctx context.Context, AgentRunner AgentRunner, sessionID
 				global_object.InputArea_p.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 					//当用户按下ctrl+enter时，获取输入内容，清空输入框，并发送信号继续执行后续逻辑
 					if event.Key() == tcell.KeyEnter && event.Modifiers() == tcell.ModCtrl { //按下Ctrl+Enter时触发输入获取和信号发送
-						//先移除InputCapture避免在GetText时阻塞事件循环
+						//在获取输入内容之前先注销输入捕获器。解决输入长文本情况下，twiev内部可能出现卡死情况
 						global_object.InputArea_p.SetInputCapture(nil)
+
 						//获取输入文本（文本量大时GetText可能耗时）
 						text := global_object.InputArea_p.GetText()
 						global_object.InputArea_p.SetText("", false)

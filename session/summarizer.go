@@ -55,6 +55,11 @@ const (
 		"</summary>"
 )
 
+const (
+	summaryPercentageThreshold float64 = 0.85
+	summaryMinTokensThreshold  int     = 2000
+)
+
 func NewSummarizer(m config.Model) summary.SessionSummarizer {
 
 	var summarizerModel model.Model
@@ -77,9 +82,9 @@ func NewSummarizer(m config.Model) summary.SessionSummarizer {
 	sum := summary.NewSummarizer(
 		summarizerModel,
 		summary.WithContextThreshold(
-			summary.WithContextThresholdRatio(0.92),                     // 92% 触发
-			summary.WithContextThresholdMinTokens(2000),                 // 设置距离触发的最小剩余上下文长度，单位为 token
-			summary.WithContextThresholdFallbackWindow(m.ContextWindow), // 设置fallback 上下文大小，如果框架中没有内置你使用的模型的上下文窗口大小参数，那么上下文窗口会fallback到这个值
+			summary.WithContextThresholdRatio(summaryPercentageThreshold),    // 触发百分比
+			summary.WithContextThresholdMinTokens(summaryMinTokensThreshold), // 设置距离触发的最小剩余上下文长度，单位为 token
+			summary.WithContextThresholdFallbackWindow(m.ContextWindow),      // 设置fallback 上下文大小，如果框架中没有内置你使用的模型的上下文窗口大小参数，那么上下文窗口会fallback到这个值
 		),
 		summary.WithMaxSummaryWords(2000),                //设置摘要的最大长度，单位为词，默认为1000词，可以根据需要调整
 		summary.WithSystemPrompt(systemSummarizerPrompt), //设置系统提示词，指导模型如何进行摘要，默认为空，可以根据需要自定义

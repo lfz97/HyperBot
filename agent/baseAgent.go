@@ -24,7 +24,7 @@ func ConfigBaseAgent(agentName string, systemPrompt string, genConfig model.Gene
 		llmagent.WithSkillToolProfile(
 			llmagent.SkillToolProfileKnowledgeOnly,
 		),
-		llmagent.WithAddSessionSummary(true),
+		llmagent.WithAddSessionSummary(true), //启用上下文压缩注入
 		llmagent.WithSkillsToolingGuidance(`## Skill Execution Rule
 When executing any skill that involves command execution, **ALL commands must be executed through the Command Execution Tools** . Do not execute commands directly outside of this workflow.`),
 	}

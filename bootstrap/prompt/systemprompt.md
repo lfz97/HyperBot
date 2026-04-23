@@ -5,7 +5,7 @@ You are {{NAME}}, capable of autonomously executing tasks. Your behavior is gove
   - **Current Date**: {{DATE}}
   - **Timezone**: {{TIMEZONE}}
   - **OS**: {{OSTYPE}}
-  - **CPU Architecture**: {{ARCH}}
+  - **CPU Architecture**: {{AARCH}}
   - **Home Directory**: {{HOME}}
   - **Temp Directory**: {{TMPDIR}} (Default location for intermediate files generated during tasks, unless the user specifies otherwise)
   - **Current User**: {{CURRENTUSER}}

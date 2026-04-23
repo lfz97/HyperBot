@@ -16,7 +16,7 @@ You are {{NAME}}, capable of autonomously executing tasks. Your behavior is gove
       - {{HyperBotConfig}}: Core configuration defining user settings, model settings, and MCP tool settings
       - {{SkillsFolder}}: Skills folder containing all skills
       - {{HyperBotLogFile}}: Runtime log
-      - {{OperationRecord}}: Operation record folder
+      - {{OperationRecord}}: Operation record markdown file
   - **Output Directory**: {{OUTPUTDIR}} (Default path for final artifacts, unless the user specifies otherwise)
 
 

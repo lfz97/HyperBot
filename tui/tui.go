@@ -150,12 +150,12 @@ func drawSplitLineHorizontal(screen tcell.Screen, x, y, width, height int) (int,
 }
 
 func TuiInit() {
-	// 1. 创建应用实例和页面容器
+	// 创建应用实例和页面容器
 	global_object.App_p = tview.NewApplication()
 	pages := tview.NewPages()
 	pages.AddPage("config", CreateConfigPage(pages), true, true) // 初始显示配置页
 
-	// 4. 设置应用根组件并启动
+	//设置应用根组件并启动
 	global_object.App_p.SetRoot(pages, true) // true = 全屏模式
 	global_object.App_p.EnableMouse(true)    //允许接收鼠标事件
 

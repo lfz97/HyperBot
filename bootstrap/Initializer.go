@@ -38,6 +38,7 @@ var (
 	SkillFolderPath        string
 	AgentRunner            handler.AgentRunner
 	InMemorySessionService *inmemory.SessionService
+	frameworkLogFile       *os.File // 保存日志文件句柄，防止被 GC 回收
 )
 
 // 定义配置文件夹中的各种配置文件名称
@@ -372,7 +373,8 @@ func showSuccessAndExit(sussessmsg string) {
 // redirectFrameworkLog 将框架的日志输出从 stdout 重定向到可执行文件同目录下的 hyperbot.log 文件-created by copilot
 func redirectFrameworkLog() {
 	logPath := filepath.Join(ConfigFolderPath, HyperBotLogFile)
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	var err error
+	frameworkLogFile, err = os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return
 	}
@@ -391,7 +393,7 @@ func redirectFrameworkLog() {
 	}
 	core := zapcore.NewCore(
 		zapcore.NewConsoleEncoder(encoderCfg),
-		zapcore.AddSync(logFile),
+		zapcore.AddSync(frameworkLogFile),
 		zapcore.DebugLevel,
 	)
 	fileLogger := zap.New(core, zap.AddCaller(), zap.AddCallerSkip(1)).Sugar()

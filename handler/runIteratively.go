@@ -9,6 +9,10 @@ import (
 	"github.com/gdamore/tcell/v2"
 )
 
+const (
+	maxRunes int = 10000 // 输入框最大字符数限制
+)
+
 // 交互式对话
 func AgentRunIteratively(Ctx context.Context, AgentRunner AgentRunner, sessionID string, userID string, requestID string, inputContext TurnResult) *TurnResult {
 	Ctx, cancel := context.WithCancel(Ctx)
@@ -46,6 +50,7 @@ func AgentRunIteratively(Ctx context.Context, AgentRunner AgentRunner, sessionID
 			global_object.App_p.QueueUpdateDraw(func() {
 				global_object.App_p.SetFocus(global_object.InputArea_p)
 				global_object.InputArea_p.SetDisabled(false) //启用输入框
+
 				//注册一个输入捕获器，每次用户在输入框敲击键盘时都会触发
 				global_object.InputArea_p.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 					//当用户按下ctrl+enter时，获取输入内容，清空输入框，并发送信号继续执行后续逻辑
@@ -58,9 +63,11 @@ func AgentRunIteratively(Ctx context.Context, AgentRunner AgentRunner, sessionID
 						global_object.InputArea_p.SetText("", false)
 						global_object.InputArea_p.SetDisabled(true) //输入完成后就禁用输入框，防止用户多次输入ctrl+enter导致keyboardInputMessage <- global_object.InputArea_p.GetText()阻塞(因为只会被消费一次)
 						keyboardInputMessage <- text
-						return nil //吞掉ctrl+enter事件
+						//不传递按键
+						return nil
 					}
-					//return event 将event里面的按键字符数据抽出来，存放进textArea的内部处理器中
+
+					//传递按键，框架会正常处理这个按键，比如展示在输入框上
 					return event
 				})
 			})

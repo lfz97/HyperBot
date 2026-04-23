@@ -9,10 +9,6 @@ import (
 	"github.com/gdamore/tcell/v2"
 )
 
-const (
-	maxRunes int = 10000 // 输入框最大字符数限制
-)
-
 // 交互式对话
 func AgentRunIteratively(Ctx context.Context, AgentRunner AgentRunner, sessionID string, userID string, requestID string, inputContext TurnResult) *TurnResult {
 	Ctx, cancel := context.WithCancel(Ctx)

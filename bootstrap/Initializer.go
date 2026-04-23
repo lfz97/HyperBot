@@ -9,6 +9,7 @@ import (
 	"HyperBot/toolsets/localexec"
 	"HyperBot/tui/global_object"
 	"HyperBot/utils/pretty"
+	"embed"
 	"fmt"
 	"github.com/gdamore/tcell/v2"
 	"github.com/google/uuid"
@@ -39,6 +40,9 @@ var (
 	AgentRunner            handler.AgentRunner
 	InMemorySessionService *inmemory.SessionService
 	frameworkLogFile       *os.File // 保存日志文件句柄，防止被 GC 回收
+	//go:embed prompt/*
+	PromptFiles  embed.FS
+	systemprompt string
 )
 
 // 定义配置文件夹中的各种配置文件名称
@@ -85,53 +89,54 @@ func Init(an string) handler.AgentRunner {
 
 // 配置系统提示词，替换其中的占位符
 func configSystemPrompt() {
-
+	systemprompt_b, _ := PromptFiles.ReadFile("prompt/systemprompt.md")
+	systemprompt = string(systemprompt_b)
 	//Agent名称
-	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{NAME}}", Agentname)
+	systemprompt = strings.ReplaceAll(systemprompt, "{{NAME}}", Agentname)
 
 	//当前日期
-	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{DATE}}", time.Now().Format("2006-01-02 15:04:05 (Mon)"))
+	systemprompt = strings.ReplaceAll(systemprompt, "{{DATE}}", time.Now().Format("2006-01-02 15:04:05 (Mon)"))
 
 	//当前时区
 	zone, _ := time.Now().Zone()
-	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{TIMEZONE}}", fmt.Sprintf("%s (%s)", time.Now().Location().String(), zone))
+	systemprompt = strings.ReplaceAll(systemprompt, "{{TIMEZONE}}", fmt.Sprintf("%s (%s)", time.Now().Location().String(), zone))
 
 	//操作系统
-	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{OSTYPE}}", runtime.GOOS)
+	systemprompt = strings.ReplaceAll(systemprompt, "{{OSTYPE}}", runtime.GOOS)
 
 	//CPU架构
-	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{AARCH}}", runtime.GOARCH)
+	systemprompt = strings.ReplaceAll(systemprompt, "{{AARCH}}", runtime.GOARCH)
 
 	//主目录
 	homeDir, _ := os.UserHomeDir()
-	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{HOME}}", homeDir)
+	systemprompt = strings.ReplaceAll(systemprompt, "{{HOME}}", homeDir)
 
 	//临时目录
-	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{TMPDIR}}", os.TempDir())
+	systemprompt = strings.ReplaceAll(systemprompt, "{{TMPDIR}}", os.TempDir())
 
 	//当前用户
 	u, _ := user.Current()
-	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{CURRENTUSER}}", u.Username)
+	systemprompt = strings.ReplaceAll(systemprompt, "{{CURRENTUSER}}", u.Username)
 
 	//主机名
 	hostName, _ := os.Hostname()
-	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{HOSTNAME}}", hostName)
+	systemprompt = strings.ReplaceAll(systemprompt, "{{HOSTNAME}}", hostName)
 
 	//运行目录
-	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{CWD}}", CWD)
+	systemprompt = strings.ReplaceAll(systemprompt, "{{CWD}}", CWD)
 
 	//配置目录
-	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{CONFIGPATH}}", ConfigFolderPath)
+	systemprompt = strings.ReplaceAll(systemprompt, "{{CONFIGPATH}}", ConfigFolderPath)
 
 	//配置文件
-	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{HyperBotConfig}}", HyperBotConfig)
-	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{SkillsFolder}}", SkillsFolder)
-	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{HyperBotLogFile}}", HyperBotLogFile)
-	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{OperationRecord}}", OperationRecord)
+	systemprompt = strings.ReplaceAll(systemprompt, "{{HyperBotConfig}}", HyperBotConfig)
+	systemprompt = strings.ReplaceAll(systemprompt, "{{SkillsFolder}}", SkillsFolder)
+	systemprompt = strings.ReplaceAll(systemprompt, "{{HyperBotLogFile}}", HyperBotLogFile)
+	systemprompt = strings.ReplaceAll(systemprompt, "{{OperationRecord}}", OperationRecord)
 
 	//输出目录
 	outputDir := filepath.Join(CWD, outputDir)
-	config.SystemPrompt = strings.ReplaceAll(config.SystemPrompt, "{{OUTPUTDIR}}", outputDir)
+	systemprompt = strings.ReplaceAll(systemprompt, "{{OUTPUTDIR}}", outputDir)
 }
 
 // 获取当前可执行文件所在的目录完整路径
@@ -139,7 +144,7 @@ func getcwd() {
 
 	exePath, err := os.Executable() // 获取当前可执行文件的路径
 	if err != nil {
-		showErrorAndExit(pretty.TErrorF("获取可执行文件目录错误: %v,按任意键退出", err))
+		ShowErrorAndExit(pretty.TErrorF("获取可执行文件目录错误: %v,按任意键退出", err))
 	}
 	CWD = filepath.Dir(exePath) // 获取当前可执行文件的目录路径（不包含程序名）
 
@@ -154,14 +159,14 @@ func checkConfigFolder() {
 			//config 文件夹不存在，创建一个默认的 config 文件夹
 			err := os.MkdirAll(ConfigFolderPath, os.ModePerm)
 			if err != nil {
-				showErrorAndExit(pretty.TErrorF("创建默认config文件夹错误：%v", err))
+				ShowErrorAndExit(pretty.TErrorF("创建默认config文件夹错误：%v", err))
 			}
-			showSuccess("检查到config文件夹不存在，已创建默认config文件夹")
+			ShowSuccess("检查到config文件夹不存在，已创建默认config文件夹")
 		} else {
-			showErrorAndExit(pretty.TErrorF("检查config文件夹错误：%v", err))
+			ShowErrorAndExit(pretty.TErrorF("检查config文件夹错误：%v", err))
 		}
 	} else {
-		showSuccess("检查配置文件夹通过")
+		ShowSuccess("检查配置文件夹通过")
 	}
 
 }
@@ -176,21 +181,21 @@ func checkConfig() {
 			// 文件不存在，创建一个默认的 config.yaml
 			fd, err := os.OpenFile(HyperBotConfigPath, os.O_RDWR|os.O_CREATE, 0644)
 			if err != nil {
-				showErrorAndExit(pretty.TErrorF("创建默认配置文件错误：%v", err))
+				ShowErrorAndExit(pretty.TErrorF("创建默认配置文件错误：%v", err))
 			}
 			defer fd.Close()
 			//生成一个随机的用户ID，替换掉配置文件中的占位符
 			cfg := strings.ReplaceAll(config.Template, "{USERID}", uuid.New().String())
 			_, err = fd.WriteString(cfg)
 			if err != nil {
-				showErrorAndExit(pretty.TErrorF("写入默认配置文件错误：%v,按任意键退出", err))
+				ShowErrorAndExit(pretty.TErrorF("写入默认配置文件错误：%v,按任意键退出", err))
 			}
-			showSuccessAndExit("检查到配置文件不存在，已创建默认配置文件。请根据实际情况修改配置文件后重新启动程序！")
+			ShowSuccessAndExit("检查到配置文件不存在，已创建默认配置文件。请根据实际情况修改配置文件后重新启动程序！")
 		} else {
-			showErrorAndExit(pretty.TErrorF("检查配置文件错误：%v", err))
+			ShowErrorAndExit(pretty.TErrorF("检查配置文件错误：%v", err))
 		}
 	} else {
-		showSuccess("检查配置文件通过!")
+		ShowSuccess("检查配置文件通过!")
 	}
 
 }
@@ -203,14 +208,14 @@ func checkSkillsFolder() {
 			//skills 文件夹不存在，创建一个默认的 skills 文件夹
 			err := os.MkdirAll(SkillFolderPath, os.ModePerm)
 			if err != nil {
-				showErrorAndExit(pretty.TErrorF("创建默认skills文件夹错误：%v", err))
+				ShowErrorAndExit(pretty.TErrorF("创建默认skills文件夹错误：%v", err))
 			}
-			showSuccess("检查到skills文件夹不存在，已创建默认skills文件夹")
+			ShowSuccess("检查到skills文件夹不存在，已创建默认skills文件夹")
 		} else {
-			showErrorAndExit(pretty.TErrorF("检查skills文件夹错误：%v", err))
+			ShowErrorAndExit(pretty.TErrorF("检查skills文件夹错误：%v", err))
 		}
 	} else {
-		showSuccess("检查skills文件夹通过")
+		ShowSuccess("检查skills文件夹通过")
 	}
 }
 
@@ -266,7 +271,7 @@ func initAgent(Tools []tool.Tool, Toolsets []tool.ToolSet, Model config.Model) r
 	if Model.APIType == "openai" {
 		Agent_p := agent.OpenaiAgent(
 			Agentname,
-			config.SystemPrompt,
+			systemprompt,
 			model.GenerationConfig{
 				Stream: Model.Stream,
 			},
@@ -283,7 +288,7 @@ func initAgent(Tools []tool.Tool, Toolsets []tool.ToolSet, Model config.Model) r
 	} else if Model.APIType == "anthropic" {
 		Agent_p := agent.AnthropicAgent(
 			Agentname,
-			config.SystemPrompt,
+			systemprompt,
 			model.GenerationConfig{
 				Stream: Model.Stream,
 			},
@@ -308,7 +313,7 @@ func LoadConfig() {
 	//加载配置文件
 	config_p, err := loadConfig()
 	if err != nil {
-		showErrorAndExit(pretty.TErrorF("加载配置文件错误: %v,按任意键退出", err))
+		ShowErrorAndExit(pretty.TErrorF("加载配置文件错误: %v,按任意键退出", err))
 	}
 	Config_p = config_p
 }
@@ -329,7 +334,7 @@ func NewRunner() handler.AgentRunner {
 	return ar
 }
 
-func showErrorAndExit(errmsg string) {
+func ShowErrorAndExit(errmsg string) {
 	done := make(chan struct{})
 	global_object.App_p.QueueUpdateDraw(func() {
 		fmt.Fprint(global_object.LogView_p, errmsg)
@@ -346,13 +351,13 @@ func showErrorAndExit(errmsg string) {
 	})
 	<-done
 }
-func showSuccess(sussessmsg string) {
+func ShowSuccess(sussessmsg string) {
 	global_object.App_p.QueueUpdateDraw(func() {
 		fmt.Fprint(global_object.LogView_p, pretty.TSuccess(sussessmsg))
 		global_object.LogView_p.ScrollToEnd()
 	})
 }
-func showSuccessAndExit(sussessmsg string) {
+func ShowSuccessAndExit(sussessmsg string) {
 	done := make(chan struct{})
 	global_object.App_p.QueueUpdateDraw(func() {
 		fmt.Fprint(global_object.LogView_p, pretty.TSuccess(sussessmsg))

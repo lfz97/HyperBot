@@ -2,8 +2,8 @@ package session
 
 import (
 	"HyperBot/config"
+	"embed"
 	"time"
-
 	"trpc.group/trpc-go/trpc-agent-go/model"
 	"trpc.group/trpc-go/trpc-agent-go/model/anthropic"
 	"trpc.group/trpc-go/trpc-agent-go/model/openai"
@@ -11,52 +11,12 @@ import (
 	"trpc.group/trpc-go/trpc-agent-go/session/summary"
 )
 
-// claude code 模式的摘要生成提示词
-const (
-	systemSummarizerPrompt string = "CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.\n" +
-		"CRITICAL:MAX SUMMARY WORDS: {max_summary_words}\n" +
-		"- You already have all the context you need in the conversation above.\n" +
-		"- Tool calls will be REJECTED and will waste your only turn.\n" +
-		"- Your entire response must be plain text: an <analysis> block followed by a <summary> block.\n\n" +
-		"IMPORTANT: Before providing your final summary, wrap your analysis in <analysis> tags.\n" +
-		"Then provide your summary in a <summary> block with these sections:\n" +
-		"1. Primary Request and Intent\n" +
-		"2. Key Technical Concepts\n" +
-		"3. Files and Code Sections (with full snippets)\n" +
-		"4. Errors and Fixes\n" +
-		"5. Problem Solving\n" +
-		"6. All User Messages\n" +
-		"7. Pending Tasks\n" +
-		"8. Current Work\n" +
-		"9. Optional Next Step (with direct quotes from conversation)"
-	userSummarizerPrompt string = "{conversation_text}\n\n" +
-		"REMINDER: Do NOT call any tools. Respond with plain text only.\n" +
-		"Output format:\n\n" +
-		"<analysis>\n" +
-		"[Your analysis process, then strip this part when formatting]\n" +
-		"</analysis>\n\n" +
-		"<summary>\n" +
-		"1. Primary Request and Intent:\n" +
-		"[...]\n\n" +
-		"2. Key Technical Concepts:\n" +
-		"- [...]\n\n" +
-		"3. Files and Code Sections:\n" +
-		"- [File Name]\n" +
-		"  - [Why important]\n" +
-		"  - [Code snippet]\n\n" +
-		"4. Errors and fixes:\n" +
-		"- [...]\n\n" +
-		"5. Problem Solving:\n" +
-		"[...]\n\n" +
-		"6. All user messages:\n" +
-		"- [...]\n\n" +
-		"7. Pending Tasks:\n" +
-		"- [...]\n\n" +
-		"8. Current Work:\n" +
-		"[...]\n\n" +
-		"9. Optional Next Step:\n" +
-		"[...]\n" +
-		"</summary>"
+//go:embed prompt/*
+var promptFiles embed.FS
+
+var (
+	systemSummarizerPrompt string
+	userSummarizerPrompt   string
 )
 
 const (
@@ -65,6 +25,13 @@ const (
 	maxSummaryWords           int = 2000
 	EventThreshold            int = 20
 )
+
+func initSummarizerPrompts() {
+	systemSummarizerPrompt_b, _ := promptFiles.ReadFile("prompt/system.md")
+	systemSummarizerPrompt = string(systemSummarizerPrompt_b)
+	userSummarizerPrompt_b, _ := promptFiles.ReadFile("prompt/user.md")
+	userSummarizerPrompt = string(userSummarizerPrompt_b)
+}
 
 func NewSummarizer(m config.Model) summary.SessionSummarizer {
 

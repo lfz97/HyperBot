@@ -3,7 +3,6 @@ module HyperBot
 go 1.26.2
 
 require (
-	github.com/anthropics/anthropic-sdk-go v1.19.0
 	github.com/gdamore/tcell/v2 v2.13.9
 	github.com/google/uuid v1.6.0
 	github.com/rivo/tview v0.42.0
@@ -15,6 +14,7 @@ require (
 )
 
 require (
+	github.com/anthropics/anthropic-sdk-go v1.19.0 // indirect
 	github.com/bmatcuk/doublestar/v4 v4.9.1 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/creack/pty v1.1.24 // indirect

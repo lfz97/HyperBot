@@ -34,7 +34,7 @@ func initSummarizerPrompts() {
 }
 
 func NewSummarizer(m config.Model) summary.SessionSummarizer {
-
+	initSummarizerPrompts()
 	//设置tiktoken计算方式，默认的方式太不准确了
 	counter, _ := tiktoken.New(m.Model)
 	summary.SetTokenCounter(counter)

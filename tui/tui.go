@@ -158,5 +158,6 @@ func TuiInit() {
 	//设置应用根组件并启动
 	global_object.App_p.SetRoot(pages, true) // true = 全屏模式
 	global_object.App_p.EnableMouse(true)    //允许接收鼠标事件
+	global_object.App_p.EnablePaste(true)    //启用 bracketed paste，避免长文本粘贴时逐字符处理导致 CPU 飙升和界面卡死
 
 }

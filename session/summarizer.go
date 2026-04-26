@@ -2,7 +2,10 @@ package session
 
 import (
 	"HyperBot/config"
+	"HyperBot/tui/global_object"
+	"HyperBot/utils/pretty"
 	"embed"
+	"fmt"
 	"time"
 	"trpc.group/trpc-go/trpc-agent-go/model"
 	"trpc.group/trpc-go/trpc-agent-go/model/anthropic"
@@ -20,10 +23,9 @@ var (
 )
 
 const (
-	CheckTokenThreshold       int = 150000
-	summaryMinTokensThreshold int = 16000
-	maxSummaryWords           int = 2000
-	EventThreshold            int = 20
+	CheckTokenThreshold int = 150000
+	maxSummaryWords     int = 2000
+	EventThreshold      int = 20
 )
 
 func initSummarizerPrompts() {
@@ -67,7 +69,10 @@ func NewSummarizer(m config.Model) summary.SessionSummarizer {
 		summary.WithMaxSummaryWords(maxSummaryWords),     //设置摘要的最大长度，单位为词
 		summary.WithSystemPrompt(systemSummarizerPrompt), //设置系统提示词，指导模型如何进行摘要，默认为空，可以根据需要自定义
 		summary.WithPrompt(userSummarizerPrompt),         //设置用户提示词，指导模型如何根据会话内容生成摘要，默认为空，可以根据需要自定义
-
+		summary.WithPostSummaryHook(func(s *summary.PostSummaryHookContext) error {
+			fmt.Fprint(global_object.AgentMessageView_p, pretty.TColoredText(pretty.TColorGreen, fmt.Sprintf("\n->已生成摘要：\n%v", s.Summary)))
+			return nil
+		}),
 	)
 	return sum
 

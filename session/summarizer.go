@@ -6,6 +6,7 @@ import (
 	"HyperBot/utils/pretty"
 	"embed"
 	"fmt"
+	"regexp"
 	"time"
 	"trpc.group/trpc-go/trpc-agent-go/model"
 	"trpc.group/trpc-go/trpc-agent-go/model/anthropic"
@@ -20,6 +21,7 @@ var promptFiles embed.FS
 var (
 	systemSummarizerPrompt string
 	userSummarizerPrompt   string
+	reThink                = regexp.MustCompile(`<think>[\s\S]*?<\/think>`)
 )
 
 const (
@@ -70,7 +72,8 @@ func NewSummarizer(m config.Model) summary.SessionSummarizer {
 		summary.WithSystemPrompt(systemSummarizerPrompt), //设置系统提示词，指导模型如何进行摘要，默认为空，可以根据需要自定义
 		summary.WithPrompt(userSummarizerPrompt),         //设置用户提示词，指导模型如何根据会话内容生成摘要，默认为空，可以根据需要自定义
 		summary.WithPostSummaryHook(func(s *summary.PostSummaryHookContext) error {
-			fmt.Fprint(global_object.AgentMessageView_p, pretty.TColoredText(pretty.TColorGreen, fmt.Sprintf("\n->已生成摘要：\n%v", s.Summary)))
+			cleanSummary := reThink.ReplaceAllString(s.Summary, "") //将摘要内容中的<think>...</think>部分去掉
+			fmt.Fprint(global_object.AgentMessageView_p, pretty.TColoredText(pretty.TColorGreen, fmt.Sprintf("\n->已生成摘要：\n%v\n", cleanSummary)))
 			return nil
 		}),
 	)

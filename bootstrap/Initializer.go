@@ -27,6 +27,7 @@ import (
 	"trpc.group/trpc-go/trpc-agent-go/runner"
 	"trpc.group/trpc-go/trpc-agent-go/session/inmemory"
 	"trpc.group/trpc-go/trpc-agent-go/tool"
+	"trpc.group/trpc-go/trpc-mcp-go"
 )
 
 // 定义核心的状态变量
@@ -402,6 +403,10 @@ func redirectFrameworkLog() {
 		zapcore.DebugLevel,
 	)
 	fileLogger := zap.New(core, zap.AddCaller(), zap.AddCallerSkip(1)).Sugar()
+	//定向trpc-agent-go的日志输出到文件
 	log.Default = fileLogger
 	log.ContextDefault = fileLogger
+
+	//定向trpc-mcp-go的日志输出到文件
+	mcp.SetDefaultLogger(fileLogger)
 }

@@ -2,6 +2,7 @@ package localexec
 
 import (
 	"bytes"
+	"os"
 
 	"io"
 
@@ -56,6 +57,7 @@ type Job struct {
 	stdin     io.WriteCloser
 	stdoutBuf bytes.Buffer
 	stderrBuf bytes.Buffer
+	ptmx      *os.File // PTY master fd，nil 表示普通 pipe 模式
 
 	status   string
 	exitCode int

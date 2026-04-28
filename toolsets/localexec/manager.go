@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/creack/pty"
 )
 
 // Submit 创建任务但不启动
@@ -37,28 +39,28 @@ func (m *Manager) Start(id string) error {
 
 	cmd := buildCmd(job.SubmitOptions)
 
-	stdout, _ := cmd.StdoutPipe()
-	stderr, _ := cmd.StderrPipe()
-	stdin, _ := cmd.StdinPipe()
-	job.stdin = stdin
-
-	if err := cmd.Start(); err != nil {
+	// 用 PTY 替代普通 pipe，避免 ssh/sudo 等直接写 /dev/tty 破坏 TUI
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
 		job.status = StatusFailed
 		job.errStr = err.Error()
 		return err
 	}
+	job.ptmx = ptmx
+	job.stdin = nil // PTY 模式下 stdin 通过 ptmx 写入，不再需要 pipe
+
 	job.cmd = cmd
 	job.pid = cmd.Process.Pid
 	job.status = StatusRunning
 	job.startedAt = time.Now()
 
-	// 异步读取输出
-	go copyStream(stdout, &job.stdoutBuf)
-	go copyStream(stderr, &job.stderrBuf)
+	// PTY 模式下 stdout/stderr 合并在 ptmx 一个 fd 里读
+	go copyStream(ptmx, &job.stdoutBuf)
 
 	// 等待结束
 	go func() {
 		err := cmd.Wait()
+		ptmx.Close()
 		job.mu.Lock()
 		defer job.mu.Unlock()
 		job.endedAt = time.Now()
@@ -142,6 +144,11 @@ func (m *Manager) WriteStdin(id string, data []byte) error {
 	if job.status != StatusRunning {
 		return errors.New("job not running")
 	}
+	// PTY 模式下通过 master fd 写入，普通 pipe 模式通过 stdin pipe 写入
+	if job.ptmx != nil {
+		_, err := job.ptmx.Write(data)
+		return err
+	}
 	if job.stdin == nil {
 		return errors.New("stdin not available")
 	}
@@ -195,6 +202,9 @@ func (m *Manager) Kill(id string) error {
 	}
 	if err := job.cmd.Process.Kill(); err != nil {
 		return err
+	}
+	if job.ptmx != nil {
+		job.ptmx.Close()
 	}
 	job.status = StatusKilled
 	job.endedAt = time.Now()

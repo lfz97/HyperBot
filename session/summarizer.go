@@ -7,7 +7,9 @@ import (
 	"embed"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
+
 	"trpc.group/trpc-go/trpc-agent-go/model"
 	"trpc.group/trpc-go/trpc-agent-go/model/anthropic"
 	"trpc.group/trpc-go/trpc-agent-go/model/openai"
@@ -25,9 +27,9 @@ var (
 )
 
 const (
-	CheckTokenThreshold int = 150000
-	maxSummaryWords     int = 2000
-	EventThreshold      int = 20
+	CheckTokenThresholdPercent float64 = 0.5
+	maxSummaryWords            int     = 2000
+	EventThreshold             int     = 20
 )
 
 func initSummarizerPrompts() {
@@ -45,17 +47,26 @@ func NewSummarizer(m config.Model) summary.SessionSummarizer {
 	var summarizerModel model.Model
 
 	if m.APIType == "openai" {
-		summarizerModel = openai.New(
-			m.Model,
+		opts := []openai.Option{
 			openai.WithBaseURL(m.BaseURL),
 			openai.WithAPIKey(m.APIKey),
+		}
+		if strings.Contains(m.Model, "deepseek") == true {
+			opts = append(opts, openai.WithVariant(openai.VariantDeepSeek))
+		}
+		summarizerModel = openai.New(
+			m.Model,
+			opts...,
 		)
 
 	} else if m.APIType == "anthropic" {
-		summarizerModel = anthropic.New(
-			m.Model,
+		opts := []anthropic.Option{
 			anthropic.WithBaseURL(m.BaseURL),
 			anthropic.WithAPIKey(m.APIKey),
+		}
+		summarizerModel = anthropic.New(
+			m.Model,
+			opts...,
 		)
 	}
 	// ── 创建 summarizer阈值 ───────────────
@@ -64,9 +75,9 @@ func NewSummarizer(m config.Model) summary.SessionSummarizer {
 		summary.WithToolCallFormatter(toolcallFormatter),     //自定义工具调用在摘要输入中的格式
 		summary.WithToolResultFormatter(toolResultFormatter), //自定义工具结果在摘要输入中的格式
 		summary.WithChecksAny( // 任一条件满足即触发
-			summary.CheckEventThreshold(EventThreshold),      // 自上次摘要后新增 n 个事件后触发
-			summary.CheckTokenThreshold(CheckTokenThreshold), // 自上次摘要后新增 n 个 token 后触发
-			summary.CheckTimeThreshold(10*time.Minute),       //n 分钟无活动
+			summary.CheckEventThreshold(EventThreshold),                                           // 自上次摘要后新增 n 个事件后触发
+			summary.CheckTokenThreshold(int(CheckTokenThresholdPercent*float64(m.ContextWindow))), // 自上次摘要后新增 n 个 token 后触发
+			summary.CheckTimeThreshold(10*time.Minute),                                            //n 分钟无活动
 		),
 		summary.WithMaxSummaryWords(maxSummaryWords),     //设置摘要的最大长度，单位为词
 		summary.WithSystemPrompt(systemSummarizerPrompt), //设置系统提示词，指导模型如何进行摘要，默认为空，可以根据需要自定义

@@ -1,25 +1,24 @@
 module HyperBot
 
-go 1.26.2
+go 1.26.1
 
 require (
+	github.com/creack/pty v1.1.24
 	github.com/gdamore/tcell/v2 v2.13.9
 	github.com/google/uuid v1.6.0
 	github.com/rivo/tview v0.42.0
-	go.uber.org/zap v1.27.1
-	golang.org/x/sys v0.38.0
+	go.uber.org/zap v1.28.0
 	gopkg.in/yaml.v2 v2.4.0
-	trpc.group/trpc-go/trpc-agent-go v1.8.1
-	trpc.group/trpc-go/trpc-agent-go/model/anthropic v1.8.0
+	trpc.group/trpc-go/trpc-agent-go v1.8.2-0.20260428124038-927e8e7c223b
+	trpc.group/trpc-go/trpc-agent-go/model/anthropic v1.8.1-0.20260428124038-927e8e7c223b
 	trpc.group/trpc-go/trpc-agent-go/model/tiktoken v1.8.0
-	trpc.group/trpc-go/trpc-mcp-go v0.0.10
+	trpc.group/trpc-go/trpc-mcp-go v0.0.15
 )
 
 require (
-	github.com/anthropics/anthropic-sdk-go v1.19.0 // indirect
+	github.com/anthropics/anthropic-sdk-go v1.37.0 // indirect
 	github.com/bmatcuk/doublestar/v4 v4.9.1 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
-	github.com/creack/pty v1.1.24 // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/gdamore/encoding v1.0.1 // indirect
 	github.com/getkin/kin-openapi v0.124.0 // indirect
@@ -54,6 +53,7 @@ require (
 	go.uber.org/multierr v1.10.0 // indirect
 	golang.org/x/net v0.41.0 // indirect
 	golang.org/x/sync v0.18.0 // indirect
+	golang.org/x/sys v0.38.0 // indirect
 	golang.org/x/term v0.37.0 // indirect
 	golang.org/x/text v0.31.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240822170219-fc7c04adadcd // indirect

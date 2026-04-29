@@ -27,7 +27,7 @@ var (
 )
 
 const (
-	CheckTokenThresholdPercent float64 = 0.5
+	CheckTokenThresholdPercent float64 = 0.7
 	maxSummaryWords            int     = 2000
 	EventThreshold             int     = 20
 )
@@ -52,7 +52,10 @@ func NewSummarizer(m config.Model) summary.SessionSummarizer {
 			openai.WithAPIKey(m.APIKey),
 		}
 		if strings.Contains(m.Model, "deepseek") == true {
-			opts = append(opts, openai.WithVariant(openai.VariantDeepSeek))
+			opts = append(opts,
+				openai.WithVariant(openai.VariantDeepSeek),
+				openai.WithReasoningContentBackfill(true), //开启推理内容回填，解决模型响应reasoning为空时，框架不拼接推理字段，导致api报错
+			)
 		}
 		summarizerModel = openai.New(
 			m.Model,
@@ -75,8 +78,7 @@ func NewSummarizer(m config.Model) summary.SessionSummarizer {
 		summary.WithToolCallFormatter(toolcallFormatter),     //自定义工具调用在摘要输入中的格式
 		summary.WithToolResultFormatter(toolResultFormatter), //自定义工具结果在摘要输入中的格式
 		summary.WithChecksAny( // 任一条件满足即触发
-			summary.CheckEventThreshold(EventThreshold),                                           // 自上次摘要后新增 n 个事件后触发
-			summary.CheckTokenThreshold(int(CheckTokenThresholdPercent*float64(m.ContextWindow))), // 自上次摘要后新增 n 个 token 后触发
+			summary.CheckTokenThreshold(int(CheckTokenThresholdPercent*float64(m.ContextWindow))), // 新增 n 个 token 后触发
 			summary.CheckTimeThreshold(10*time.Minute),                                            //n 分钟无活动
 		),
 		summary.WithMaxSummaryWords(maxSummaryWords),     //设置摘要的最大长度，单位为词

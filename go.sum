@@ -186,12 +186,12 @@ trpc.group/trpc-go/trpc-a2a-go v0.2.5 h1:X3pAlWD128LaS9TtXsUDZoJWPVuPZDkZKUecKRx
 trpc.group/trpc-go/trpc-a2a-go v0.2.5/go.mod h1:Gtytau9Uoc3oPo/dpHvKit+tQn9Qlk5XFG1RiZTGqfk=
 trpc.group/trpc-go/trpc-agent-go v1.8.1 h1:9qKv3zryBxR8GHWGSlfYumMOkLcRmg7NBntdc7l2Gro=
 trpc.group/trpc-go/trpc-agent-go v1.8.1/go.mod h1:lksOlht6E+LR7AKOA0XoKrkI3AJNsfukTVes9BFmTow=
-trpc.group/trpc-go/trpc-agent-go v1.8.2-0.20260428124038-927e8e7c223b h1:Q4/uEQF7wPyK3RahFW9GOcHq4XIKCjOrqb8cTbvA+YY=
-trpc.group/trpc-go/trpc-agent-go v1.8.2-0.20260428124038-927e8e7c223b/go.mod h1:lksOlht6E+LR7AKOA0XoKrkI3AJNsfukTVes9BFmTow=
+trpc.group/trpc-go/trpc-agent-go v1.8.2-0.20260429055543-fcc550df3522 h1:QvalXiT7RhgoW42mB8Hu0B108eDlyxvo1qduVB3oISc=
+trpc.group/trpc-go/trpc-agent-go v1.8.2-0.20260429055543-fcc550df3522/go.mod h1:lksOlht6E+LR7AKOA0XoKrkI3AJNsfukTVes9BFmTow=
 trpc.group/trpc-go/trpc-agent-go/model/anthropic v1.8.0 h1:TfPOpxxildU0Y/hP+JrVPEwi61tmzFZYyrGlDl3dkkU=
 trpc.group/trpc-go/trpc-agent-go/model/anthropic v1.8.0/go.mod h1:BlAyN49KQKfVrw3W8azAIOisLy0pzkIVZOj4uTjpW7Q=
-trpc.group/trpc-go/trpc-agent-go/model/anthropic v1.8.1-0.20260428124038-927e8e7c223b h1:DXly9ktV7g99vRk0Db+R51izxOGNUo4+qqRYGEWGuEw=
-trpc.group/trpc-go/trpc-agent-go/model/anthropic v1.8.1-0.20260428124038-927e8e7c223b/go.mod h1:lmWmpdikxTwqN1C2q1rzEaP/52ajPP2Lo51AOdpkWt8=
+trpc.group/trpc-go/trpc-agent-go/model/anthropic v1.8.1-0.20260429055543-fcc550df3522 h1:um49wGlrbVMTsohohkqDFb3XDdkVNTX3zvkaGWWvfog=
+trpc.group/trpc-go/trpc-agent-go/model/anthropic v1.8.1-0.20260429055543-fcc550df3522/go.mod h1:lmWmpdikxTwqN1C2q1rzEaP/52ajPP2Lo51AOdpkWt8=
 trpc.group/trpc-go/trpc-agent-go/model/tiktoken v1.8.0 h1:09vAVFSOn7+dtWG6gGKiI2HohtDiP7NxDWaQe4kaqhQ=
 trpc.group/trpc-go/trpc-agent-go/model/tiktoken v1.8.0/go.mod h1:SgExIJ+lBn6iLlPAapOwcKGOpR3OM86e6LZmSR51Z5o=
 trpc.group/trpc-go/trpc-mcp-go v0.0.15 h1:0vWKNdKVbOtpcfr9BL7KhzgE+OWRzzp4qMEiDlAdPiY=

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 
+	"encoding/json"
+	"strconv"
 	"trpc.group/trpc-go/trpc-agent-go/tool"
 	"trpc.group/trpc-go/trpc-agent-go/tool/function"
 )
@@ -12,7 +14,7 @@ import (
 func submit_command(ctx context.Context, req struct {
 	Process string   `json:"process" jsonschema:"description:要执行的程序名。"`
 	Args    []string `json:"args" jsonschema:"description:程序的执行参数。"`
-}) (map[string]any, error) {
+}) (map[string]string, error) {
 
 	if req.Process == "" {
 		return nil, errors.New("`Process` cannot be empty")
@@ -24,7 +26,7 @@ func submit_command(ctx context.Context, req struct {
 	})
 	st := manager.Status(id)
 
-	result := map[string]any{
+	result := map[string]string{
 		"id":      id,
 		"status":  st.Status,
 		"message": "Command submitted successfully. Use `start_command` to execute",
@@ -35,7 +37,7 @@ func submit_command(ctx context.Context, req struct {
 // 工具：执行命令
 func start_command(ctx context.Context, req struct {
 	Id string `json:"id" jsonschema:"description:命令ID"`
-}) (map[string]any, error) {
+}) (map[string]string, error) {
 
 	if req.Id == "" {
 		return nil, errors.New("`id` cannot be empty")
@@ -45,7 +47,7 @@ func start_command(ctx context.Context, req struct {
 		return nil, err
 	}
 	st := manager.Status(req.Id)
-	return map[string]any{
+	return map[string]string{
 		"id":      req.Id,
 		"status":  st.Status,
 		"message": "Command started successfully. Use `get_status` to check running status and `get_output` to retrieve output",
@@ -55,22 +57,23 @@ func start_command(ctx context.Context, req struct {
 // 工具：查看命令状态（可选ID）
 func get_status(ctx context.Context, req struct {
 	Id string `json:"id" jsonschema:"description:命令ID"`
-}) (map[string]any, error) {
+}) (map[string]string, error) {
 
 	if req.Id != "" {
 		st := manager.Status(req.Id)
-
-		return map[string]any{
+		PID_s := strconv.Itoa(st.PID)
+		ExitCode_s := strconv.Itoa(st.ExitCode)
+		return map[string]string{
 			"id":       st.ID,
 			"status":   st.Status,
-			"pid":      st.PID,
+			"pid":      PID_s,
 			"error":    st.Error,
-			"exitCode": st.ExitCode,
+			"exitCode": ExitCode_s,
 		}, nil
 	}
 	list := manager.StatusAll()
-	return map[string]any{
-		"status_all": list,
+	return map[string]string{
+		"status_all": marshalJson(list),
 	}, nil
 }
 
@@ -79,7 +82,7 @@ func get_output(ctx context.Context, req struct {
 	Id     string `json:"id" jsonschema:"description:命令ID"`
 	Window int    `json:"window" jsonschema:"description:可选：窗口大小(字节)；默认全部"`
 	Stream string `json:"stream" jsonschema:"description:可选：输出流类型，stdout或stderr；默认stdout"`
-}) (map[string]any, error) {
+}) (map[string]string, error) {
 
 	if req.Id == "" {
 		return nil, errors.New("`id` cannot be empty")
@@ -91,7 +94,7 @@ func get_output(ctx context.Context, req struct {
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{
+	return map[string]string{
 		"id":     req.Id,
 		"output": string(data),
 	}, nil
@@ -102,7 +105,7 @@ func intervene_command(ctx context.Context, req struct {
 	Id     string `json:"id" jsonschema:"description:命令ID"`
 	Input  string `json:"input" jsonschema:"description:可选：写入到stdin的字符串"`
 	Signal string `json:"signal" jsonschema:"description:可选：信号类型，如SIGINT/SIGTERM/SIGKILL(跨平台差异)"`
-}) (map[string]any, error) {
+}) (map[string]string, error) {
 	if req.Id == "" {
 		return nil, errors.New("`id` cannot be empty")
 	}
@@ -111,7 +114,7 @@ func intervene_command(ctx context.Context, req struct {
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{
+		return map[string]string{
 			"id":  req.Id,
 			"msg": "input written to stdin",
 		}, nil
@@ -121,12 +124,12 @@ func intervene_command(ctx context.Context, req struct {
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{
+		return map[string]string{
 			"id":  req.Id,
 			"msg": "signal sent",
 		}, nil
 	}
-	return map[string]any{
+	return map[string]string{
 		"id":  req.Id,
 		"msg": "no action taken; provide `input` or `signal`",
 	}, nil
@@ -135,7 +138,7 @@ func intervene_command(ctx context.Context, req struct {
 // 工具：强制结束
 func kill_command(ctx context.Context, req struct {
 	Id string `json:"id" jsonschema:"description:命令ID"`
-}) (map[string]any, error) {
+}) (map[string]string, error) {
 	if req.Id == "" {
 		return nil, errors.New("`id` cannot be empty")
 	}
@@ -144,7 +147,7 @@ func kill_command(ctx context.Context, req struct {
 		return nil, err
 	}
 	st := manager.Status(req.Id)
-	return map[string]any{
+	return map[string]string{
 		"id":     req.Id,
 		"status": st.Status,
 	}, nil
@@ -190,4 +193,9 @@ func GetTools() []tool.Tool {
 	)
 	toolSets = append(toolSets, submit_commandTool, start_commandTool, get_statusTool, get_outputTool, intervene_commandTool, kill_commandTool)
 	return toolSets
+}
+
+func marshalJson(v any) string {
+	b, _ := json.Marshal(v)
+	return string(b)
 }

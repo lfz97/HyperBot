@@ -73,7 +73,6 @@ func AgentRunIteratively(Ctx context.Context, AgentRunner AgentRunner, sessionID
 			global_object.App_p.QueueUpdateDraw(func() {
 				fmt.Fprint(global_object.AgentMessageView_p, pretty.TUserInput(userPrompt))
 				global_object.AgentMessageView_p.ScrollToEnd()
-				global_object.InputArea_p.SetInputCapture(nil) //注销捕获器
 			})
 
 			{

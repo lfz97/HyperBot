@@ -6,6 +6,8 @@ import (
 	"HyperBot/utils/pretty"
 	"context"
 	"fmt"
+	"strings"
+
 	"github.com/gdamore/tcell/v2"
 )
 
@@ -76,27 +78,29 @@ func AgentRunIteratively(Ctx context.Context, AgentRunner AgentRunner, sessionID
 			})
 
 			{
-				if userPrompt == "/exit" {
+				checkprompt := strings.ReplaceAll(userPrompt, "\n", "")
+				checkprompt = strings.ReplaceAll(checkprompt, " ", "")
+				if checkprompt == "/exit" {
 
 					return &TurnResult{
 						Code:   Exit,
 						Reason: "用户主动结束对话",
 					}
 
-				} else if userPrompt == "/new" {
+				} else if checkprompt == "/new" {
 
 					return &TurnResult{
 						Code:   New,
 						Reason: "用户主动开始新对话",
 					}
 
-				} else if userPrompt == "/flush" {
+				} else if checkprompt == "/flush" {
 					return &TurnResult{
 						Code:   Flush,
 						Reason: "用户主动刷新工具",
 					}
 
-				} else if userPrompt == "" {
+				} else if checkprompt == "" {
 					continue //如果用户输入为空，重新开始本轮循环，等待用户输入
 
 				} else {

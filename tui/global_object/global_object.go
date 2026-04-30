@@ -1,6 +1,7 @@
 package global_object
 
 import (
+	"fmt"
 	"github.com/rivo/tview"
 )
 
@@ -20,3 +21,17 @@ var (
 	InputArea_p        *tview.TextArea
 	Sidebar_p          *tview.TextView
 )
+
+func Print2AgentMessageView(content string) {
+	App_p.QueueUpdateDraw(func() {
+		fmt.Fprint(AgentMessageView_p, content)
+		AgentMessageView_p.ScrollToEnd()
+	})
+}
+
+func Print2LogView(content string) {
+	App_p.QueueUpdateDraw(func() {
+		fmt.Fprint(LogView_p, content)
+		LogView_p.ScrollToEnd()
+	})
+}

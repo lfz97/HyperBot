@@ -328,49 +328,37 @@ func NewRunner() handler.AgentRunner {
 		Stream: Model.Stream,
 		UserId: User.UserID,
 	}
-	global_object.App_p.QueueUpdateDraw(func() {
-		fmt.Fprint(global_object.LogView_p, pretty.TReady(Agentname))
-		global_object.LogView_p.ScrollToEnd()
-	})
+	global_object.Print2LogView(pretty.TReady(Agentname))
 	return ar
 }
 
 func ShowErrorAndExit(errmsg string) {
 	done := make(chan struct{})
+	global_object.Print2LogView(errmsg)
 	global_object.App_p.QueueUpdateDraw(func() {
-		fmt.Fprint(global_object.LogView_p, errmsg)
-		global_object.LogView_p.ScrollToEnd()
 		//只要有按键就退出程序
 		global_object.App_p.SetFocus(global_object.LogView_p)
 		global_object.LogView_p.SetInputCapture(
 			func(event *tcell.EventKey) *tcell.EventKey {
 				global_object.App_p.Stop()
-				//close(done)
 				return nil
-
 			})
 	})
 	<-done
 }
 func ShowSuccess(sussessmsg string) {
-	global_object.App_p.QueueUpdateDraw(func() {
-		fmt.Fprint(global_object.LogView_p, pretty.TSuccess(sussessmsg))
-		global_object.LogView_p.ScrollToEnd()
-	})
+	global_object.Print2LogView(pretty.TSuccess(sussessmsg))
 }
 func ShowSuccessAndExit(sussessmsg string) {
 	done := make(chan struct{})
+	global_object.Print2LogView(pretty.TSuccess(sussessmsg))
 	global_object.App_p.QueueUpdateDraw(func() {
-		fmt.Fprint(global_object.LogView_p, pretty.TSuccess(sussessmsg))
-		global_object.LogView_p.ScrollToEnd()
 		//只要有按键就退出程序
 		global_object.App_p.SetFocus(global_object.LogView_p)
 		global_object.LogView_p.SetInputCapture(
 			func(event *tcell.EventKey) *tcell.EventKey {
 				global_object.App_p.Stop()
-				//close(done)
 				return nil
-
 			})
 	})
 	<-done

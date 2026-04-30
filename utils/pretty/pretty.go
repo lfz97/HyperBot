@@ -60,6 +60,22 @@ const (
 
 )
 
+// ── TView 背景色预设（适合 tview 动态颜色标签 [foreground:background:attr]）──
+const (
+	TBgSilver      = "#C0C0C0" // 银灰 — 最常用浅灰底
+	TBgLightGray   = "#D3D3D3" // 浅灰
+	TBgDarkGray    = "#696969" // 暗灰
+	TBgGainsboro   = "#DCDCDC" // 极浅灰
+	TBgMistyRose   = "#FFE4E1" // 浅粉
+	TBgLavender    = "#E6E6FA" // 淡紫
+	TBgLightCyan   = "#E0FFFF" // 浅青
+	TBgLightYellow = "#FFFFE0" // 浅黄（便利贴感）
+	TBgHoneydew    = "#F0FFF0" // 蜜瓜绿
+	TBgAliceBlue   = "#F0F8FF" // 爱丽丝蓝
+	TBgSeashell    = "#FFF5EE" // 贝壳白
+	TBgLinen       = "#FAF0E6" // 亚麻色
+)
+
 // ========== 分隔线样式 ==========
 const (
 	SeparatorLine  = "─"
@@ -500,7 +516,7 @@ func TCancelled() string {
 
 // TUserInput TUI 用户输入回显
 func TUserInput(text string) string {
-	return fmt.Sprintf("\n[cyan::b]▶ [-:-:-]%s\n", text)
+	return fmt.Sprintf("\n[white:%s:b]▶ %s[-:-:-]\n", TBgDarkGray, text)
 }
 
 // ── 推理区块 ─────────────────────────────────
@@ -556,3 +572,27 @@ func TDivider() string {
 func TColoredText(color string, text string) string {
 	return fmt.Sprintf("[%s]%s[-:-:-]", color, text)
 }
+
+// ── 背景色工具 ────────────────────────────────
+
+// TBg 通用背景色包装：前景白色，指定底色，文字粗体
+//   - bgColor: 背景色 hex，如 TBgSilver
+//   - text: 内容（需自行转义 tview 特殊字符）
+func TBg(bgColor string, text string) string {
+	return fmt.Sprintf("[white:%s:b]%s[-:-:-]", bgColor, text)
+}
+
+// TBgDim 通用背景色包装：前景灰色(dim)，指定底色
+//
+//	用于次要信息块，视觉权重更低
+func TBgDim(bgColor string, text string) string {
+	return fmt.Sprintf("[gray:%s]%s[-:-:-]", bgColor, text)
+}
+
+// 常用快捷包装
+func TBgGray(text string) string   { return TBg(TBgSilver, text) }
+func TBgCyan(text string) string   { return TBg(TBgLightCyan, text) }
+func TBgYellow(text string) string { return TBg(TBgLightYellow, text) }
+func TBgGreen(text string) string  { return TBg(TBgHoneydew, text) }
+func TBgBlue(text string) string   { return TBg(TBgAliceBlue, text) }
+func TBgPink(text string) string   { return TBg(TBgMistyRose, text) }

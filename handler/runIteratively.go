@@ -17,21 +17,11 @@ func AgentRunIteratively(Ctx context.Context, AgentRunner AgentRunner, sessionID
 	defer cancel()
 	//根据传入消息的类型输出不同提示语
 	if inputContext.Code == New {
-		global_object.App_p.QueueUpdateDraw(func() {
-			fmt.Fprint(global_object.AgentMessageView_p, pretty.TNewConversation())
-			global_object.AgentMessageView_p.ScrollToEnd()
-		})
+		global_object.Print2AgentMessageView(pretty.TNewConversation())
 	} else if inputContext.Code == Error {
-		global_object.App_p.QueueUpdateDraw(func() {
-			fmt.Fprint(global_object.AgentMessageView_p, pretty.TErrorF("对话发生错误: %s", inputContext.Reason))
-			global_object.AgentMessageView_p.ScrollToEnd()
-		})
+		global_object.Print2AgentMessageView(pretty.TErrorF("对话发生错误: %s", inputContext.Reason))
 	} else if inputContext.Code == Flush {
-		global_object.App_p.QueueUpdateDraw(func() {
-			fmt.Fprint(global_object.AgentMessageView_p, pretty.TSuccess("工具已刷新，请继续对话"))
-			global_object.AgentMessageView_p.ScrollToEnd()
-		})
-
+		global_object.Print2AgentMessageView(pretty.TSuccess("工具已刷新，请继续对话"))
 	} else if inputContext.Code == Int { //对话因中断信号而中断,不输出提示语
 	}
 
@@ -72,29 +62,25 @@ func AgentRunIteratively(Ctx context.Context, AgentRunner AgentRunner, sessionID
 
 			userPrompt = <-keyboardInputMessage //通过等待信号的方式阻塞代码，直到用户输入完成
 
-			global_object.App_p.QueueUpdateDraw(func() {
-				fmt.Fprint(global_object.AgentMessageView_p, pretty.TUserInput(userPrompt))
-				global_object.AgentMessageView_p.ScrollToEnd()
-			})
-
 			{
 				checkprompt := strings.ReplaceAll(userPrompt, "\n", "")
 				checkprompt = strings.ReplaceAll(checkprompt, " ", "")
 				if checkprompt == "/exit" {
-
+					global_object.Print2AgentMessageView(pretty.TColoredText(pretty.TColorLightGreen, fmt.Sprintf("\n%s%s\n", pretty.SymbolBullet, checkprompt)))
 					return &TurnResult{
 						Code:   Exit,
 						Reason: "用户主动结束对话",
 					}
 
 				} else if checkprompt == "/new" {
-
+					global_object.Print2AgentMessageView(pretty.TColoredText(pretty.TColorLightGreen, fmt.Sprintf("\n%s%s\n", pretty.SymbolBullet, checkprompt)))
 					return &TurnResult{
 						Code:   New,
 						Reason: "用户主动开始新对话",
 					}
 
 				} else if checkprompt == "/flush" {
+					global_object.Print2AgentMessageView(pretty.TColoredText(pretty.TColorLightGreen, fmt.Sprintf("\n%s%s\n", pretty.SymbolBullet, checkprompt)))
 					return &TurnResult{
 						Code:   Flush,
 						Reason: "用户主动刷新工具",
@@ -104,6 +90,7 @@ func AgentRunIteratively(Ctx context.Context, AgentRunner AgentRunner, sessionID
 					continue //如果用户输入为空，重新开始本轮循环，等待用户输入
 
 				} else {
+					global_object.Print2AgentMessageView(pretty.TUserInput(userPrompt))
 					break //正常输入，继续执行后续逻辑
 				}
 			}
@@ -146,10 +133,7 @@ func AgentRunIteratively(Ctx context.Context, AgentRunner AgentRunner, sessionID
 	//如果ctx被取消，则设置结束状态为中断
 	select {
 	case <-Ctx.Done():
-		global_object.App_p.QueueUpdateDraw(func() {
-			fmt.Fprint(global_object.AgentMessageView_p, pretty.TInterrupted())
-			global_object.AgentMessageView_p.ScrollToEnd()
-		})
+		global_object.Print2AgentMessageView(pretty.TInterrupted())
 		return &TurnResult{
 			Code:   Int,
 			Reason: "会话已取消，停止接收输入",

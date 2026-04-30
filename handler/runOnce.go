@@ -50,10 +50,7 @@ func AgentRunOnce(Ctx context.Context, r AgentRunner, sessionID string, userID s
 			if event.IsTerminalError() {
 				//填充err，使得返回的err不为nil，表示对话发生了错误
 				err = fmt.Errorf("Event发生TerminalError: %v", event.Error)
-				global_object.App_p.QueueUpdateDraw(func() {
-					fmt.Fprint(global_object.AgentMessageView_p, pretty.TErrorF("Event发生TerminalError: %v", err))
-					global_object.AgentMessageView_p.ScrollToEnd()
-				})
+				global_object.Print2AgentMessageView(pretty.TErrorF("Event发生TerminalError: %v", err))
 				return &AgentError{
 					Error:      err,
 					ErrorType:  "TerminalError",
@@ -66,10 +63,7 @@ func AgentRunOnce(Ctx context.Context, r AgentRunner, sessionID string, userID s
 		}
 		select {
 		case <-Ctx.Done():
-			global_object.App_p.QueueUpdateDraw(func() {
-				fmt.Fprint(global_object.AgentMessageView_p, pretty.TCancelled())
-				global_object.AgentMessageView_p.ScrollToEnd()
-			})
+			global_object.Print2AgentMessageView(pretty.TCancelled())
 			return nil
 
 		default:

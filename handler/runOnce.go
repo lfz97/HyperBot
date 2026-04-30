@@ -23,10 +23,17 @@ func AgentRunOnce(Ctx context.Context, r AgentRunner, sessionID string, userID s
 	defer cancel() // 确保函数退出时取消状态栏提示的上下文
 	go tip.StatusBarScrollingTip(statusBarCtx, "正在运行中......", pretty.TColorLightMagenta, global_object.App_p, global_object.StatusBar_p)
 
-	eventChan, err := r.Runner.Run(Ctx, userID, sessionID, model.Message{
-		Role:    model.RoleUser,
-		Content: userPrompt,
-	}, agent.WithRequestID(requestID))
+	eventChan, err := r.Runner.Run(
+		Ctx,
+		userID,
+		sessionID,
+		model.Message{
+			Role:    model.RoleUser,
+			Content: userPrompt,
+		},
+		agent.WithRequestID(requestID),
+		agent.WithToolCallArgumentsJSONRepairEnabled(true), //开启工具调用参数的JSON修复功能，解决因模型输出格式不规范导致的工具调用失败问题
+	)
 	if err != nil {
 		return &AgentError{
 			Error:      fmt.Errorf("AgentRunner.Run发生错误: %v", err),

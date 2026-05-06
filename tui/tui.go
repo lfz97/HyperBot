@@ -18,13 +18,13 @@ const banner string = `    //    / /                                  //   ) )
 //    / /    / / //       ((____   //      //____/ / ((___/ /  / /      
 `
 
-// 定义颜色，遵循w3c的颜色规范，使用十六进制颜色值，确保界面风格统一且美观
+// 定义颜色，配色统一来源于 pretty.TuiXxx 常量，确保界面风格统一且美观
 var (
-	bg          tcell.Color = tcell.GetColor("#1e1e1e") // 整体背景色
-	SidebarBg   tcell.Color = tcell.GetColor("#252526") // 侧边栏背景色
-	borderColor tcell.Color = tcell.GetColor("#3c3c3c") // 边框颜色
-	StatusBarBg tcell.Color = tcell.GetColor("#2d2d2d") // 标题栏背景色
-	inputAreaBg tcell.Color = tcell.GetColor("#383737") // 输入区背景色
+	bg          tcell.Color = tcell.GetColor(pretty.TuiBg)          // 整体背景色
+	SidebarBg   tcell.Color = tcell.GetColor(pretty.TuiPanelBg)     // 侧边栏背景色
+	borderColor tcell.Color = tcell.GetColor(pretty.TuiBorderColor) // 边框颜色
+	StatusBarBg tcell.Color = tcell.GetColor(pretty.TuiStatusBarBg) // 标题栏背景色
+	inputAreaBg tcell.Color = tcell.GetColor(pretty.TuiInputAreaBg) // 输入区背景色
 )
 
 // 创建一个view，专门用来显示分割线的文本视图
@@ -101,8 +101,8 @@ func createAgentPage(runner handler.AgentRunner) tview.Primitive {
 		SetWrap(true)
 	global_object.InputArea_p.SetBackgroundColor(inputAreaBg)
 	global_object.InputArea_p.SetTextStyle(tcell.StyleDefault.
-		Background(inputAreaBg).      // 输入区背景色
-		Foreground(tcell.ColorWhite)) // 文字颜色
+		Background(inputAreaBg).                        // 输入区背景色
+		Foreground(tcell.GetColor(pretty.TuiMainText))) // 文字颜色
 
 	//设置左侧命令提示区
 	global_object.Sidebar_p = tview.NewTextView().
@@ -136,7 +136,7 @@ func createAgentPage(runner handler.AgentRunner) tview.Primitive {
 func drawSplitLineVertical(screen tcell.Screen, x, y, width, height int) (int, int, int, int) {
 	for cy := y; cy < y+height; cy++ {
 		// 浅灰色：0x888888 是中等灰，0x666666 更深，0xaaaaaa 更浅
-		screen.SetContent(x, cy, '│', nil, tcell.StyleDefault.Foreground(tcell.NewHexColor(0x888888)))
+		screen.SetContent(x, cy, '│', nil, tcell.StyleDefault.Foreground(tcell.GetColor(pretty.TuiSplitLine)))
 	}
 	return x, y, width, height
 }
@@ -144,7 +144,7 @@ func drawSplitLineVertical(screen tcell.Screen, x, y, width, height int) (int, i
 // drawSplitLineHorizontal 是一个自定义的绘制函数，用于在指定位置绘制一条水平分割线
 func drawSplitLineHorizontal(screen tcell.Screen, x, y, width, height int) (int, int, int, int) {
 	for cx := x; cx < x+width; cx++ {
-		screen.SetContent(cx, y, '─', nil, tcell.StyleDefault.Foreground(tcell.NewHexColor(0x888888)))
+		screen.SetContent(cx, y, '─', nil, tcell.StyleDefault.Foreground(tcell.GetColor(pretty.TuiSplitLine)))
 	}
 	return x, y, width, height
 }

@@ -76,6 +76,19 @@ const (
 	TBgLinen       = "#FAF0E6" // 亚麻色
 )
 
+// ========== TUI 界面配色（GitHub 深色模式 + 深空蓝调）==========
+const (
+	TuiBg          = "#0F1115" // 整体背景色
+	TuiPanelBg     = "#151821" // 面板/侧边栏背景色
+	TuiBorderColor = "#2A2F3A" // 边框颜色
+	TuiStatusBarBg = "#151821" // 状态栏背景色
+	TuiInputAreaBg = "#151821" // 输入区背景色
+	TuiSplitLine   = "#4A5060" // 分割线颜色
+	TuiMainText    = "#C9D1D9" // 主文本颜色
+	TuiSubText     = "#8B949E" // 次文本颜色
+	TuiStatusHint  = "#6FC3DF" // 状态提示颜色
+)
+
 // ========== 分隔线样式 ==========
 const (
 	SeparatorLine  = "─"

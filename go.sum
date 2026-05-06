@@ -190,6 +190,8 @@ trpc.group/trpc-go/trpc-agent-go v1.8.2-0.20260429055543-fcc550df3522 h1:QvalXiT
 trpc.group/trpc-go/trpc-agent-go v1.8.2-0.20260429055543-fcc550df3522/go.mod h1:lksOlht6E+LR7AKOA0XoKrkI3AJNsfukTVes9BFmTow=
 trpc.group/trpc-go/trpc-agent-go v1.8.2-0.20260430100419-152bbaa4b4fc h1:N2CXvNV83QQtQXt3JHEbRKeuRLjBU5fYeN6YVK3eik0=
 trpc.group/trpc-go/trpc-agent-go v1.8.2-0.20260430100419-152bbaa4b4fc/go.mod h1:lksOlht6E+LR7AKOA0XoKrkI3AJNsfukTVes9BFmTow=
+trpc.group/trpc-go/trpc-agent-go v1.8.2-0.20260506121849-9549d9381a27 h1:uW7iv/Ty63v20yXdh3V3C95LeDmyd0o8OS4/NVeT/aM=
+trpc.group/trpc-go/trpc-agent-go v1.8.2-0.20260506121849-9549d9381a27/go.mod h1:lksOlht6E+LR7AKOA0XoKrkI3AJNsfukTVes9BFmTow=
 trpc.group/trpc-go/trpc-agent-go/model/anthropic v1.8.0 h1:TfPOpxxildU0Y/hP+JrVPEwi61tmzFZYyrGlDl3dkkU=
 trpc.group/trpc-go/trpc-agent-go/model/anthropic v1.8.0/go.mod h1:BlAyN49KQKfVrw3W8azAIOisLy0pzkIVZOj4uTjpW7Q=
 trpc.group/trpc-go/trpc-agent-go/model/anthropic v1.8.1-0.20260429055543-fcc550df3522 h1:um49wGlrbVMTsohohkqDFb3XDdkVNTX3zvkaGWWvfog=

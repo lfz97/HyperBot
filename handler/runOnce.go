@@ -21,7 +21,7 @@ func AgentRunOnce(Ctx context.Context, r AgentRunner, sessionID string, userID s
 	statusBarCtx := context.Background()
 	statusBarCtx, cancel := context.WithCancel(statusBarCtx)
 	defer cancel() // 确保函数退出时取消状态栏提示的上下文
-	go tip.StatusBarScrollingTip(statusBarCtx, "正在运行中......", pretty.TColorLightMagenta, global_object.App_p, global_object.StatusBar_p)
+	go tip.StatusBarScrollingTip(statusBarCtx, "Processing....", pretty.TColorLightMagenta, global_object.App_p, global_object.StatusBar_p)
 
 	eventChan, err := r.Runner.Run(
 		Ctx,
@@ -50,7 +50,7 @@ func AgentRunOnce(Ctx context.Context, r AgentRunner, sessionID string, userID s
 			if event.IsTerminalError() {
 				//填充err，使得返回的err不为nil，表示对话发生了错误
 				err = fmt.Errorf("Event发生TerminalError: %v", event.Error)
-				global_object.Print2AgentMessageView(pretty.TErrorF("Event发生TerminalError: %v", err))
+				global_object.Print2AgentMessageView(pretty.TErrorF("%v", err))
 				return &AgentError{
 					Error:      err,
 					ErrorType:  "TerminalError",

@@ -8,7 +8,6 @@ import (
 	"HyperBot/utils/pretty"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
-	"strings"
 )
 
 const banner string = `    //    / /                                  //   ) )                 
@@ -26,16 +25,6 @@ var (
 	StatusBarBg tcell.Color = tcell.GetColor(pretty.TuiStatusBarBg) // 标题栏背景色
 	inputAreaBg tcell.Color = tcell.GetColor(pretty.TuiInputAreaBg) // 输入区背景色
 )
-
-// 创建一个view，专门用来显示分割线的文本视图
-func createSeparator() *tview.TextView {
-	line := "─" // 水平线字符，也可以用 "═"
-	sep := tview.NewTextView().
-		SetDynamicColors(true).
-		SetText("[cyan]" + strings.Repeat(line, 300) + "[-]").
-		SetTextAlign(tview.AlignCenter)
-	return sep
-}
 
 func CreateConfigPage(pages *tview.Pages) tview.Primitive {
 	// Banner 区域
@@ -130,23 +119,6 @@ func createAgentPage(runner handler.AgentRunner) tview.Primitive {
 	}()
 
 	return MainFlex
-}
-
-// drawSplitLineVertical 是一个自定义的绘制函数，用于在指定位置绘制一条垂直分割线
-func drawSplitLineVertical(screen tcell.Screen, x, y, width, height int) (int, int, int, int) {
-	for cy := y; cy < y+height; cy++ {
-		// 浅灰色：0x888888 是中等灰，0x666666 更深，0xaaaaaa 更浅
-		screen.SetContent(x, cy, '│', nil, tcell.StyleDefault.Foreground(tcell.GetColor(pretty.TuiSplitLine)))
-	}
-	return x, y, width, height
-}
-
-// drawSplitLineHorizontal 是一个自定义的绘制函数，用于在指定位置绘制一条水平分割线
-func drawSplitLineHorizontal(screen tcell.Screen, x, y, width, height int) (int, int, int, int) {
-	for cx := x; cx < x+width; cx++ {
-		screen.SetContent(cx, y, '─', nil, tcell.StyleDefault.Foreground(tcell.GetColor(pretty.TuiSplitLine)))
-	}
-	return x, y, width, height
 }
 
 func TuiInit() {

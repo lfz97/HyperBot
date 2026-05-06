@@ -231,14 +231,6 @@ func randomID() string {
 	return hex.EncodeToString(b)
 }
 
-func kvEnv(env map[string]string) []string {
-	out := make([]string, 0, len(env))
-	for k, v := range env {
-		out = append(out, k+"="+v)
-	}
-	return out
-}
-
 func buildCmd(opts SubmitOptions) *exec.Cmd {
 
 	// 兜底：直接执行命令

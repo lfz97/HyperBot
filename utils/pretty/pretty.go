@@ -601,11 +601,3 @@ func TBg(bgColor string, text string) string {
 func TBgDim(bgColor string, text string) string {
 	return fmt.Sprintf("[gray:%s]%s[-:-:-]", bgColor, text)
 }
-
-// 常用快捷包装
-func TBgGray(text string) string   { return TBg(TBgSilver, text) }
-func TBgCyan(text string) string   { return TBg(TBgLightCyan, text) }
-func TBgYellow(text string) string { return TBg(TBgLightYellow, text) }
-func TBgGreen(text string) string  { return TBg(TBgHoneydew, text) }
-func TBgBlue(text string) string   { return TBg(TBgAliceBlue, text) }
-func TBgPink(text string) string   { return TBg(TBgMistyRose, text) }

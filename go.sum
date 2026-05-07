@@ -192,12 +192,16 @@ trpc.group/trpc-go/trpc-agent-go v1.8.2-0.20260430100419-152bbaa4b4fc h1:N2CXvNV
 trpc.group/trpc-go/trpc-agent-go v1.8.2-0.20260430100419-152bbaa4b4fc/go.mod h1:lksOlht6E+LR7AKOA0XoKrkI3AJNsfukTVes9BFmTow=
 trpc.group/trpc-go/trpc-agent-go v1.8.2-0.20260506121849-9549d9381a27 h1:uW7iv/Ty63v20yXdh3V3C95LeDmyd0o8OS4/NVeT/aM=
 trpc.group/trpc-go/trpc-agent-go v1.8.2-0.20260506121849-9549d9381a27/go.mod h1:lksOlht6E+LR7AKOA0XoKrkI3AJNsfukTVes9BFmTow=
+trpc.group/trpc-go/trpc-agent-go v1.8.2-0.20260507095141-364189553684 h1:Mo6NsLuIY0aiMCBNQgtKkIwiNVoKEehaZphme79BzAQ=
+trpc.group/trpc-go/trpc-agent-go v1.8.2-0.20260507095141-364189553684/go.mod h1:lksOlht6E+LR7AKOA0XoKrkI3AJNsfukTVes9BFmTow=
 trpc.group/trpc-go/trpc-agent-go/model/anthropic v1.8.0 h1:TfPOpxxildU0Y/hP+JrVPEwi61tmzFZYyrGlDl3dkkU=
 trpc.group/trpc-go/trpc-agent-go/model/anthropic v1.8.0/go.mod h1:BlAyN49KQKfVrw3W8azAIOisLy0pzkIVZOj4uTjpW7Q=
 trpc.group/trpc-go/trpc-agent-go/model/anthropic v1.8.1-0.20260429055543-fcc550df3522 h1:um49wGlrbVMTsohohkqDFb3XDdkVNTX3zvkaGWWvfog=
 trpc.group/trpc-go/trpc-agent-go/model/anthropic v1.8.1-0.20260429055543-fcc550df3522/go.mod h1:lmWmpdikxTwqN1C2q1rzEaP/52ajPP2Lo51AOdpkWt8=
 trpc.group/trpc-go/trpc-agent-go/model/anthropic v1.8.1-0.20260430100419-152bbaa4b4fc h1:EWPQigdMSe0pW4kJklLww+sKsEI5kIxT7b77LToyUCU=
 trpc.group/trpc-go/trpc-agent-go/model/anthropic v1.8.1-0.20260430100419-152bbaa4b4fc/go.mod h1:lmWmpdikxTwqN1C2q1rzEaP/52ajPP2Lo51AOdpkWt8=
+trpc.group/trpc-go/trpc-agent-go/model/anthropic v1.8.1-0.20260507095141-364189553684 h1:mNsrPfsz8JCPgxNz8fTY72poMaEz7eI32O12Y57Qhyc=
+trpc.group/trpc-go/trpc-agent-go/model/anthropic v1.8.1-0.20260507095141-364189553684/go.mod h1:lmWmpdikxTwqN1C2q1rzEaP/52ajPP2Lo51AOdpkWt8=
 trpc.group/trpc-go/trpc-agent-go/model/tiktoken v1.8.0 h1:09vAVFSOn7+dtWG6gGKiI2HohtDiP7NxDWaQe4kaqhQ=
 trpc.group/trpc-go/trpc-agent-go/model/tiktoken v1.8.0/go.mod h1:SgExIJ+lBn6iLlPAapOwcKGOpR3OM86e6LZmSR51Z5o=
 trpc.group/trpc-go/trpc-mcp-go v0.0.15 h1:0vWKNdKVbOtpcfr9BL7KhzgE+OWRzzp4qMEiDlAdPiY=

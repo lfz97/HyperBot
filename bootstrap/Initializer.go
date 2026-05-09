@@ -41,8 +41,10 @@ var (
 	AgentRunner            handler.AgentRunner
 	InMemorySessionService *inmemory.SessionService
 	frameworkLogFile       *os.File // 保存日志文件句柄，防止被 GC 回收
+
 	//go:embed prompt/*
-	PromptFiles  embed.FS
+	PromptFiles embed.FS
+
 	systemprompt string
 )
 

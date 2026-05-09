@@ -138,8 +138,8 @@ func configSystemPrompt() {
 	systemprompt = strings.ReplaceAll(systemprompt, "{{OperationRecord}}", OperationRecord)
 
 	//输出目录
-	outputDir := filepath.Join(CWD, outputDir)
-	systemprompt = strings.ReplaceAll(systemprompt, "{{OUTPUTDIR}}", outputDir)
+	outputPath := filepath.Join(CWD, outputDir)
+	systemprompt = strings.ReplaceAll(systemprompt, "{{OUTPUTDIR}}", outputPath)
 }
 
 // 获取当前可执行文件所在的目录完整路径
@@ -204,7 +204,7 @@ func checkConfig() {
 }
 
 func checkSkillsFolder() {
-	SkillFolderPath = filepath.Join(ConfigFolderPath, "skills")
+	SkillFolderPath = filepath.Join(ConfigFolderPath, SkillsFolder)
 	_, err := os.Stat(SkillFolderPath)
 	if err != nil {
 		if os.IsNotExist(err) {

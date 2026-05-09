@@ -9,9 +9,9 @@ require (
 	github.com/rivo/tview v0.42.0
 	go.uber.org/zap v1.28.0
 	gopkg.in/yaml.v2 v2.4.0
-	trpc.group/trpc-go/trpc-agent-go v1.8.2-0.20260507095141-364189553684
-	trpc.group/trpc-go/trpc-agent-go/model/anthropic v1.8.1-0.20260507095141-364189553684
-	trpc.group/trpc-go/trpc-agent-go/model/tiktoken v1.8.0
+	trpc.group/trpc-go/trpc-agent-go v1.9.0
+	trpc.group/trpc-go/trpc-agent-go/model/anthropic v1.9.0
+	trpc.group/trpc-go/trpc-agent-go/model/tiktoken v1.9.0
 	trpc.group/trpc-go/trpc-mcp-go v0.0.15
 )
 

@@ -33,22 +33,22 @@ import (
 
 // 定义核心的状态变量
 var (
-	Config_p               *config.Config
-	Agentname              string
-	CWD                    string
-	ConfigFolderPath       string
-	HyperBotConfigPath     string
-	SkillFolderPath        string
-	AgentRunner            handler.AgentRunner
-	InMemorySessionService *inmemory.SessionService
-	frameworkLogFile       *os.File // 保存日志文件句柄，防止被 GC 回收
+	Config_p               *config.Config           //yaml配置
+	Agentname              string                   //Agent名称
+	CWD                    string                   //当前工作目录
+	ConfigFolderPath       string                   //配置文件夹路径
+	HyperBotConfigPath     string                   //配置文件路径
+	SkillFolderPath        string                   //技能目录路径
+	AgentRunner            handler.AgentRunner      //Runner，全局唯一
+	InMemorySessionService *inmemory.SessionService //内存会话服务，包含自动摘要功能
+	frameworkLogFile       *os.File                 // 保存日志文件句柄，防止被 GC 回收
 
 	//go:embed prompt/*
-	PromptFiles embed.FS
+	PromptFiles embed.FS //提示词嵌入FS
 
-	systemprompt string
-	Toolsets     []tool.ToolSet
-	Tools        []tool.Tool
+	systemprompt string         //agent的系统提示词
+	Toolsets     []tool.ToolSet //agent挂载的工具集
+	Tools        []tool.Tool    //agent挂载的工具
 )
 
 // 定义配置文件夹中的各种配置文件名称

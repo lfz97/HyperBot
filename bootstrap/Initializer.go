@@ -324,6 +324,12 @@ func LoadConfig() {
 	Config_p = config_p
 }
 
+func loadFunctionTools() {
+	fileopstools := functionTools.GetFileOperationsTools()
+	fileSystemTools := functionTools.GetFileSystemTools()
+	Tools = append(Tools, fileopstools...)
+	Tools = append(Tools, fileSystemTools...)
+}
 func NewRunner() handler.AgentRunner {
 	//解析配置文件
 	parseConfig()
@@ -367,13 +373,6 @@ func ShowSuccessAndExit(sussessmsg string) {
 			})
 	})
 	<-done
-}
-
-func loadFunctionTools() {
-	fileopstools := functionTools.GetFileOperationsTools()
-	fileSystemTools := functionTools.GetFileSystemTools()
-	Tools = append(Tools, fileopstools...)
-	Tools = append(Tools, fileSystemTools...)
 }
 
 // redirectFrameworkLog 将框架的日志输出从 stdout 重定向到可执行文件同目录下的 hyperbot.log 文件-created by copilot

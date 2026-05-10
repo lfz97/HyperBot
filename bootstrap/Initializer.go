@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"HyperBot/agent"
 	"HyperBot/config"
+	"HyperBot/functionTools"
 	"HyperBot/handler"
 	"HyperBot/session"
 	"HyperBot/toolsets"
@@ -46,6 +47,8 @@ var (
 	PromptFiles embed.FS
 
 	systemprompt string
+	Toolsets     []tool.ToolSet
+	Tools        []tool.Tool
 )
 
 // 定义配置文件夹中的各种配置文件名称
@@ -85,6 +88,8 @@ func Init(an string) handler.AgentRunner {
 	//初始化内存会话服务
 	initMemorySessionService()
 
+	//加载function工具
+	loadFunctionTools()
 	//初始化AgentRunner
 	AgentRunner = NewRunner()
 	return AgentRunner
@@ -235,9 +240,7 @@ func loadConfig() (*config.Config, error) {
 	return &YamlConfig, nil
 }
 
-func parseConfig() ([]tool.Tool, []tool.ToolSet, config.Model, config.User) {
-	Tools := []tool.Tool{}
-	Toolsets := []tool.ToolSet{}
+func parseConfig() {
 
 	if len((*Config_p).Mcp) != 0 {
 		//读取配置文件中的 MCP 配置，创建 MCP ToolSet 并添加到 Toolsets 中
@@ -261,45 +264,45 @@ func parseConfig() ([]tool.Tool, []tool.ToolSet, config.Model, config.User) {
 	}
 
 	Toolsets = append(Toolsets, localexec.LocalExec()) //localexec 必须启用
-	return Tools, Toolsets, (*Config_p).Model, (*Config_p).User
+
 }
 
 func initMemorySessionService() {
 	InMemorySessionService = session.NewMemorySessionService((*Config_p).Model)
 }
 
-func initAgent(Tools []tool.Tool, Toolsets []tool.ToolSet, Model config.Model) runner.Runner {
+func initAgent() runner.Runner {
 	var Runner runner.Runner
 
-	if Model.APIType == "openai" {
+	if (*Config_p).Model.APIType == "openai" {
 		Agent_p := agent.OpenaiAgent(
 			Agentname,
 			systemprompt,
 			model.GenerationConfig{
-				Stream: Model.Stream,
+				Stream: (*Config_p).Model.Stream,
 			},
 			Tools,
 			Toolsets,
-			Model.Model,
-			Model.BaseURL,
-			Model.APIKey,
+			(*Config_p).Model.Model,
+			(*Config_p).Model.BaseURL,
+			(*Config_p).Model.APIKey,
 			SkillFolderPath,
 		)
 		Runner = runner.NewRunner(Agentname, Agent_p,
 			runner.WithSessionService(InMemorySessionService), // 使用内存会话服务，其中包含自动摘要功能
 		)
-	} else if Model.APIType == "anthropic" {
+	} else if (*Config_p).Model.APIType == "anthropic" {
 		Agent_p := agent.AnthropicAgent(
 			Agentname,
 			systemprompt,
 			model.GenerationConfig{
-				Stream: Model.Stream,
+				Stream: (*Config_p).Model.Stream,
 			},
 			Tools,
 			Toolsets,
-			Model.Model,
-			Model.BaseURL,
-			Model.APIKey,
+			(*Config_p).Model.Model,
+			(*Config_p).Model.BaseURL,
+			(*Config_p).Model.APIKey,
 			SkillFolderPath,
 		)
 		Runner = runner.NewRunner(Agentname, Agent_p,
@@ -323,12 +326,12 @@ func LoadConfig() {
 
 func NewRunner() handler.AgentRunner {
 	//解析配置文件
-	Tools, Toolsets, Model, User := parseConfig()
-	runner := initAgent(Tools, Toolsets, Model)
+	parseConfig()
+	runner := initAgent()
 	ar := handler.AgentRunner{
 		Runner: runner,
-		Stream: Model.Stream,
-		UserId: User.UserID,
+		Stream: (*Config_p).Model.Stream,
+		UserId: (*Config_p).User.UserID,
 	}
 	global_object.Print2LogView(pretty.TReady(Agentname))
 	return ar
@@ -364,6 +367,13 @@ func ShowSuccessAndExit(sussessmsg string) {
 			})
 	})
 	<-done
+}
+
+func loadFunctionTools() {
+	fileopstools := functionTools.GetFileOperationsTools()
+	fileSystemTools := functionTools.GetFileSystemTools()
+	Tools = append(Tools, fileopstools...)
+	Tools = append(Tools, fileSystemTools...)
 }
 
 // redirectFrameworkLog 将框架的日志输出从 stdout 重定向到可执行文件同目录下的 hyperbot.log 文件-created by copilot

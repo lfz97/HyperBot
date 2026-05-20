@@ -6,13 +6,14 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/gdamore/tcell/v2 v2.13.9
 	github.com/google/uuid v1.6.0
+	github.com/otiai10/copy v1.14.1
 	github.com/rivo/tview v0.42.0
 	go.uber.org/zap v1.28.0
 	gopkg.in/yaml.v2 v2.4.0
-	trpc.group/trpc-go/trpc-agent-go v1.9.0
-	trpc.group/trpc-go/trpc-agent-go/model/anthropic v1.9.0
-	trpc.group/trpc-go/trpc-agent-go/model/tiktoken v1.9.0
-	trpc.group/trpc-go/trpc-mcp-go v0.0.15
+	trpc.group/trpc-go/trpc-agent-go v1.9.2-0.20260520125040-d5afccfbbaa2
+	trpc.group/trpc-go/trpc-agent-go/model/anthropic v1.9.1-0.20260520125040-d5afccfbbaa2
+	trpc.group/trpc-go/trpc-agent-go/model/tiktoken v1.9.1-0.20260520125040-d5afccfbbaa2
+	trpc.group/trpc-go/trpc-mcp-go v0.0.16
 )
 
 require (
@@ -33,6 +34,7 @@ require (
 	github.com/mailru/easyjson v0.9.0 // indirect
 	github.com/mohae/deepcopy v0.0.0-20170929034955-c48cc78d4826 // indirect
 	github.com/openai/openai-go v1.12.0 // indirect
+	github.com/otiai10/mint v1.6.3 // indirect
 	github.com/panjf2000/ants/v2 v2.10.0 // indirect
 	github.com/perimeterx/marshmallow v1.1.5 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
@@ -63,5 +65,3 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	trpc.group/trpc-go/trpc-a2a-go v0.2.5 // indirect
 )
-
-replace trpc.group/trpc-go/trpc-agent-go => github.com/Rememorio/trpc-agent-go v0.0.0-20260514031153-ec42f304d527

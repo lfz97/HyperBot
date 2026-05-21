@@ -5,11 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
-	"path/filepath"
 	"syscall"
 
-	cp "github.com/otiai10/copy"
 	"trpc.group/trpc-go/trpc-agent-go/tool"
 	"trpc.group/trpc-go/trpc-agent-go/tool/function"
 )
@@ -150,12 +149,24 @@ func MV(ctx context.Context, req struct {
 	}, nil
 }
 
-func moveFile(src, dst string, _ os.FileInfo) error {
+func moveFile(src, dst string, srcInfo os.FileInfo) error {
 	if src == dst {
 		return errors.New("source and destination paths are the same")
 	}
-	if err := cp.Copy(src, dst); err != nil {
-		return fmt.Errorf("failed to copy file: %w", err)
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("failed to open source file: %w", err)
+	}
+	defer srcFile.Close()
+
+	dstFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, srcInfo.Mode())
+	if err != nil {
+		return fmt.Errorf("failed to create destination file: %w", err)
+	}
+	defer dstFile.Close()
+
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		return fmt.Errorf("failed to copy file content: %w", err)
 	}
 	if err := os.Remove(src); err != nil {
 		return fmt.Errorf("source file was moved but could not be removed: %w", err)
@@ -164,55 +175,17 @@ func moveFile(src, dst string, _ os.FileInfo) error {
 }
 
 func moveDir(src, dst string) error {
-	srcInfo, err := os.Stat(src)
-	if err != nil {
-		return err
+	// MV 语义：用源替换目标，先删除目标再复制，避免 os.CopyFS 的合并行为
+	if err := os.RemoveAll(dst); err != nil {
+		return fmt.Errorf("failed to remove existing destination: %w", err)
 	}
-
-	// 确保目标父目录存在
-	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-		return err
+	if err := os.CopyFS(dst, os.DirFS(src)); err != nil {
+		return fmt.Errorf("failed to copy directory: %w", err)
 	}
-
-	// 尝试创建目标目录，如果已存在则先删除（仅空目录可删）
-	if err := os.Mkdir(dst, srcInfo.Mode()); err != nil {
-		if os.IsExist(err) {
-			if err := os.Remove(dst); err != nil {
-				return fmt.Errorf("destination directory exists and cannot be removed: %w", err)
-			}
-			if err := os.Mkdir(dst, srcInfo.Mode()); err != nil {
-				return err
-			}
-		} else {
-			return err
-		}
+	if err := os.RemoveAll(src); err != nil {
+		return fmt.Errorf("source directory was moved but could not be removed: %w", err)
 	}
-
-	entries, err := os.ReadDir(src)
-	if err != nil {
-		return err
-	}
-
-	for _, entry := range entries {
-		srcChild := filepath.Join(src, entry.Name())
-		dstChild := filepath.Join(dst, entry.Name())
-
-		if entry.IsDir() {
-			if err := moveDir(srcChild, dstChild); err != nil {
-				return err
-			}
-		} else {
-			info, err := entry.Info()
-			if err != nil {
-				return err
-			}
-			if err := moveFile(srcChild, dstChild, info); err != nil {
-				return err
-			}
-		}
-	}
-
-	return os.Remove(src)
+	return nil
 }
 
 // 获取文件系统相关工具集合

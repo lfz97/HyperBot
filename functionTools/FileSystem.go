@@ -125,7 +125,8 @@ func MV(ctx context.Context, req struct {
 	err := os.Rename(req.OldPath, req.NewPath)
 	if err == nil {
 		return map[string]string{
-			"Message": fmt.Sprintf("Successfully moved/renamed %s to %s", req.OldPath, req.NewPath),
+			"OldPath": req.OldPath,
+			"NewPath": req.NewPath,
 		}, nil
 	}
 	if !errors.Is(err, syscall.EXDEV) {
@@ -144,9 +145,10 @@ func MV(ctx context.Context, req struct {
 	if err != nil {
 		return nil, err
 	}
-	return map[string]string{
-		"Message": fmt.Sprintf("Successfully moved/renamed %s to %s (cross-device)", req.OldPath, req.NewPath),
-	}, nil
+		return map[string]string{
+			"OldPath": req.OldPath,
+			"NewPath": req.NewPath,
+		}, nil
 }
 
 func moveFile(src, dst string, srcInfo os.FileInfo) error {

@@ -327,8 +327,10 @@ func LoadConfig() {
 func loadFunctionTools() {
 	fileopstools := functionTools.GetFileOperationsTools()
 	fileSystemTools := functionTools.GetFileSystemTools()
+	dateTools := functionTools.GetDateTools()
 	Tools = append(Tools, fileopstools...)
 	Tools = append(Tools, fileSystemTools...)
+	Tools = append(Tools, dateTools...)
 }
 func NewRunner() handler.AgentRunner {
 	//解析配置文件

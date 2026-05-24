@@ -7,11 +7,12 @@ require (
 	github.com/gdamore/tcell/v2 v2.13.9
 	github.com/google/uuid v1.6.0
 	github.com/otiai10/copy v1.14.1
+	github.com/pmezard/go-difflib v1.0.0
 	github.com/rivo/tview v0.42.0
 	go.uber.org/zap v1.28.0
 	gopkg.in/yaml.v2 v2.4.0
-	trpc.group/trpc-go/trpc-agent-go v1.9.2-0.20260520125040-d5afccfbbaa2
-	trpc.group/trpc-go/trpc-agent-go/model/anthropic v1.9.1-0.20260520125040-d5afccfbbaa2
+	trpc.group/trpc-go/trpc-agent-go v1.9.2-0.20260524055820-a1e282dd2f06
+	trpc.group/trpc-go/trpc-agent-go/model/anthropic v1.9.1-0.20260524055820-a1e282dd2f06
 	trpc.group/trpc-go/trpc-agent-go/model/tiktoken v1.9.1-0.20260520125040-d5afccfbbaa2
 	trpc.group/trpc-go/trpc-mcp-go v0.0.16
 )

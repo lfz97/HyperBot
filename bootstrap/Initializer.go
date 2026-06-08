@@ -33,8 +33,7 @@ const (
 	HyperBotConfig       string = "hyperbot.yaml"
 	SkillsFolder         string = "skills"
 	HyperBotLogFile      string = "hyperbot.log"
-	OperationRecord      string = "OperationRecord.md"
-	outputDir            string = "output"
+	outputDir string = "output"
 )
 
 func Init(an string) {
@@ -116,8 +115,6 @@ func configSystemPrompt() {
 	global.Systemprompt = strings.ReplaceAll(global.Systemprompt, "{{HyperBotConfig}}", HyperBotConfig)
 	global.Systemprompt = strings.ReplaceAll(global.Systemprompt, "{{SkillsFolder}}", SkillsFolder)
 	global.Systemprompt = strings.ReplaceAll(global.Systemprompt, "{{HyperBotLogFile}}", HyperBotLogFile)
-	global.Systemprompt = strings.ReplaceAll(global.Systemprompt, "{{OperationRecord}}", OperationRecord)
-
 	//输出目录
 	outputPath := filepath.Join(global.CWD, outputDir)
 	global.Systemprompt = strings.ReplaceAll(global.Systemprompt, "{{OUTPUTDIR}}", outputPath)

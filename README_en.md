@@ -67,10 +67,6 @@ Long conversations are automatically compressed so you never hit context limits:
 - **`ESC`**: Cancel the agent's current response instantly
 - **Self-recovery**: On errors, the agent constructs a recovery prompt and tries again — transient 5xx errors won't kill your session
 
-### 📝 Cross-Session Operation Records
-
-During complex tasks, the agent appends key actions to `.hyperbot/OperationRecord.md`. Future sessions can pick up where you left off — no more "forgetting" what was done.
-
 ### 🔄 One-Click Cross-Compilation
 
 ```bash
@@ -166,7 +162,6 @@ stdin_mcp:
 │   ├── hyperbot.yaml        # Main config
 │   ├── skills/              # Skill repository
 │   ├── hyperbot.log         # Background logs
-│   └── OperationRecord.md   # Operation record (appended by agent)
 └── output/                  # Task output directory
 ```
 

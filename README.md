@@ -67,10 +67,6 @@ Agent 可以自主完成"写代码 → 编译 → 运行 → 调试"的完整闭
 - **`ESC`**：随时中断 Agent 当前响应
 - **自动恢复**：出错后 Agent 自动以错误信息构造 recover prompt 尝试自我修复，不让一次性 5xx 打断对话
 
-### 📝 跨会话操作记录
-
-复杂任务中 Agent 自动将关键操作写入 `.hyperbot/OperationRecord.md`，后续对话可回溯上下文，不会"失忆"。
-
 ### 🔄 五平台一键编译
 
 ```bash
@@ -166,7 +162,6 @@ stdin_mcp:
 │   ├── hyperbot.yaml        # 主配置文件
 │   ├── skills/              # 技能仓库
 │   ├── hyperbot.log         # 后台日志
-│   └── OperationRecord.md   # 操作记录（Agent 自动追加）
 └── output/                  # 任务产物输出目录
 ```
 

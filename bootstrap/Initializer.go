@@ -4,13 +4,11 @@ import (
 	"HyperBot/agent"
 	"HyperBot/config"
 	"HyperBot/functionTools"
-	"HyperBot/handler"
+	"HyperBot/global"
 	"HyperBot/session"
 	"HyperBot/toolsets"
 	"HyperBot/toolsets/localexec"
-	"HyperBot/tui/global_object"
 	"HyperBot/utils/pretty"
-	"embed"
 	"fmt"
 	"github.com/gdamore/tcell/v2"
 	"github.com/google/uuid"
@@ -26,29 +24,7 @@ import (
 	"trpc.group/trpc-go/trpc-agent-go/log"
 	"trpc.group/trpc-go/trpc-agent-go/model"
 	"trpc.group/trpc-go/trpc-agent-go/runner"
-	"trpc.group/trpc-go/trpc-agent-go/session/inmemory"
-	"trpc.group/trpc-go/trpc-agent-go/tool"
 	"trpc.group/trpc-go/trpc-mcp-go"
-)
-
-// 定义核心的状态变量
-var (
-	Config_p               *config.Config           //yaml配置
-	Agentname              string                   //Agent名称
-	CWD                    string                   //当前工作目录
-	ConfigFolderPath       string                   //配置文件夹路径
-	HyperBotConfigPath     string                   //配置文件路径
-	SkillFolderPath        string                   //技能目录路径
-	AgentRunner            handler.AgentRunner      //Runner，全局唯一
-	InMemorySessionService *inmemory.SessionService //内存会话服务，包含自动摘要功能
-	frameworkLogFile       *os.File                 // 保存日志文件句柄，防止被 GC 回收
-
-	//go:embed prompt/*
-	PromptFiles embed.FS //提示词嵌入FS
-
-	systemprompt string         //agent的系统提示词
-	Toolsets     []tool.ToolSet //agent挂载的工具集
-	Tools        []tool.Tool    //agent挂载的工具
 )
 
 // 定义配置文件夹中的各种配置文件名称
@@ -61,8 +37,8 @@ const (
 	outputDir            string = "output"
 )
 
-func Init(an string) handler.AgentRunner {
-	Agentname = an
+func Init(an string) {
+	global.Agentname = an
 
 	//获取Agent可执行文件所在的目录路径
 	getcwd()
@@ -91,60 +67,60 @@ func Init(an string) handler.AgentRunner {
 	//加载function工具
 	loadFunctionTools()
 	//初始化AgentRunner
-	AgentRunner = NewRunner()
-	return AgentRunner
+	NewRunner()
+
 }
 
 // 配置系统提示词，替换其中的占位符
 func configSystemPrompt() {
-	systemprompt_b, _ := PromptFiles.ReadFile("prompt/systemprompt.md")
-	systemprompt = string(systemprompt_b)
+	systemprompt_b, _ := global.PromptFiles.ReadFile("prompt/systemprompt.md")
+	global.Systemprompt = string(systemprompt_b)
 	//Agent名称
-	systemprompt = strings.ReplaceAll(systemprompt, "{{NAME}}", Agentname)
+	global.Systemprompt = strings.ReplaceAll(global.Systemprompt, "{{NAME}}", global.Agentname)
 
 	//当前日期
-	systemprompt = strings.ReplaceAll(systemprompt, "{{DATE}}", time.Now().Format("2006-01-02 15:04:05 (Mon)"))
+	global.Systemprompt = strings.ReplaceAll(global.Systemprompt, "{{DATE}}", time.Now().Format("2006-01-02 15:04:05 (Mon)"))
 
 	//当前时区
 	zone, _ := time.Now().Zone()
-	systemprompt = strings.ReplaceAll(systemprompt, "{{TIMEZONE}}", fmt.Sprintf("%s (%s)", time.Now().Location().String(), zone))
+	global.Systemprompt = strings.ReplaceAll(global.Systemprompt, "{{TIMEZONE}}", fmt.Sprintf("%s (%s)", time.Now().Location().String(), zone))
 
 	//操作系统
-	systemprompt = strings.ReplaceAll(systemprompt, "{{OSTYPE}}", runtime.GOOS)
+	global.Systemprompt = strings.ReplaceAll(global.Systemprompt, "{{OSTYPE}}", runtime.GOOS)
 
 	//CPU架构
-	systemprompt = strings.ReplaceAll(systemprompt, "{{AARCH}}", runtime.GOARCH)
+	global.Systemprompt = strings.ReplaceAll(global.Systemprompt, "{{AARCH}}", runtime.GOARCH)
 
 	//主目录
 	homeDir, _ := os.UserHomeDir()
-	systemprompt = strings.ReplaceAll(systemprompt, "{{HOME}}", homeDir)
+	global.Systemprompt = strings.ReplaceAll(global.Systemprompt, "{{HOME}}", homeDir)
 
 	//临时目录
-	systemprompt = strings.ReplaceAll(systemprompt, "{{TMPDIR}}", os.TempDir())
+	global.Systemprompt = strings.ReplaceAll(global.Systemprompt, "{{TMPDIR}}", os.TempDir())
 
 	//当前用户
 	u, _ := user.Current()
-	systemprompt = strings.ReplaceAll(systemprompt, "{{CURRENTUSER}}", u.Username)
+	global.Systemprompt = strings.ReplaceAll(global.Systemprompt, "{{CURRENTUSER}}", u.Username)
 
 	//主机名
 	hostName, _ := os.Hostname()
-	systemprompt = strings.ReplaceAll(systemprompt, "{{HOSTNAME}}", hostName)
+	global.Systemprompt = strings.ReplaceAll(global.Systemprompt, "{{HOSTNAME}}", hostName)
 
 	//运行目录
-	systemprompt = strings.ReplaceAll(systemprompt, "{{CWD}}", CWD)
+	global.Systemprompt = strings.ReplaceAll(global.Systemprompt, "{{CWD}}", global.CWD)
 
 	//配置目录
-	systemprompt = strings.ReplaceAll(systemprompt, "{{CONFIGPATH}}", ConfigFolderPath)
+	global.Systemprompt = strings.ReplaceAll(global.Systemprompt, "{{CONFIGPATH}}", global.ConfigFolderPath)
 
 	//配置文件
-	systemprompt = strings.ReplaceAll(systemprompt, "{{HyperBotConfig}}", HyperBotConfig)
-	systemprompt = strings.ReplaceAll(systemprompt, "{{SkillsFolder}}", SkillsFolder)
-	systemprompt = strings.ReplaceAll(systemprompt, "{{HyperBotLogFile}}", HyperBotLogFile)
-	systemprompt = strings.ReplaceAll(systemprompt, "{{OperationRecord}}", OperationRecord)
+	global.Systemprompt = strings.ReplaceAll(global.Systemprompt, "{{HyperBotConfig}}", HyperBotConfig)
+	global.Systemprompt = strings.ReplaceAll(global.Systemprompt, "{{SkillsFolder}}", SkillsFolder)
+	global.Systemprompt = strings.ReplaceAll(global.Systemprompt, "{{HyperBotLogFile}}", HyperBotLogFile)
+	global.Systemprompt = strings.ReplaceAll(global.Systemprompt, "{{OperationRecord}}", OperationRecord)
 
 	//输出目录
-	outputPath := filepath.Join(CWD, outputDir)
-	systemprompt = strings.ReplaceAll(systemprompt, "{{OUTPUTDIR}}", outputPath)
+	outputPath := filepath.Join(global.CWD, outputDir)
+	global.Systemprompt = strings.ReplaceAll(global.Systemprompt, "{{OUTPUTDIR}}", outputPath)
 }
 
 // 获取当前可执行文件所在的目录完整路径
@@ -154,18 +130,18 @@ func getcwd() {
 	if err != nil {
 		ShowErrorAndExit(pretty.TErrorF("获取可执行文件目录错误: %v,按任意键退出", err))
 	}
-	CWD = filepath.Dir(exePath) // 获取当前可执行文件的目录路径（不包含程序名）
+	global.CWD = filepath.Dir(exePath) // 获取当前可执行文件的目录路径（不包含程序名）
 
 }
 
 // 检查配置文件夹是否存在
 func checkConfigFolder() {
-	ConfigFolderPath = filepath.Join(CWD, HyperBotConfigFolder)
-	_, err := os.Stat(ConfigFolderPath)
+	global.ConfigFolderPath = filepath.Join(global.CWD, HyperBotConfigFolder)
+	_, err := os.Stat(global.ConfigFolderPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			//config 文件夹不存在，创建一个默认的 config 文件夹
-			err := os.MkdirAll(ConfigFolderPath, os.ModePerm)
+			err := os.MkdirAll(global.ConfigFolderPath, os.ModePerm)
 			if err != nil {
 				ShowErrorAndExit(pretty.TErrorF("创建默认config文件夹错误：%v", err))
 			}
@@ -181,13 +157,13 @@ func checkConfigFolder() {
 
 // 检查配置文件是否存在，不存在则创建一个默认的配置文件
 func checkConfig() {
-	HyperBotConfigPath = filepath.Join(ConfigFolderPath, HyperBotConfig)
+	global.HyperBotConfigPath = filepath.Join(global.ConfigFolderPath, HyperBotConfig)
 	// TODO: 读取并解析 configPath 中的 YAML 配置
-	_, err := os.Stat(HyperBotConfigPath)
+	_, err := os.Stat(global.HyperBotConfigPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// 文件不存在，创建一个默认的 config.yaml
-			fd, err := os.OpenFile(HyperBotConfigPath, os.O_RDWR|os.O_CREATE, 0644)
+			fd, err := os.OpenFile(global.HyperBotConfigPath, os.O_RDWR|os.O_CREATE, 0644)
 			if err != nil {
 				ShowErrorAndExit(pretty.TErrorF("创建默认配置文件错误：%v", err))
 			}
@@ -209,12 +185,12 @@ func checkConfig() {
 }
 
 func checkSkillsFolder() {
-	SkillFolderPath = filepath.Join(ConfigFolderPath, SkillsFolder)
-	_, err := os.Stat(SkillFolderPath)
+	global.SkillFolderPath = filepath.Join(global.ConfigFolderPath, SkillsFolder)
+	_, err := os.Stat(global.SkillFolderPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			//skills 文件夹不存在，创建一个默认的 skills 文件夹
-			err := os.MkdirAll(SkillFolderPath, os.ModePerm)
+			err := os.MkdirAll(global.SkillFolderPath, os.ModePerm)
 			if err != nil {
 				ShowErrorAndExit(pretty.TErrorF("创建默认skills文件夹错误：%v", err))
 			}
@@ -229,7 +205,7 @@ func checkSkillsFolder() {
 
 func loadConfig() (*config.Config, error) {
 	YamlConfig := config.Config{}
-	yamlFile, err := os.ReadFile(HyperBotConfigPath)
+	yamlFile, err := os.ReadFile(global.HyperBotConfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("读取配置文件错误：%v", err)
 	}
@@ -242,71 +218,71 @@ func loadConfig() (*config.Config, error) {
 
 func parseConfig() {
 
-	if len((*Config_p).Mcp) != 0 {
+	if len((*global.Config_p).Mcp) != 0 {
 		//读取配置文件中的 MCP 配置，创建 MCP ToolSet 并添加到 Toolsets 中
-		for _, mcpConfig := range (*Config_p).Mcp {
+		for _, mcpConfig := range (*global.Config_p).Mcp {
 			//只有配置了 Enabled 字段为 true 的 MCP 配置才会被创建 ToolSet 并添加到 Toolsets 中
 			if mcpConfig.Enabled == true {
 				mcpToolSet := toolsets.MCP(string(mcpConfig.Type), mcpConfig.Endpoint, mcpConfig.Headers)
-				Toolsets = append(Toolsets, mcpToolSet)
+				global.Toolsets = append(global.Toolsets, mcpToolSet)
 			}
 
 		}
 	}
-	if len((*Config_p).StdinMcp) != 0 {
+	if len((*global.Config_p).StdinMcp) != 0 {
 		//读取配置文件中的 StdinMCP 配置，创建 StdinMCP ToolSet 并添加到 Toolsets 中
-		for _, stdinMcpConfig := range (*Config_p).StdinMcp {
+		for _, stdinMcpConfig := range (*global.Config_p).StdinMcp {
 			if stdinMcpConfig.Enabled == true {
 				stdinMcpToolSet := toolsets.StdinMCP(stdinMcpConfig.Command, stdinMcpConfig.Args)
-				Toolsets = append(Toolsets, stdinMcpToolSet)
+				global.Toolsets = append(global.Toolsets, stdinMcpToolSet)
 			}
 		}
 	}
 
-	Toolsets = append(Toolsets, localexec.LocalExec()) //localexec 必须启用
+	global.Toolsets = append(global.Toolsets, localexec.LocalExec()) //localexec 必须启用
 
 }
 
 func initMemorySessionService() {
-	InMemorySessionService = session.NewMemorySessionService((*Config_p).Model)
+	global.SessionService_p = session.NewMemorySessionService((*global.Config_p).Model)
 }
 
 func initAgent() runner.Runner {
 	var Runner runner.Runner
 
-	if (*Config_p).Model.APIType == "openai" {
+	if (*global.Config_p).Model.APIType == "openai" {
 		Agent_p := agent.OpenaiAgent(
-			Agentname,
-			systemprompt,
+			global.Agentname,
+			global.Systemprompt,
 			model.GenerationConfig{
-				Stream: (*Config_p).Model.Stream,
+				Stream: (*global.Config_p).Model.Stream,
 			},
-			Tools,
-			Toolsets,
-			(*Config_p).Model.Model,
-			(*Config_p).Model.BaseURL,
-			(*Config_p).Model.APIKey,
-			SkillFolderPath,
+			global.Tools,
+			global.Toolsets,
+			(*global.Config_p).Model.Model,
+			(*global.Config_p).Model.BaseURL,
+			(*global.Config_p).Model.APIKey,
+			global.SkillFolderPath,
 		)
-		Runner = runner.NewRunner(Agentname, Agent_p,
-			runner.WithSessionService(InMemorySessionService), // 使用内存会话服务，其中包含自动摘要功能
+		Runner = runner.NewRunner(global.Agentname, Agent_p,
+			runner.WithSessionService(global.SessionService_p), // 使用内存会话服务，其中包含自动摘要功能
 		)
-	} else if (*Config_p).Model.APIType == "anthropic" {
+	} else if (*global.Config_p).Model.APIType == "anthropic" {
 		Agent_p := agent.AnthropicAgent(
-			Agentname,
-			systemprompt,
+			global.Agentname,
+			global.Systemprompt,
 			model.GenerationConfig{
-				Stream: (*Config_p).Model.Stream,
+				Stream: (*global.Config_p).Model.Stream,
 			},
-			Tools,
-			Toolsets,
-			(*Config_p).Model.Model,
-			(*Config_p).Model.BaseURL,
-			(*Config_p).Model.APIKey,
-			SkillFolderPath,
+			global.Tools,
+			global.Toolsets,
+			(*global.Config_p).Model.Model,
+			(*global.Config_p).Model.BaseURL,
+			(*global.Config_p).Model.APIKey,
+			global.SkillFolderPath,
 		)
-		Runner = runner.NewRunner(Agentname, Agent_p,
-			runner.WithSessionService(InMemorySessionService), // 使用内存会话服务，其中包含自动摘要功能
+		Runner = runner.NewRunner(global.Agentname, Agent_p,
+			runner.WithSessionService(global.SessionService_p), // 使用内存会话服务，其中包含自动摘要功能
 		)
 	} else {
 		pretty.ErrorWithExit("不支持的API类型，请检查配置文件中的 Model.APIType 字段")
@@ -321,56 +297,56 @@ func LoadConfig() {
 	if err != nil {
 		ShowErrorAndExit(pretty.TErrorF("加载配置文件错误: %v,按任意键退出", err))
 	}
-	Config_p = config_p
+	global.Config_p = config_p
 }
 
 func loadFunctionTools() {
 	fileopstools := functionTools.GetFileOperationsTools()
 	fileSystemTools := functionTools.GetFileSystemTools()
 	dateTools := functionTools.GetDateTools()
-	Tools = append(Tools, fileopstools...)
-	Tools = append(Tools, fileSystemTools...)
-	Tools = append(Tools, dateTools...)
+	global.Tools = append(global.Tools, fileopstools...)
+	global.Tools = append(global.Tools, fileSystemTools...)
+	global.Tools = append(global.Tools, dateTools...)
 }
-func NewRunner() handler.AgentRunner {
+func NewRunner() {
 	//解析配置文件
 	parseConfig()
 	runner := initAgent()
-	ar := handler.AgentRunner{
+	global.AgentRunner_p = &global.Agentrunner{
 		Runner: runner,
-		Stream: (*Config_p).Model.Stream,
-		UserId: (*Config_p).User.UserID,
+		Stream: (*global.Config_p).Model.Stream,
 	}
-	global_object.Print2LogView(pretty.TReady(Agentname))
-	return ar
+
+	global.Print2LogView(pretty.TReady(global.Agentname))
+
 }
 
 func ShowErrorAndExit(errmsg string) {
 	done := make(chan struct{})
-	global_object.Print2LogView(errmsg)
-	global_object.App_p.QueueUpdateDraw(func() {
+	global.Print2LogView(errmsg)
+	global.App_p.QueueUpdateDraw(func() {
 		//只要有按键就退出程序
-		global_object.App_p.SetFocus(global_object.LogView_p)
-		global_object.LogView_p.SetInputCapture(
+		global.App_p.SetFocus(global.LogView_p)
+		global.LogView_p.SetInputCapture(
 			func(event *tcell.EventKey) *tcell.EventKey {
-				global_object.App_p.Stop()
+				global.App_p.Stop()
 				return nil
 			})
 	})
 	<-done
 }
 func ShowSuccess(sussessmsg string) {
-	global_object.Print2LogView(pretty.TSuccess(sussessmsg))
+	global.Print2LogView(pretty.TSuccess(sussessmsg))
 }
 func ShowSuccessAndExit(sussessmsg string) {
 	done := make(chan struct{})
-	global_object.Print2LogView(pretty.TSuccess(sussessmsg))
-	global_object.App_p.QueueUpdateDraw(func() {
+	global.Print2LogView(pretty.TSuccess(sussessmsg))
+	global.App_p.QueueUpdateDraw(func() {
 		//只要有按键就退出程序
-		global_object.App_p.SetFocus(global_object.LogView_p)
-		global_object.LogView_p.SetInputCapture(
+		global.App_p.SetFocus(global.LogView_p)
+		global.LogView_p.SetInputCapture(
 			func(event *tcell.EventKey) *tcell.EventKey {
-				global_object.App_p.Stop()
+				global.App_p.Stop()
 				return nil
 			})
 	})
@@ -379,9 +355,9 @@ func ShowSuccessAndExit(sussessmsg string) {
 
 // redirectFrameworkLog 将框架的日志输出从 stdout 重定向到可执行文件同目录下的 hyperbot.log 文件-created by copilot
 func redirectFrameworkLog() {
-	logPath := filepath.Join(ConfigFolderPath, HyperBotLogFile)
+	logPath := filepath.Join(global.ConfigFolderPath, HyperBotLogFile)
 	var err error
-	frameworkLogFile, err = os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	global.FrameworkLogFile_p, err = os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return
 	}
@@ -400,7 +376,7 @@ func redirectFrameworkLog() {
 	}
 	core := zapcore.NewCore(
 		zapcore.NewConsoleEncoder(encoderCfg),
-		zapcore.AddSync(frameworkLogFile),
+		zapcore.AddSync(global.FrameworkLogFile_p),
 		zapcore.DebugLevel,
 	)
 	fileLogger := zap.New(core, zap.AddCaller(), zap.AddCallerSkip(1)).Sugar()

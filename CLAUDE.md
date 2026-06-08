@@ -1,0 +1,163 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Build Commands
+
+```bash
+# Run directly
+go run .
+
+# Build for current platform
+go build -buildvcs=false .
+
+# Cross-compile all platforms
+make all
+
+# Cross-compile specific platform
+make linux-x64
+make linux-arm64
+make macos-arm64
+make macos-x64
+make windows-x64
+
+# Clean build artifacts
+make clean
+```
+
+## Architecture Overview
+
+HyperBot is a TUI AI agent chatbot built on [trpc-agent-go](https://github.com/trpc-group/trpc-agent-go), supporting OpenAI-compatible APIs and Anthropic Claude models with MCP tool protocol integration.
+
+### Layer Structure
+
+```
+main.go → tview.Application
+    └── tui/tui.go (ConfigPage → AgentPage)
+         └── tip/            (TUI tip display)
+
+    ┌── global/
+    │   ├── agentCore.go    (Agentrunner struct, config, session, tools, embedFS)
+    │   ├── tui.go          (TUI widget references: App, views, helpers)
+    │   └── prompt/         (system prompt embedFS)
+    │
+    ├── bootstrap/
+    │   ├── Initializer.go  (async init: logs → config → agent creation)
+    │   └── Bootstrap.go    (session lifecycle, main dialog loop)
+    │
+    ├── handler/
+    │   ├── runIteratively.go (user input loop: /exit, /new, /flush, ESC, text)
+    │   ├── runOnce.go        (single agent execution, event stream consumption)
+    │   ├── model.go          (TurnCode, TurnResult types)
+    │   └── message.go        (streaming/non-streaming render, reasoning content)
+    │
+    ├── agent/
+    │   ├── baseAgent.go      (LLMAgent config assembly: skills, tools, system prompt)
+    │   ├── OpenaiAgent.go    (OpenAI-compatible factory)
+    │   └── AnthropicAgent.go (Anthropic factory)
+    │
+    ├── models/
+    │   ├── openai.go    (OpenAI adapter, DeepSeek variant auto-detection)
+    │   └── anthropic.go (Anthropic adapter)
+    │
+    ├── session/
+    │   ├── memSessionService.go (InMemorySessionService with summarizer)
+    │   ├── summarizer.go        (token/time thresholds, custom prompts, PostSummaryHook)
+    │   └── prompt/              (summary system.md + user.md templates)
+    │
+    ├── config/
+    │   ├── baseConfig.go       (model, API, context window config)
+    │   ├── mcpConfig.go        (SSE/streamable_http MCP config)
+    │   ├── stdinMcpConfig.go   (stdin MCP config)
+    │   └── yaml_template.go    (config.yaml template)
+    │
+    ├── toolsets/
+    │   ├── localexec/ (built-in command execution, always enabled)
+    │   ├── mcp.go       (SSE/streamable HTTP MCP)
+    │   └── stdinMCP.go  (stdin-based MCP processes)
+    │
+    ├── functionTools/
+    │   ├── File.go       (WriteFile, ReadFile, EditFile, SearchInFile, DeleteFile, FileInfo, Diff)
+    │   ├── Datetool.go   (DateNow)
+    │   └── FileSystem.go (PWD, CD, LS, Mkdir, CP, MV, Glob)
+    │
+    └── utils/
+        └── pretty/      (terminal color helpers)
+```
+
+### Key Design Patterns
+
+**Agent Creation Flow**: `bootstrap.Init()` runs async in a goroutine. It redirects framework logs to `hyperbot.log`, loads/creates `config.yaml`, replaces `{{DATE}}`, `{{OSTYPE}}`, `{{HOME}}`, `{{CWD}}` and other placeholders in system prompt, then creates the appropriate LLMAgent based on `APIType`.
+
+**Adding Function Tools**: create function → wrap with `function.NewFunctionTool()` → register in `Get*Tools()` (e.g. `GetFileSystemTools`) → assembled in `bootstrap/Initializer.go`. Missing registration means the tool silently won't appear.
+
+**Dialog Loop**: `handler.AgentRunIteratively()` manages user input:
+- `/exit` → terminate
+- `/new` → reset session
+- `/flush` → refresh tools without losing session history
+- `ESC` → cancel current agent response via `context.WithCancel`
+- text → invoke `AgentRunOnce()`
+
+**Streaming Events**: `handler.AgentRunOnce()` calls `runner.Run()` and consumes an event stream. Messages render with:
+- Reasoning content: yellow dim text between `»` and `«`
+- Tool calls: magenta `⚙` icon + tool name + args
+- Tool results: gray indented output
+
+**LocalExec ToolSet**: Built-in 6-tool system for command lifecycle:
+| Tool | Purpose |
+|------|---------|
+| `submit_command` | Submit command, get command ID |
+| `start_command` | Start submitted command by ID |
+| `get_status` | Query status; `wait_seconds` blocks until done or timeout (每秒轮询，完成即返回) |
+| `get_output` | Get stdout/stderr with window limits |
+| `intervene_command` | Write to stdin or send signals |
+| `kill_command` | Force terminate |
+
+**MCP Integration**: Configured via `config.yaml` with support for `sse` and `streamable_http` transport types. Also supports stdin-based MCP via `stdin_mcp` config.
+
+**Session Memory**: `InMemorySessionService` is stored in `global.SessionService`. When refreshing tools via `/flush`, the session service must be preserved to maintain conversation history. `LoadConfig()` and `NewRunner()` can be called independently to reload tools without resetting memory.
+
+**Session Summarization**: `session/summarizer.go` uses `CheckTokenThreshold(0.4 * ContextWindow)` + `CheckTimeThreshold(10min)` via `WithChecksAny`. Requires both `session.NewMemorySessionService` with summarizer AND `llmagent.WithAddSessionSummary(true)` in `agent/baseAgent.go`. Summary is injected as system message. `WithSessionSummaryInjectionMode`/`SessionSummaryInjectionUser` do not exist in current trpc-agent-go. The `contextwindow` in `config.yaml` MUST match actual API provider limit — if smaller, summarization fails. When summarization fails ("summary worker failed" in `hyperbot.log`), session continues uncompressed; reduce `contextwindow` or clear session. Token counting uses `model/tiktoken` (BPE, not `SimpleTokenCounter`), configured via `summary.SetTokenCounter(counter)` in `session/summarizer.go:44-45`. `WithToolCallFormatter`/`WithToolResultFormatter` affect BOTH summary input AND threshold token counting — truncation causes underestimation, use default or lower `CheckTokenThresholdPercent`. `extractTokenThresholdMessage` includes `ReasoningContent` in calculation (previously dropped silently, causing delayed summarization for reasoning models like DeepSeek).
+
+**Deployed Config**: User config is at `C:\Users\<user>\OneDrive - 上海达美乐比萨有限公司\应用\hyperbot\.hyperbot\hyperbot.yaml`, not the repo's `.hyperbot/` directory. The repo's `.hyperbot/` is for development only.
+
+## Configuration
+
+Auto-generated to `hyperbot.yaml` on first run. Supports:
+- User ID (auto-generated UUID)
+- Model config (model name, base URL, API key, API type: `openai` or `anthropic`)
+- MCP services (SSE or streamable_http)
+- Stdin MCP processes
+
+## Dependencies
+
+- **trpc-agent-go** v1.10.0: Agent framework core
+- **trpc-agent-go/model/anthropic** v1.10.0: Anthropic model adapter
+- **trpc-agent-go/model/tiktoken** v1.10.0: Tiktoken-based token counter (replaces SimpleTokenCounter default)
+- **trpc-mcp-go** v0.0.16: MCP tool protocol support
+- **tview** v0.42.0: TUI framework
+- **tcell/v2** v2.13.9: Terminal event handling
+- **openai-go** v1.12.0: OpenAI API SDK
+- **anthropic-sdk-go** v1.37.0: Anthropic API SDK
+- **zap** v1.28.0: Logging
+- **otiai10/copy** v1.14.1: Cross-device file/directory copy for CP and MV tools
+
+## Notes
+
+- Go 1.26.1+ required
+- No test files exist in this repository
+- Skills are loaded from `skills/` directory in Knowledge-Only mode (commands go through LocalExec)
+- Framework logs are redirected to `hyperbot.log` to avoid TUI interference
+- **embedFS case sensitivity** - `//go:embed` + `ReadFile` paths are case-sensitive on Linux. File named `systemprompt.md` but code reading `systemPrompt.md` silently returns empty string (error ignored with `_`). Always match exact file name case between `go:embed` glob patterns and `ReadFile` calls.
+- **Skills identity contamination** - The deployed `skills/` folder (`~/.hyperbot/skills/`) contains OpenClaw skill files (self-improving-agent, find-skills, etc.) that reference "OpenClaw", "Claude Code", "clawdhub". When loaded via `llmagent.WithSkills()`, these contaminate the agent's identity. Use only HyperBot-specific skills or keep the folder empty.
+- **bracketed paste** - tview TextArea 对大块粘贴支持不好，需在 tui.go 中启用 `EnableBracketedPaste()` 让终端分片发送，框架才能正常处理。参考 commit 70bb8f3。
+- **Go RE2 regex in tool descriptions** - 在给 agent 暴露正则的 tool 中，jsonschema description 必须写明 RE2 限制：`(?s)` 让 `.` 匹配换行、`(?m)` 让 `^`/`$` 匹配行边界、不支持 lookahead/lookbehind/backreference。参考 `functionTools/File.go` 中 SearchInFile 的 description。
+- **MV/CP tools use otiai10/copy** - `functionTools/FileSystem.go` 的 CP 和 MV 跨设备移动使用 `github.com/otiai10/copy`（不区分文件/目录）。MV 同设备优先 `os.Rename`（快速+原子），跨设备走 `os.RemoveAll(dst)` → `copy.Copy` → `os.RemoveAll(src)`（先删目标避免合并语义）。
+- **EditFile replace_all semantics** - `replace_all=false`（默认）是安全检查：多处匹配时报错拒绝替换，而非只替换第一处。`replace_all=true` 才执行全量替换。修改时不要移除 `len(Indexes) > 1` 的检查。
+- **strings.Index loop pattern** - 在 `Now[offset:]` 上循环搜索时，`offset += idx` 定位到匹配起点后，必须再 `offset += len(matched)` 跳过已匹配内容，否则同一位置重复匹配导致死循环。
+- **Tool call 后 agent 停止输出** - 如果 `hyperbot.log` 无 error，且对 agent 说"继续"能恢复对话，说明是模型侧在 tool result 后概率性预测了 stop token，不是框架 bug。不需要迁就式修改。
+
+## Documentation Style
+
+- README.md and README_en.md should be feature-focused and user-facing — highlight what the project does, not internal architecture or code organization
+- Keep both language versions in sync when updating either one

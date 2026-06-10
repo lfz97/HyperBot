@@ -23,6 +23,9 @@ make windows-x64
 
 # Clean build artifacts
 make clean
+
+# Tidy dependencies after adding/removing imports
+go mod tidy
 ```
 
 ## Architecture Overview
@@ -37,7 +40,7 @@ main.go → tview.Application
          └── tip/            (TUI tip display)
 
     ┌── global/
-    │   ├── agentCore.go    (Agentrunner struct, config, session, tools, embedFS)
+    │   ├── appCore.go     (Agentrunner struct, config, session, tools, embedFS)
     │   ├── tui.go          (TUI widget references: App, views, helpers)
     │   └── prompt/         (system prompt embedFS)
     │
@@ -69,7 +72,7 @@ main.go → tview.Application
     │   ├── baseConfig.go       (model, API, context window config)
     │   ├── mcpConfig.go        (SSE/streamable_http MCP config)
     │   ├── stdinMcpConfig.go   (stdin MCP config)
-    │   └── yaml_template.go    (config.yaml template)
+    │   ├── configTemplate.go (//go:embed config.yaml template)
     │
     ├── toolsets/
     │   ├── localexec/ (built-in command execution, always enabled)
@@ -119,7 +122,7 @@ main.go → tview.Application
 
 **Session Summarization**: `session/summarizer.go` uses `CheckTokenThreshold(0.4 * ContextWindow)` + `CheckTimeThreshold(10min)` via `WithChecksAny`. Requires both `session.NewMemorySessionService` with summarizer AND `llmagent.WithAddSessionSummary(true)` in `agent/baseAgent.go`. Summary is injected as system message. `WithSessionSummaryInjectionMode`/`SessionSummaryInjectionUser` do not exist in current trpc-agent-go. The `contextwindow` in `config.yaml` MUST match actual API provider limit — if smaller, summarization fails. When summarization fails ("summary worker failed" in `hyperbot.log`), session continues uncompressed; reduce `contextwindow` or clear session. Token counting uses `model/tiktoken` (BPE, not `SimpleTokenCounter`), configured via `summary.SetTokenCounter(counter)` in `session/summarizer.go:44-45`. `WithToolCallFormatter`/`WithToolResultFormatter` affect BOTH summary input AND threshold token counting — truncation causes underestimation, use default or lower `CheckTokenThresholdPercent`. `extractTokenThresholdMessage` includes `ReasoningContent` in calculation (previously dropped silently, causing delayed summarization for reasoning models like DeepSeek).
 
-**Deployed Config**: User config is at `C:\Users\<user>\OneDrive - 上海达美乐比萨有限公司\应用\hyperbot\.hyperbot\hyperbot.yaml`, not the repo's `.hyperbot/` directory. The repo's `.hyperbot/` is for development only.
+**Deployed Config**: User config lives in `<cwd>/.hyperbot/hyperbot.yaml` (the working directory where the binary runs). On the author's machine this is `C:\Users\<user>\OneDrive - ...\应用\hyperbot\.hyperbot\`, but it varies by platform. The repo's `.hyperbot/` is for development only.
 
 ## Configuration
 

@@ -33,7 +33,7 @@ const (
 	HyperBotConfig       string = "hyperbot.yaml"
 	SkillsFolder         string = "skills"
 	HyperBotLogFile      string = "hyperbot.log"
-	outputDir string = "output"
+	outputDir            string = "output"
 )
 
 func Init(an string) {
@@ -214,13 +214,14 @@ func loadConfig() (*config.Config, error) {
 }
 
 func parseConfig() {
+	global.Toolsets = nil
 
-	if len((*global.Config_p).Mcp) != 0 {
+	if len((*global.Config_p).HttpMcp) != 0 {
 		//读取配置文件中的 MCP 配置，创建 MCP ToolSet 并添加到 Toolsets 中
-		for _, mcpConfig := range (*global.Config_p).Mcp {
+		for _, mcpConfig := range (*global.Config_p).HttpMcp {
 			//只有配置了 Enabled 字段为 true 的 MCP 配置才会被创建 ToolSet 并添加到 Toolsets 中
 			if mcpConfig.Enabled == true {
-				mcpToolSet := toolsets.MCP(string(mcpConfig.Type), mcpConfig.Endpoint, mcpConfig.Headers)
+				mcpToolSet := toolsets.HttpMCP(mcpConfig)
 				global.Toolsets = append(global.Toolsets, mcpToolSet)
 			}
 
@@ -230,7 +231,7 @@ func parseConfig() {
 		//读取配置文件中的 StdinMCP 配置，创建 StdinMCP ToolSet 并添加到 Toolsets 中
 		for _, stdinMcpConfig := range (*global.Config_p).StdinMcp {
 			if stdinMcpConfig.Enabled == true {
-				stdinMcpToolSet := toolsets.StdinMCP(stdinMcpConfig.Command, stdinMcpConfig.Args)
+				stdinMcpToolSet := toolsets.StdinMCP(stdinMcpConfig)
 				global.Toolsets = append(global.Toolsets, stdinMcpToolSet)
 			}
 		}

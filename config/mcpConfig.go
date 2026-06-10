@@ -7,9 +7,10 @@ const (
 	Streamable_HTTP MCPtype = "streamable_http"
 )
 
-type MCP struct {
-	Enabled  bool
-	Type     MCPtype
-	Endpoint string
-	Headers  map[string]string
+type HttpMCP struct {
+	Enabled     bool
+	Type        MCPtype
+	Endpoint    string
+	Headers     map[string]string
+	Description string
 }

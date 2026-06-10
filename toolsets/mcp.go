@@ -1,18 +1,20 @@
 package toolsets
 
 import (
+	"HyperBot/config"
 	"time"
 	"trpc.group/trpc-go/trpc-agent-go/tool/mcp"
 )
 
-func MCP(mcptype string, url string, headers map[string]string) *mcp.ToolSet {
+func HttpMCP(config config.HttpMCP) *mcp.ToolSet {
 
 	mcpToolSet := mcp.NewMCPToolSet(
 		mcp.ConnectionConfig{
-			Transport: mcptype, // 注意：使用完整名称
-			ServerURL: url,
-			Timeout:   10 * time.Second,
-			Headers:   headers,
+			Transport:   string(config.Type),
+			ServerURL:   config.Endpoint,
+			Timeout:     10 * time.Second,
+			Headers:     config.Headers,
+			Description: config.Description,
 		},
 		mcp.WithSessionReconnect(3),
 	)

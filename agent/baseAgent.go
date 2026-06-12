@@ -25,6 +25,9 @@ func ConfigBaseAgent(agentName string, systemPrompt string, genConfig model.Gene
 			llmagent.SkillToolProfileKnowledgeOnly,
 		),
 		llmagent.WithAddSessionSummary(true), //启用上下文压缩注入
+		llmagent.WithEnableContextCompaction(true),                                     // 启用 tool result 压缩（Pass 1+2）
+		llmagent.WithContextCompactionOversizedToolResultMaxTokens(8192),               // Pass 2: 超大 tool result 首尾保留截断
+		llmagent.WithEnableOnDemandSession(true),                                       // 按需加载被压缩的原始数据（session_load）
 
 	}
 

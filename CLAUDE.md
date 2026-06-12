@@ -160,6 +160,39 @@ Auto-generated to `hyperbot.yaml` on first run. Supports:
 - **strings.Index loop pattern** - 在 `Now[offset:]` 上循环搜索时，`offset += idx` 定位到匹配起点后，必须再 `offset += len(matched)` 跳过已匹配内容，否则同一位置重复匹配导致死循环。
 - **Tool call 后 agent 停止输出** - 如果 `hyperbot.log` 无 error，且对 agent 说"继续"能恢复对话，说明是模型侧在 tool result 后概率性预测了 stop token，不是框架 bug。不需要迁就式修改。
 
+## Context Management
+
+HyperBot uses three complementary mechanisms to prevent context overflow:
+
+### 1. Session Summarization (`session/summarizer.go` + `agent/baseAgent.go`)
+- `WithAddSessionSummary(true)` on the LLM agent enables async summary injection
+- Summarizer triggers at `CheckTokenThreshold(0.4 * contextwindow)` OR `CheckTimeThreshold(10min)` via `WithChecksAny`
+- Token counting uses `model/tiktoken` (BPE), configured via `summary.SetTokenCounter(counter)`
+- Summary model is the same as main model; for DeepSeek reasoning models, the token counter falls back to `cl100k_base` (within ~4-7% of DeepSeek's actual count per empirical testing)
+- If summaries fail silently (check `hyperbot.log` for "summary worker failed"), session continues uncompressed → context grows unbounded → API errors
+- Post-summary hook strips `<think>...</think>` tags from summary text
+
+### 2. Context Compaction (`agent/baseAgent.go`)
+- `WithEnableContextCompaction(true)` enables deterministic tool result compression before each LLM call
+- **Pass 1**: Historical tool results > 1024 tokens → replaced with placeholder (`event_id`/`tool_call_id` preserved for `session_load` recovery)
+  - Protects current invocation + `KeepRecentRequests` (default 1) most recent completed invocations
+- **Pass 2**: Any tool result > 8192 tokens → head+tail truncation with `[...N chars truncated...]` marker
+  - Applies to ALL invocations including current; gated on `OversizedToolResultMaxTokens > 0`
+- Triggers at 70% context window (`ContextCompactionThresholdRatio`, default 0.7)
+- If still over threshold after compaction → sync `CreateSessionSummary` runs as fallback → request rebuilt
+
+### 3. On-Demand Session (`agent/baseAgent.go`)
+- `WithEnableOnDemandSession(true)` gives agent `session_load`/`session_search` tools
+- Compacted/truncated tool results can be retrieved by `event_id` with `content_offset`/`content_limit` for sliced loading
+
+### Troubleshooting Context Overflow
+- **Symptom**: API error "requested X tokens exceeds maximum Y" (X >> Y)
+- **Check**: `hyperbot.log` for "summary worker failed" — if present, summaries are failing
+- **Verify**: `contextwindow` in config MUST be ≤ actual model limit (not larger, or threshold triggers too late)
+- **Note**: tiktoken `cl100k_base` vs DeepSeek API token count differs ~4-7% (empirically verified) — not enough to explain large discrepancies
+- **Root cause pattern**: first summary attempt fails → delta grows unbounded → all subsequent attempts also fail (cascade failure)
+- **Fix**: enable Context Compaction + lower `CheckTokenThresholdPercent` if needed
+
 ## Documentation Style
 
 - README.md and README_en.md should be feature-focused and user-facing — highlight what the project does, not internal architecture or code organization

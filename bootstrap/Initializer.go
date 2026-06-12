@@ -10,7 +10,6 @@ import (
 	"HyperBot/toolsets/localexec"
 	"HyperBot/utils/pretty"
 	"fmt"
-	"github.com/gdamore/tcell/v2"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -125,7 +124,7 @@ func getcwd() {
 
 	exePath, err := os.Executable() // 获取当前可执行文件的路径
 	if err != nil {
-		ShowErrorAndExit(pretty.TErrorF("获取可执行文件目录错误: %v,按任意键退出", err))
+		global.ShowErrorAndExit(global.Log, pretty.TErrorF("获取可执行文件目录错误: %v,按任意键退出", err))
 	}
 	global.CWD = filepath.Dir(exePath) // 获取当前可执行文件的目录路径（不包含程序名）
 
@@ -140,14 +139,14 @@ func checkConfigFolder() {
 			//config 文件夹不存在，创建一个默认的 config 文件夹
 			err := os.MkdirAll(global.ConfigFolderPath, os.ModePerm)
 			if err != nil {
-				ShowErrorAndExit(pretty.TErrorF("创建默认config文件夹错误：%v", err))
+				global.ShowErrorAndExit(global.Log, pretty.TErrorF("创建默认config文件夹错误：%v", err))
 			}
-			ShowSuccess("检查到config文件夹不存在，已创建默认config文件夹")
+			global.ShowSuccess(global.Log, "检查到config文件夹不存在，已创建默认config文件夹")
 		} else {
-			ShowErrorAndExit(pretty.TErrorF("检查config文件夹错误：%v", err))
+			global.ShowErrorAndExit(global.Log, pretty.TErrorF("检查config文件夹错误：%v", err))
 		}
 	} else {
-		ShowSuccess("检查配置文件夹通过")
+		global.ShowSuccess(global.Log, "检查配置文件夹通过")
 	}
 
 }
@@ -162,21 +161,21 @@ func checkConfig() {
 			// 文件不存在，创建一个默认的 config.yaml
 			fd, err := os.OpenFile(global.HyperBotConfigPath, os.O_RDWR|os.O_CREATE, 0644)
 			if err != nil {
-				ShowErrorAndExit(pretty.TErrorF("创建默认配置文件错误：%v", err))
+				global.ShowErrorAndExit(global.Log, pretty.TErrorF("创建默认配置文件错误：%v", err))
 			}
 			defer fd.Close()
 			//生成一个随机的用户ID，替换掉配置文件中的占位符
 			cfg := strings.ReplaceAll(config.Template, "{USERID}", uuid.New().String())
 			_, err = fd.WriteString(cfg)
 			if err != nil {
-				ShowErrorAndExit(pretty.TErrorF("写入默认配置文件错误：%v,按任意键退出", err))
+				global.ShowErrorAndExit(global.Log, pretty.TErrorF("写入默认配置文件错误：%v,按任意键退出", err))
 			}
-			ShowSuccessAndExit("检查到配置文件不存在，已创建默认配置文件。请根据实际情况修改配置文件后重新启动程序！")
+			global.ShowSuccessAndExit(global.Log, "检查到配置文件不存在，已创建默认配置文件。请根据实际情况修改配置文件后重新启动程序！")
 		} else {
-			ShowErrorAndExit(pretty.TErrorF("检查配置文件错误：%v", err))
+			global.ShowErrorAndExit(global.Log, pretty.TErrorF("检查配置文件错误：%v", err))
 		}
 	} else {
-		ShowSuccess("检查配置文件通过!")
+		global.ShowSuccess(global.Log, "检查配置文件通过!")
 	}
 
 }
@@ -189,14 +188,14 @@ func checkSkillsFolder() {
 			//skills 文件夹不存在，创建一个默认的 skills 文件夹
 			err := os.MkdirAll(global.SkillFolderPath, os.ModePerm)
 			if err != nil {
-				ShowErrorAndExit(pretty.TErrorF("创建默认skills文件夹错误：%v", err))
+				global.ShowErrorAndExit(global.Log, pretty.TErrorF("创建默认skills文件夹错误：%v", err))
 			}
-			ShowSuccess("检查到skills文件夹不存在，已创建默认skills文件夹")
+			global.ShowSuccess(global.Log, "检查到skills文件夹不存在，已创建默认skills文件夹")
 		} else {
-			ShowErrorAndExit(pretty.TErrorF("检查skills文件夹错误：%v", err))
+			global.ShowErrorAndExit(global.Log, pretty.TErrorF("检查skills文件夹错误：%v", err))
 		}
 	} else {
-		ShowSuccess("检查skills文件夹通过")
+		global.ShowSuccess(global.Log, "检查skills文件夹通过")
 	}
 }
 
@@ -293,7 +292,7 @@ func LoadConfig() {
 	//加载配置文件
 	config_p, err := loadConfig()
 	if err != nil {
-		ShowErrorAndExit(pretty.TErrorF("加载配置文件错误: %v,按任意键退出", err))
+		global.ShowErrorAndExit(global.Log, pretty.TErrorF("加载配置文件错误: %v,按任意键退出", err))
 	}
 	global.Config_p = config_p
 }
@@ -315,40 +314,8 @@ func NewRunner() {
 		Stream: (*global.Config_p).Model.Stream,
 	}
 
-	global.Print2LogView(pretty.TReady(global.Agentname))
+	global.PrintToTui(global.Log, pretty.TReady(global.Agentname), false)
 
-}
-
-func ShowErrorAndExit(errmsg string) {
-	done := make(chan struct{})
-	global.Print2LogView(errmsg)
-	global.App_p.QueueUpdateDraw(func() {
-		//只要有按键就退出程序
-		global.App_p.SetFocus(global.LogView_p)
-		global.LogView_p.SetInputCapture(
-			func(event *tcell.EventKey) *tcell.EventKey {
-				global.App_p.Stop()
-				return nil
-			})
-	})
-	<-done
-}
-func ShowSuccess(sussessmsg string) {
-	global.Print2LogView(pretty.TSuccess(sussessmsg))
-}
-func ShowSuccessAndExit(sussessmsg string) {
-	done := make(chan struct{})
-	global.Print2LogView(pretty.TSuccess(sussessmsg))
-	global.App_p.QueueUpdateDraw(func() {
-		//只要有按键就退出程序
-		global.App_p.SetFocus(global.LogView_p)
-		global.LogView_p.SetInputCapture(
-			func(event *tcell.EventKey) *tcell.EventKey {
-				global.App_p.Stop()
-				return nil
-			})
-	})
-	<-done
 }
 
 // redirectFrameworkLog 将框架的日志输出从 stdout 重定向到可执行文件同目录下的 hyperbot.log 文件-created by copilot

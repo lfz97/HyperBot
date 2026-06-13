@@ -67,19 +67,27 @@ Long conversations are automatically compressed so you never hit context limits:
 - **`ESC`**: Cancel the agent's current response instantly
 - **Self-recovery**: On errors, the agent constructs a recovery prompt and tries again — transient 5xx errors won't kill your session
 
-### 🔄 One-Click Cross-Compilation
+### 🧠 Long-Term Memory (Auto Memory)
+
+Key information is automatically extracted after each conversation and persisted. The next conversation intelligently retrieves and injects relevant memories into context:
+
+- **Auto Extraction**: After each turn, a background LLM asynchronously analyzes the conversation and extracts facts and events
+- **Adaptive Preload**: When memory is small, all entries are injected. When large, semantic search finds the top-N most relevant ones
+- **SQLite Persistence**: Single-file `memory.db`, zero maintenance, survives restarts
+- **Hybrid Mode**: The agent has `memory_search` / `memory_load` tools to actively search any historical memory
+- **Deduplication**: Duplicate information is auto-merged as updates, never creating redundant entries
+
+### 🔨 Build
 
 ```bash
-make all   # Build all platforms at once
+# Linux
+./build.sh
+
+# Windows (PowerShell)
+.\build.ps1
 ```
 
-| Platform | Output |
-|----------|--------|
-| Linux x64 | `release/linux-x64/HyperBot` |
-| Linux ARM64 | `release/linux-arm64/HyperBot` |
-| macOS x64 | `release/macos-x64/HyperBot` |
-| macOS ARM64 | `release/macos-arm64/HyperBot` |
-| Windows x64 | `release/windows-x64/HyperBot.exe` |
+Output goes to the `release/` directory.
 
 ## Quick Start
 
@@ -160,10 +168,47 @@ stdin_mcp:
 <Next to executable>/
 ├── .hyperbot/
 │   ├── hyperbot.yaml        # Main config
+│   ├── memory.db            # Long-term memory database
 │   ├── skills/              # Skill repository
 │   ├── hyperbot.log         # Background logs
 └── output/                  # Task output directory
 ```
+
+## Deployment & Portability
+
+HyperBot is **single-binary** — one executable + one config directory is a complete runtime instance. No Docker, no database server, no runtime dependencies.
+
+### Deploy
+
+```bash
+# Build or download the binary, then run from any directory
+./HyperBot
+# The .hyperbot/ config directory is auto-generated on first run
+```
+
+The only requirement: the directory containing the binary must be **readable and writable**.
+
+### Migrate
+
+Copy the binary and `.hyperbot/` directory to another machine. **All data is preserved**:
+
+```bash
+# Migrate to a new machine
+scp HyperBot user@new-host:/opt/hyperbot/
+scp -r .hyperbot user@new-host:/opt/hyperbot/
+```
+
+`.hyperbot/` directory contents:
+
+| File/Dir | Contents |
+|----------|----------|
+| `hyperbot.yaml` | API key, model, MCP tool config |
+| `memory.db` | Long-term memory (extracted conversation insights) |
+| `skills/` | Custom skill definitions |
+| `hyperbot.log` | Runtime logs |
+
+> **Note**: `hyperbot.yaml` contains your API key. Ensure the target environment is secure before migrating.
+
 
 ## License
 

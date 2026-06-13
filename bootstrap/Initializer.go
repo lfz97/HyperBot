@@ -5,11 +5,13 @@ import (
 	"HyperBot/config"
 	"HyperBot/functionTools"
 	"HyperBot/global"
+	"HyperBot/memory"
 	"HyperBot/session"
 	"HyperBot/toolsets"
 	"HyperBot/toolsets/localexec"
 	"HyperBot/utils/pretty"
 	"fmt"
+	stdlog "log"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -20,9 +22,12 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"trpc.group/trpc-go/trpc-agent-go/agent/llmagent"
 	"trpc.group/trpc-go/trpc-agent-go/log"
 	"trpc.group/trpc-go/trpc-agent-go/model"
 	"trpc.group/trpc-go/trpc-agent-go/runner"
+	"trpc.group/trpc-go/trpc-agent-go/skill"
+	"trpc.group/trpc-go/trpc-agent-go/tool"
 	"trpc.group/trpc-go/trpc-mcp-go"
 )
 
@@ -32,6 +37,7 @@ const (
 	HyperBotConfig       string = "hyperbot.yaml"
 	SkillsFolder         string = "skills"
 	HyperBotLogFile      string = "hyperbot.log"
+	memoryDBFileName     string = "memory.db"
 	outputDir            string = "output"
 )
 
@@ -60,7 +66,10 @@ func Init(an string) {
 	LoadConfig()
 
 	//初始化内存会话服务
-	initMemorySessionService()
+	initInMemorySessionService()
+
+	//初始化sqlite记忆服务
+	initSqliteMemoryService()
 
 	//加载function工具
 	loadFunctionTools()
@@ -181,12 +190,12 @@ func checkConfig() {
 }
 
 func checkSkillsFolder() {
-	global.SkillFolderPath = filepath.Join(global.ConfigFolderPath, SkillsFolder)
-	_, err := os.Stat(global.SkillFolderPath)
+	skillFolderPath := filepath.Join(global.ConfigFolderPath, SkillsFolder)
+	_, err := os.Stat(skillFolderPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			//skills 文件夹不存在，创建一个默认的 skills 文件夹
-			err := os.MkdirAll(global.SkillFolderPath, os.ModePerm)
+			err := os.MkdirAll(skillFolderPath, os.ModePerm)
 			if err != nil {
 				global.ShowErrorAndExit(global.Log, pretty.TErrorF("创建默认skills文件夹错误：%v", err))
 			}
@@ -196,7 +205,10 @@ func checkSkillsFolder() {
 		}
 	} else {
 		global.ShowSuccess(global.Log, "检查skills文件夹通过")
+
 	}
+	global.SkillRepo, _ = skill.NewFSRepository(skillFolderPath)
+
 }
 
 func loadConfig() (*config.Config, error) {
@@ -212,8 +224,8 @@ func loadConfig() (*config.Config, error) {
 	return &YamlConfig, nil
 }
 
-func parseConfig() {
-	global.Toolsets = nil
+func parseToolsetsFromConfig() {
+	global.Toolsets = []tool.ToolSet{} //先清空工具集
 
 	if len((*global.Config_p).HttpMcp) != 0 {
 		//读取配置文件中的 MCP 配置，创建 MCP ToolSet 并添加到 Toolsets 中
@@ -240,56 +252,75 @@ func parseConfig() {
 
 }
 
-func initMemorySessionService() {
+func initInMemorySessionService() {
 	global.SessionService_p = session.NewMemorySessionService((*global.Config_p).Model)
+}
+
+func initSqliteMemoryService() {
+	service, err := memory.NewSQLiteMemoryService((*global.Config_p).Model, filepath.Join(global.ConfigFolderPath, memoryDBFileName))
+	if err != nil {
+		global.ShowErrorAndExit(global.Log, pretty.TErrorF("初始化sqlite记忆服务错误: %v", err))
+	}
+	global.SqliteMemoryService = service
 }
 
 func initAgent() runner.Runner {
 	var Runner runner.Runner
-
+	var Agent_p *llmagent.LLMAgent
+	global.Tools = append(global.Tools, global.SqliteMemoryService.Tools()...) //将SqliteMemoryService的工具添加到全局工具列表中，使得Agent能够调用记忆相关的工具
+	opts := []llmagent.Option{
+		llmagent.WithGenerationConfig(model.GenerationConfig{
+			Stream: (*global.Config_p).Model.Stream,
+		}),
+		llmagent.WithTools(global.Tools),
+		llmagent.WithGlobalInstruction(global.Systemprompt), //系统提示词
+		llmagent.WithToolSets(global.Toolsets),
+		llmagent.WithRefreshToolSetsOnRun(true),
+		llmagent.WithSkillsLoadedContentInToolResults(true),
+		//仅注入知识，不注入执行工具的能力，统一通过localexec执行
+		llmagent.WithSkills(global.SkillRepo),
+		llmagent.WithSkillToolProfile(
+			llmagent.SkillToolProfileKnowledgeOnly,
+		),
+		llmagent.WithAddSessionSummary(true),                             //启用上下文压缩注入
+		llmagent.WithEnableContextCompaction(true),                       // 启用 tool result 压缩（Pass 1+2）
+		llmagent.WithContextCompactionOversizedToolResultMaxTokens(8192), // Pass 2: 超大 tool result 首尾保留截断
+		llmagent.WithEnableOnDemandSession(true),                         // 按需加载被压缩的原始数据（session_load）
+		llmagent.WithPreloadMemory(10),                                   // 预加载最近的10条记忆到上下文中，提升模型对近期事件的记忆能力
+	}
 	if (*global.Config_p).Model.APIType == "openai" {
-		Agent_p := agent.OpenaiAgent(
+		Agent_p = agent.OpenaiAgent(
 			global.Agentname,
-			global.Systemprompt,
-			model.GenerationConfig{
-				Stream: (*global.Config_p).Model.Stream,
-			},
-			global.Tools,
-			global.Toolsets,
 			(*global.Config_p).Model.Model,
 			(*global.Config_p).Model.BaseURL,
 			(*global.Config_p).Model.APIKey,
-			global.SkillFolderPath,
-		)
-		Runner = runner.NewRunner(global.Agentname, Agent_p,
-			runner.WithSessionService(global.SessionService_p), // 使用内存会话服务，其中包含自动摘要功能
+			opts,
 		)
 	} else if (*global.Config_p).Model.APIType == "anthropic" {
-		Agent_p := agent.AnthropicAgent(
+		Agent_p = agent.AnthropicAgent(
 			global.Agentname,
-			global.Systemprompt,
-			model.GenerationConfig{
-				Stream: (*global.Config_p).Model.Stream,
-			},
-			global.Tools,
-			global.Toolsets,
 			(*global.Config_p).Model.Model,
 			(*global.Config_p).Model.BaseURL,
 			(*global.Config_p).Model.APIKey,
-			global.SkillFolderPath,
+			opts,
 		)
-		Runner = runner.NewRunner(global.Agentname, Agent_p,
-			runner.WithSessionService(global.SessionService_p), // 使用内存会话服务，其中包含自动摘要功能
-		)
+
 	} else {
 		pretty.ErrorWithExit("不支持的API类型，请检查配置文件中的 Model.APIType 字段")
 	}
 
+	Runner = runner.NewRunner(
+		global.Agentname,
+		Agent_p,
+		runner.WithSessionService(global.SessionService_p),   // 使用内存会话服务，其中包含自动摘要功能
+		runner.WithMemoryService(global.SqliteMemoryService), // 使用sqlite记忆服务
+	)
 	return Runner
 }
 
 func LoadConfig() {
 	//加载配置文件
+	global.Config_p = nil
 	config_p, err := loadConfig()
 	if err != nil {
 		global.ShowErrorAndExit(global.Log, pretty.TErrorF("加载配置文件错误: %v,按任意键退出", err))
@@ -298,6 +329,7 @@ func LoadConfig() {
 }
 
 func loadFunctionTools() {
+	global.Tools = []tool.Tool{} //清空全局工具列表，重新加载工具，确保工具的最新状态被加载
 	fileopstools := functionTools.GetFileOperationsTools()
 	fileSystemTools := functionTools.GetFileSystemTools()
 	dateTools := functionTools.GetDateTools()
@@ -306,8 +338,9 @@ func loadFunctionTools() {
 	global.Tools = append(global.Tools, dateTools...)
 }
 func NewRunner() {
-	//解析配置文件
-	parseConfig()
+	LoadConfig()              //加载配置文件
+	parseToolsetsFromConfig() //从配置文件加载工具集
+	loadFunctionTools()       //加载function工具
 	runner := initAgent()
 	global.AgentRunner_p = &global.Agentrunner{
 		Runner: runner,
@@ -351,4 +384,9 @@ func redirectFrameworkLog() {
 
 	//定向trpc-mcp-go的日志输出到文件
 	mcp.SetDefaultLogger(fileLogger)
+
+	//重定向标准库 log 到文件（避免 gse 等第三方库的日志污染终端）
+	if global.FrameworkLogFile_p != nil {
+		stdlog.SetOutput(global.FrameworkLogFile_p)
+	}
 }

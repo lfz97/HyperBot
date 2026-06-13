@@ -41,7 +41,6 @@ func AgentStart() {
 				Reason:     "用户主动刷新工具",
 				OutputPart: "",
 			}
-			LoadConfig()                           //重新加载配置文件，确保工具的最新状态被加载
 			(*global.AgentRunner_p).Runner.Close() //关闭旧的Runner，释放资源
 			NewRunner()                            //创建新的Runner，使用最新的工具配置
 

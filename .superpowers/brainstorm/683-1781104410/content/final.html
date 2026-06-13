@@ -1,0 +1,19 @@
+<h2>最终设计：bridge/ 包</h2>
+<p class="subtitle">一个包统一管理 TUI 渲染的生产和消费</p>
+
+<div class="section">
+  <pre style="background:var(--bg-secondary);padding:16px;border-radius:8px;font-size:14px;line-height:1.8;">
+bridge/
+├── renderEvent.go   ← Target 常量 + RenderEvent（无 tview）
+├── eventBus.go      ← EventBus + Emit/Shutdown 包级函数（无 tview）
+├── widgetOps.go     ← WidgetOpsImpl 接口 + WidgetOps 变量（无 tview）
+└── tuiRender.go     ← 渲染 goroutine + WidgetOps tview 实现（唯一 import tview）
+
+业务层只 import "HyperBot/bridge"
+
+bridge.Emit(RenderEvent{TargetMessage, Content})
+bridge.WidgetOps.EnableInput(prompt, onSubmit)
+
+新建 ~125 行，修改 ~9 个文件约 70 处调用点。零循环依赖。
+  </pre>
+</div>

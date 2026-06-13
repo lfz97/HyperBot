@@ -3,33 +3,9 @@ package agent
 import (
 	"HyperBot/models"
 	"trpc.group/trpc-go/trpc-agent-go/agent/llmagent"
-	"trpc.group/trpc-go/trpc-agent-go/model"
-	"trpc.group/trpc-go/trpc-agent-go/skill"
-	"trpc.group/trpc-go/trpc-agent-go/tool"
 )
 
-func ConfigBaseAgent(agentName string, systemPrompt string, genConfig model.GenerationConfig, tools []tool.Tool, toolsets []tool.ToolSet, Model string, BaseUrl string, APIkey string, ApiType string, skillsPath string) *llmagent.LLMAgent {
-
-	repo, _ := skill.NewFSRepository(skillsPath)
-
-	opts := []llmagent.Option{
-		llmagent.WithGenerationConfig(genConfig),
-		llmagent.WithTools(tools),
-		llmagent.WithGlobalInstruction(systemPrompt), //系统提示词
-		llmagent.WithToolSets(toolsets),
-		llmagent.WithRefreshToolSetsOnRun(true),
-		llmagent.WithSkillsLoadedContentInToolResults(true),
-		//仅注入知识，不注入执行工具的能力，统一通过localexec执行
-		llmagent.WithSkills(repo),
-		llmagent.WithSkillToolProfile(
-			llmagent.SkillToolProfileKnowledgeOnly,
-		),
-		llmagent.WithAddSessionSummary(true), //启用上下文压缩注入
-		llmagent.WithEnableContextCompaction(true),                                     // 启用 tool result 压缩（Pass 1+2）
-		llmagent.WithContextCompactionOversizedToolResultMaxTokens(8192),               // Pass 2: 超大 tool result 首尾保留截断
-		llmagent.WithEnableOnDemandSession(true),                                       // 按需加载被压缩的原始数据（session_load）
-
-	}
+func ConfigBaseAgent(agentName string, Model string, BaseUrl string, APIkey string, ApiType string, opts []llmagent.Option) *llmagent.LLMAgent {
 
 	if ApiType == "openai" {
 		OpenaiModel_p := models.Openai(Model, BaseUrl, APIkey)

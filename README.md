@@ -67,19 +67,27 @@ Agent 可以自主完成"写代码 → 编译 → 运行 → 调试"的完整闭
 - **`ESC`**：随时中断 Agent 当前响应
 - **自动恢复**：出错后 Agent 自动以错误信息构造 recover prompt 尝试自我修复，不让一次性 5xx 打断对话
 
-### 🔄 五平台一键编译
+### 🧠 长期记忆（Auto Memory）
+
+对话结束后自动提取关键信息并持久化，下次对话时智能检索注入上下文：
+
+- **自动提取**：每轮对话完成后，后台 LLM 异步分析对话内容，提取事实和事件记忆
+- **智能预加载**：新对话开始时，少量记忆全量注入，大量记忆自动切语义检索
+- **SQLite 持久化**：单文件 `memory.db` 存储，零运维，重启不丢失
+- **混合模式**：agent 拥有 `memory_search` / `memory_load` 工具，可主动检索任何历史记忆
+- **增量去重**：重复信息自动合并为更新操作，不产生冗余记忆
+
+### 🔨 本地编译
 
 ```bash
-make all   # 一次编译全部平台
+# Linux
+./build.sh
+
+# Windows (PowerShell)
+.\build.ps1
 ```
 
-| 平台 | 产物 |
-|------|------|
-| Linux x64 | `release/linux-x64/HyperBot` |
-| Linux ARM64 | `release/linux-arm64/HyperBot` |
-| macOS x64 | `release/macos-x64/HyperBot` |
-| macOS ARM64 | `release/macos-arm64/HyperBot` |
-| Windows x64 | `release/windows-x64/HyperBot.exe` |
+产物输出到 `release/` 目录。
 
 ## 快速开始
 
@@ -160,10 +168,47 @@ stdin_mcp:
 <可执行文件所在目录>/
 ├── .hyperbot/
 │   ├── hyperbot.yaml        # 主配置文件
+│   ├── memory.db            # 长期记忆数据库
 │   ├── skills/              # 技能仓库
 │   ├── hyperbot.log         # 后台日志
 └── output/                  # 任务产物输出目录
 ```
+
+## 部署与迁移
+
+HyperBot 是**单文件部署**——一个二进制 + 一个配置目录就是完整的运行实例，无需 Docker、数据库或任何运行时依赖。
+
+### 部署
+
+```bash
+# 编译或下载二进制后，放到任意目录直接运行
+./HyperBot
+# 首次运行自动生成 .hyperbot/ 配置目录
+```
+
+只需确保二进制**所在目录可读写**，没有其他要求。
+
+### 迁移
+
+把二进制和 `.hyperbot/` 目录打包拷到另一台机器即可，**所有数据完整保留**：
+
+```bash
+# 迁移到新机器
+scp HyperBot user@new-host:/opt/hyperbot/
+scp -r .hyperbot user@new-host:/opt/hyperbot/
+```
+
+`.hyperbot/` 目录包含：
+
+| 文件/目录 | 内容 |
+|-----------|------|
+| `hyperbot.yaml` | API Key、模型、MCP 工具配置 |
+| `memory.db` | 长期记忆（对话历史的关键信息提取） |
+| `skills/` | 自定义 Skill 定义 |
+| `hyperbot.log` | 运行日志 |
+
+> **注意**：`.hyperbot/hyperbot.yaml` 中的 API Key 是敏感信息，迁移前请确保目标环境安全。
+
 
 ## 许可证
 

@@ -8,22 +8,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Run directly
 go run .
 
-# Build for current platform
-go build -buildvcs=false .
+# Build for current platform (Linux)
+./build.sh          # → release/HyperBot
 
-# Cross-compile all platforms
-make all
+# Build for current platform (Windows PowerShell)
+.\build.ps1         # → release/HyperBot.exe
 
-# Cross-compile specific platform
-make linux-x64
-make linux-arm64
-make macos-arm64
-make macos-x64
-make windows-x64
+# Build manually
+go build -ldflags "-s -w" -buildvcs=false .
+```
 
-# Clean build artifacts
-make clean
+**CGO required** — `memory/sqlite` depends on `mattn/go-sqlite3`. Cross-compilation needs C cross-compilers per target; for now, build natively on each platform.
 
+```bash
 # Tidy dependencies after adding/removing imports
 go mod tidy
 ```
@@ -40,9 +37,12 @@ main.go → tview.Application
          └── tip/            (TUI tip display)
 
     ┌── global/
-    │   ├── appCore.go     (Agentrunner struct, config, session, tools, embedFS)
+    │   ├── backendCore.go  (Agentrunner struct, config, session, memory, tools, embedFS)
     │   ├── tui.go          (TUI widget references: App, views, helpers)
     │   └── prompt/         (system prompt embedFS)
+    │
+    ├── memory/
+    │   └── sqlite.go       (SQLite memory service factory)
     │
     ├── bootstrap/
     │   ├── Initializer.go  (async init: logs → config → agent creation)
@@ -159,6 +159,28 @@ Auto-generated to `hyperbot.yaml` on first run. Supports:
 - **EditFile replace_all semantics** - `replace_all=false`（默认）是安全检查：多处匹配时报错拒绝替换，而非只替换第一处。`replace_all=true` 才执行全量替换。修改时不要移除 `len(Indexes) > 1` 的检查。
 - **strings.Index loop pattern** - 在 `Now[offset:]` 上循环搜索时，`offset += idx` 定位到匹配起点后，必须再 `offset += len(matched)` 跳过已匹配内容，否则同一位置重复匹配导致死循环。
 - **Tool call 后 agent 停止输出** - 如果 `hyperbot.log` 无 error，且对 agent 说"继续"能恢复对话，说明是模型侧在 tool result 后概率性预测了 stop token，不是框架 bug。不需要迁就式修改。
+- **`models.Openai()` / `models.Anthropic()` are the canonical model constructors** — `memory/sqlite.go`, `session/summarizer.go`, and agent creation all use these two functions. They handle DeepSeek variant detection, reasoning backfill, and API auth. When creating a new model instance from config, call these instead of manually assembling openai/anthropic options.
+
+## Auto Memory (SQLite)
+
+Introduced in v2.2.0. Persistent long-term memory using SQLite with background LLM extraction.
+
+### Architecture
+- `memory/sqlite.go` — factory: creates `memorysqlite.Service` with an `extractor.NewExtractor` using the same LLM as the main model. Calls `models.Openai()`/`Anthropic()` for the extractor model.
+- `global/backendCore.go` — `SqliteMemoryService *memorysqlite.Service` global
+- `bootstrap/Initializer.go` — `initSqliteMemoryService()` called in `Init()`, writes to `<configDir>/memory.db`
+- `bootstrap/Bootstrap.go` — `initAgent()` appends `SqliteMemoryService.Tools()` to agent tools (exposes `memory_search`/`memory_load`) and sets `WithPreloadMemory(10)` + `runner.WithMemoryService()`
+
+### Key behaviors
+- **Auto extraction**: async, incremental — `EnqueueAutoMemoryJob(sess)` triggers after each `Runner.Run()`, `scanDeltaSince` processes only new events since `memory:last_extract_at`. Filters out tool calls/results; only user + assistant text goes to extractor.
+- **Preload**: sync during content processor — `WithPreloadMemory(10)` adaptively loads all memories (≤10) or semantically searches top-10 by user query. Injected into system prompt via `injectSystemContextMessage`.
+- **Search**: keyword-based (BM25 + CJK gse segmentation). No embedder needed.
+- **Deduplication**: extractor default prompt handles near-duplicate detection; reconcile layer uses token Jaccard + BM25 score to merge/update/drop.
+
+### Gotchas
+- `initSqliteMemoryService()` MUST be called before `initAgent()` — agent creation reads `SqliteMemoryService.Tools()`, nil service → panic → black screen
+- `stdlog.SetOutput(file)` in `redirectFrameworkLog()` redirects gse dictionary-loading chatter away from TUI
+- Default memory limit: 200 (hardcoded in `memory/sqlite.go`)
 
 ## Context Management
 

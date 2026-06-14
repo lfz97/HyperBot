@@ -120,7 +120,7 @@ main.go → tview.Application
 
 **Session Memory**: `InMemorySessionService` is stored in `global.SessionService`. When refreshing tools via `/flush`, the session service must be preserved to maintain conversation history. `LoadConfig()` and `NewRunner()` can be called independently to reload tools without resetting memory.
 
-**Session Summarization**: `session/summarizer.go` uses `CheckTokenThreshold(0.4 * ContextWindow)` + `CheckTimeThreshold(10min)` via `WithChecksAny`. Requires both `session.NewMemorySessionService` with summarizer AND `llmagent.WithAddSessionSummary(true)` in `agent/baseAgent.go`. Summary is injected as system message. `WithSessionSummaryInjectionMode`/`SessionSummaryInjectionUser` do not exist in current trpc-agent-go. The `contextwindow` in `config.yaml` MUST match actual API provider limit — if smaller, summarization fails. When summarization fails ("summary worker failed" in `hyperbot.log`), session continues uncompressed; reduce `contextwindow` or clear session. Token counting uses `model/tiktoken` (BPE, not `SimpleTokenCounter`), configured via `summary.SetTokenCounter(counter)` in `session/summarizer.go:44-45`. `WithToolCallFormatter`/`WithToolResultFormatter` affect BOTH summary input AND threshold token counting — truncation causes underestimation, use default or lower `CheckTokenThresholdPercent`. `extractTokenThresholdMessage` includes `ReasoningContent` in calculation (previously dropped silently, causing delayed summarization for reasoning models like DeepSeek).
+**Session Summarization**: `session/summarizer.go` — token + time thresholds via `WithChecksAny`. Requires both `session.NewMemorySessionService` with summarizer AND `llmagent.WithAddSessionSummary(true)`. Key gotchas: `contextwindow` in config.yaml MUST match the actual API provider limit; `WithToolCallFormatter`/`WithToolResultFormatter` affect both summary input AND threshold token counting; `WithSessionSummaryInjectionMode` does not exist in the current trpc-agent-go version used. See Context Management section for full troubleshooting flow.
 
 **Deployed Config**: User config lives in `<cwd>/.hyperbot/hyperbot.yaml` (the working directory where the binary runs). On the author's machine this is `C:\Users\<user>\OneDrive - ...\应用\hyperbot\.hyperbot\`, but it varies by platform. The repo's `.hyperbot/` is for development only.
 
@@ -169,12 +169,12 @@ Introduced in v2.2.0. Persistent long-term memory using SQLite with background L
 - `memory/sqlite.go` — factory: creates `memorysqlite.Service` with an `extractor.NewExtractor` using the same LLM as the main model. Calls `models.Openai()`/`Anthropic()` for the extractor model.
 - `global/backendCore.go` — `SqliteMemoryService *memorysqlite.Service` global
 - `bootstrap/Initializer.go` — `initSqliteMemoryService()` called in `Init()`, writes to `<configDir>/memory.db`
-- `bootstrap/Bootstrap.go` — `initAgent()` appends `SqliteMemoryService.Tools()` to agent tools (exposes `memory_search`/`memory_load`) and sets `WithPreloadMemory(10)` + `runner.WithMemoryService()`
+- `bootstrap/Bootstrap.go` — `initAgent()` appends `SqliteMemoryService.Tools()` to agent tools (auto mode exposes `memory_search` by default; `memory_add` and `memory_update` are additionally exposed via `WithAutoMemoryExposedTools` in `memory/sqlite.go`) and sets `WithPreloadMemory(10)` + `runner.WithMemoryService()`
 
 ### Key behaviors
 - **Auto extraction**: async, incremental — `EnqueueAutoMemoryJob(sess)` triggers after each `Runner.Run()`, `scanDeltaSince` processes only new events since `memory:last_extract_at`. Filters out tool calls/results; only user + assistant text goes to extractor.
 - **Preload**: sync during content processor — `WithPreloadMemory(10)` adaptively loads all memories (≤10) or semantically searches top-10 by user query. Injected into system prompt via `injectSystemContextMessage`.
-- **Search**: keyword-based (BM25 + CJK gse segmentation). No embedder needed.
+- **Search**: keyword-based (BM25 + CJK gse segmentation). No embedder needed. Both preload and extractor retrieval use user messages as the search query — pure keyword overlap, no semantic understanding. Upgrading to embedder + vector backend (e.g. `sqlitevec`, `pgvector`) is the path for true semantic recall.
 - **Deduplication**: extractor default prompt handles near-duplicate detection; reconcile layer uses token Jaccard + BM25 score to merge/update/drop.
 
 ### Gotchas
@@ -193,6 +193,9 @@ HyperBot uses three complementary mechanisms to prevent context overflow:
 - Summary model is the same as main model; for DeepSeek reasoning models, the token counter falls back to `cl100k_base` (within ~4-7% of DeepSeek's actual count per empirical testing)
 - If summaries fail silently (check `hyperbot.log` for "summary worker failed"), session continues uncompressed → context grows unbounded → API errors
 - Post-summary hook strips `<think>...</think>` tags from summary text
+- `WithToolCallFormatter`/`WithToolResultFormatter` affect BOTH summary input AND threshold token counting — truncation causes token underestimation, use default or lower `CheckTokenThresholdPercent`
+- `extractTokenThresholdMessage` includes `ReasoningContent` in calculation (previously dropped silently, causing delayed summarization for DeepSeek reasoning models)
+- `WithSessionSummaryInjectionMode` does not exist in the current trpc-agent-go version; summary is injected as a system message
 
 ### 2. Context Compaction (`agent/baseAgent.go`)
 - `WithEnableContextCompaction(true)` enables deterministic tool result compression before each LLM call

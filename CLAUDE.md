@@ -159,28 +159,39 @@ Auto-generated to `hyperbot.yaml` on first run. Supports:
 - **EditFile replace_all semantics** - `replace_all=false`（默认）是安全检查：多处匹配时报错拒绝替换，而非只替换第一处。`replace_all=true` 才执行全量替换。修改时不要移除 `len(Indexes) > 1` 的检查。
 - **strings.Index loop pattern** - 在 `Now[offset:]` 上循环搜索时，`offset += idx` 定位到匹配起点后，必须再 `offset += len(matched)` 跳过已匹配内容，否则同一位置重复匹配导致死循环。
 - **Tool call 后 agent 停止输出** - 如果 `hyperbot.log` 无 error，且对 agent 说"继续"能恢复对话，说明是模型侧在 tool result 后概率性预测了 stop token，不是框架 bug。不需要迁就式修改。
-- **`models.Openai()` / `models.Anthropic()` are the canonical model constructors** — `memory/sqlite.go`, `session/summarizer.go`, and agent creation all use these two functions. They handle DeepSeek variant detection, reasoning backfill, and API auth. When creating a new model instance from config, call these instead of manually assembling openai/anthropic options.
+- **`models.Openai()` / `models.Anthropic()` are the canonical model constructors** — `session/summarizer.go` and agent creation use these two functions. They handle DeepSeek variant detection, reasoning backfill, and API auth. When creating a new model instance from config, call these instead of manually assembling openai/anthropic options.
 
-## Auto Memory (SQLite)
+## Agent-Driven Memory (SQLite)
 
-Introduced in v2.2.0. Persistent long-term memory using SQLite with background LLM extraction.
+Persistent long-term memory using SQLite, managed entirely by the agent via tool calls — no background auto-extraction.
 
 ### Architecture
-- `memory/sqlite.go` — factory: creates `memorysqlite.Service` with an `extractor.NewExtractor` using the same LLM as the main model. Calls `models.Openai()`/`Anthropic()` for the extractor model.
+- `memory/sqlite.go` — factory: creates `memorysqlite.Service` in manual/agentic mode (no extractor). Exposes 5 tools via `WithToolEnabled(memory.DeleteToolName)` on top of `DefaultEnabledTools` (search, load, add, update). `memory_clear` is intentionally not exposed.
 - `global/backendCore.go` — `SqliteMemoryService *memorysqlite.Service` global
-- `bootstrap/Initializer.go` — `initSqliteMemoryService()` called in `Init()`, writes to `<configDir>/memory.db`
-- `bootstrap/Bootstrap.go` — `initAgent()` appends `SqliteMemoryService.Tools()` to agent tools (auto mode exposes `memory_search` by default; `memory_add` and `memory_update` are additionally exposed via `WithAutoMemoryExposedTools` in `memory/sqlite.go`) and sets `WithPreloadMemory(10)` + `runner.WithMemoryService()`
+- `bootstrap/Initializer.go` — `initSqliteMemoryService()` called in `Init()`, writes to `<configDir>/memory.db`. No longer requires `config.Model` parameter (extractor removed).
+- `bootstrap/Bootstrap.go` — `initAgent()` appends `SqliteMemoryService.Tools()` to agent tools and sets `WithPreloadMemory(10)` + `runner.WithMemoryService()`
+- `global/prompt/systemprompt.md` — `# Memory` section defines agent memory behavior: search-before-store, proactive storage, outdated correction, atomic/specific writing standards
 
 ### Key behaviors
-- **Auto extraction**: async, incremental — `EnqueueAutoMemoryJob(sess)` triggers after each `Runner.Run()`, `scanDeltaSince` processes only new events since `memory:last_extract_at`. Filters out tool calls/results; only user + assistant text goes to extractor.
-- **Preload**: sync during content processor — `WithPreloadMemory(10)` adaptively loads all memories (≤10) or semantically searches top-10 by user query. Injected into system prompt via `injectSystemContextMessage`.
-- **Search**: keyword-based (BM25 + CJK gse segmentation). No embedder needed. Both preload and extractor retrieval use user messages as the search query — pure keyword overlap, no semantic understanding. Upgrading to embedder + vector backend (e.g. `sqlitevec`, `pgvector`) is the path for true semantic recall.
-- **Deduplication**: extractor default prompt handles near-duplicate detection; reconcile layer uses token Jaccard + BM25 score to merge/update/drop.
+- **Agent-driven**: all memory creation, update, and deletion happens through explicit agent tool calls. No background extractor, no `EnqueueAutoMemoryJob`.
+- **Preload**: sync during content processor — `WithPreloadMemory(10)` adaptively loads all memories (≤10) or searches top-10 by user query. Injected into system prompt via `injectSystemContextMessage`.
+- **Search**: keyword-based (BM25 + CJK gse segmentation). No embedder needed. Both preload and agent `memory_search` use keyword overlap — pure BM25, no semantic understanding. Upgrading to embedder + vector backend (e.g. `sqlitevec`, `pgvector`) is the path for true semantic recall.
+- **Exposed tools**: `memory_search`, `memory_load`, `memory_add`, `memory_update`, `memory_delete`. `memory_clear` is NOT exposed (risk of wiping all memories).
+
+### Why no auto-extraction
+Auto-extraction was removed because of dual-writer conflicts between agent and background extractor:
+- Extractor's BM25 search is topic-matched (finds "related"), not contradiction-matched (finds "outdated") → fails to update superseded memories
+- When agent updates a memory (changing its content-hash ID), extractor references the old ID → "not found" → fallback to `AddMemory` → creates duplicate
+- Extractor `UpdateMemory` passes through `reconcileOps` unchecked (only Add ops are reconciled) → extractor can overwrite agent's updates unconditionally
+- No timestamp/version protection on `UpdateMemory` → last-write-wins without any guard
+
+Agent-driven mode avoids all of these by having a single writer who understands full conversation context and can detect contradictions semantically.
 
 ### Gotchas
 - `initSqliteMemoryService()` MUST be called before `initAgent()` — agent creation reads `SqliteMemoryService.Tools()`, nil service → panic → black screen
 - `stdlog.SetOutput(file)` in `redirectFrameworkLog()` redirects gse dictionary-loading chatter away from TUI
-- Default memory limit: 200 (hardcoded in `memory/sqlite.go`)
+- Default memory limit: 100000 (`memory/sqlite.go:WithMemoryLimit`)
+- `memory/sqlite.go` no longer imports `config`, `models`, `extractor`, or `model` — extractor model creation removed
 
 ## Context Management
 

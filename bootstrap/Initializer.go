@@ -11,11 +11,11 @@ import (
 	"HyperBot/toolsets/localexec"
 	"HyperBot/utils/pretty"
 	"fmt"
-	stdlog "log"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/yaml.v2"
+	stdlog "log"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -283,6 +283,7 @@ func initAgent() runner.Runner {
 			llmagent.SkillToolProfileKnowledgeOnly,
 		),
 		llmagent.WithAddSessionSummary(true),                             //启用上下文压缩注入
+		llmagent.WithSyncSummaryIntraRun(true),                           //在同一次对话中同步更新摘要
 		llmagent.WithEnableContextCompaction(true),                       // 启用 tool result 压缩（Pass 1+2）
 		llmagent.WithContextCompactionOversizedToolResultMaxTokens(8192), // Pass 2: 超大 tool result 首尾保留截断
 		llmagent.WithEnableOnDemandSession(true),                         // 按需加载被压缩的原始数据（session_load）

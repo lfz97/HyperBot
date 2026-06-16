@@ -34,11 +34,11 @@ HyperBot is a TUI AI agent chatbot built on [trpc-agent-go](https://github.com/t
 ```
 main.go → tview.Application
     └── tui/tui.go (ConfigPage → AgentPage)
-         └── tip/            (TUI tip display)
 
     ┌── global/
     │   ├── backendCore.go  (Agentrunner struct, config, session, memory, tools, embedFS)
     │   ├── tui.go          (TUI widget references: App, views, helpers)
+    │   ├── tuihandler.go   (TUI operation wrappers: PrintToTui, ShowError, etc.)
     │   └── prompt/         (system prompt embedFS)
     │
     ├── memory/
@@ -72,7 +72,7 @@ main.go → tview.Application
     │   ├── baseConfig.go       (model, API, context window config)
     │   ├── mcpConfig.go        (SSE/streamable_http MCP config)
     │   ├── stdinMcpConfig.go   (stdin MCP config)
-    │   ├── configTemplate.go (//go:embed config.yaml template)
+    │   ├── configTemplate.go   (//go:embed config.yaml template)
     │
     ├── toolsets/
     │   ├── localexec/ (built-in command execution, always enabled)

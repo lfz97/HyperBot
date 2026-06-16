@@ -120,7 +120,7 @@ main.go → tview.Application
 
 **Session Memory**: `InMemorySessionService` is stored in `global.SessionService`. When refreshing tools via `/flush`, the session service must be preserved to maintain conversation history. `LoadConfig()` and `NewRunner()` can be called independently to reload tools without resetting memory.
 
-**Session Summarization**: `session/summarizer.go` — token + time thresholds via `WithChecksAny`. Requires both `session.NewMemorySessionService` with summarizer AND `llmagent.WithAddSessionSummary(true)`. Key gotchas: `contextwindow` in config.yaml MUST match the actual API provider limit; `WithToolCallFormatter`/`WithToolResultFormatter` affect both summary input AND threshold token counting; `WithSessionSummaryInjectionMode` does not exist in the current trpc-agent-go version used. See Context Management section for full troubleshooting flow.
+**Session Summarization**: `session/summarizer.go` — token + time thresholds via `WithChecksAny`, plus `WithSkipRecent`, `WithToolResultFormatter`, `WithSyncSummaryIntraRun`, and `WithSessionSummaryInjectionMode(SessionSummaryInjectionUser)`. Requires `session.NewMemorySessionService` with summarizer AND `llmagent.WithAddSessionSummary(true)`. Key gotchas: `contextwindow` in config.yaml MUST match the actual API provider limit; `WithToolResultFormatter` truncates tool results before token estimation, affecting both summary input and threshold counting. See Context Management section for full details.
 
 **Deployed Config**: User config lives in `<cwd>/.hyperbot/hyperbot.yaml` (the working directory where the binary runs). On the author's machine this is `C:\Users\<user>\OneDrive - ...\应用\hyperbot\.hyperbot\`, but it varies by platform. The repo's `.hyperbot/` is for development only.
 
@@ -197,17 +197,20 @@ Agent-driven mode avoids all of these by having a single writer who understands 
 
 HyperBot uses three complementary mechanisms to prevent context overflow:
 
-### 1. Session Summarization (`session/summarizer.go` + `agent/baseAgent.go`)
+### 1. Session Summarization (`session/summarizer.go` + `bootstrap/Initializer.go`)
 - `WithAddSessionSummary(true)` on the LLM agent enables async summary injection
-- Summarizer triggers at `CheckTokenThreshold(0.4 * contextwindow)` OR `CheckTimeThreshold(10min)` via `WithChecksAny`
+- Summarizer triggers at `CheckTokenThreshold(0.6 * contextwindow)` OR `CheckTimeThreshold(10min)` via `WithChecksAny`
+- `WithSkipRecent` preserves the last complete interaction cycle (from last user message to tail) from being summarized — keeps current turn intact in prompt
+- `WithToolResultFormatter` truncates tool results to 1000 runes (head 500 + tail 500) before entering summary model input — reduces noise, improves summary quality. Only affects summary input; original events remain intact in session for `session_search`/`session_load`
+- `WithSyncSummaryIntraRun(true)` enables synchronous summary refresh between LLM loop iterations in the same run — ensures compressed state is visible to next LLM call in long ReAct chains
+- `WithSessionSummaryInjectionMode(SessionSummaryInjectionUser)` injects summary into user message instead of system message — keeps system prompt clean (SOP rules only), summary participates in normal window management
 - Token counting uses `model/tiktoken` (BPE), configured via `summary.SetTokenCounter(counter)`
 - Summary model is the same as main model; for DeepSeek reasoning models, the token counter falls back to `cl100k_base` (within ~4-7% of DeepSeek's actual count per empirical testing)
 - If summaries fail silently (check `hyperbot.log` for "summary worker failed"), session continues uncompressed → context grows unbounded → API errors
 - Post-summary hook strips `<think>...</think>` tags from summary text
-- `WithToolCallFormatter`/`WithToolResultFormatter` affect BOTH summary input AND threshold token counting — truncation causes token underestimation, use default or lower `CheckTokenThresholdPercent`
+- `WithToolResultFormatter` affects summary input AND threshold token counting — the formatter truncates content before token estimation, so the effective threshold is based on truncated content, not original. This is intentional: summary model sees cleaner input and produces better state recovery
 - `extractTokenThresholdMessage` includes `ReasoningContent` in calculation (previously dropped silently, causing delayed summarization for DeepSeek reasoning models)
 - `WithSessionSummaryInjectionMode` does not exist in the current trpc-agent-go version; summary is injected as a system message
-
 ### 2. Context Compaction (`agent/baseAgent.go`)
 - `WithEnableContextCompaction(true)` enables deterministic tool result compression before each LLM call
 - **Pass 1**: Historical tool results > 1024 tokens → replaced with placeholder (`event_id`/`tool_call_id` preserved for `session_load` recovery)

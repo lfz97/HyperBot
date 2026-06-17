@@ -11,6 +11,7 @@ if (-not (Test-Path $OutputDir)) {
     New-Item -ItemType Directory -Path $OutputDir | Out-Null
 }
 
+$env:CGO_ENABLED = "1"
 go build -ldflags $LDFLAGS -o "$OutputDir/HyperBot.exe"
 if ($LASTEXITCODE -ne 0) { exit 1 }
 

@@ -282,13 +282,14 @@ func initAgent() runner.Runner {
 		llmagent.WithSkillToolProfile(
 			llmagent.SkillToolProfileKnowledgeOnly,
 		),
-		llmagent.WithAddSessionSummary(true),                             //启用上下文压缩注入
+		llmagent.WithAddSessionSummary(true),                                           //启用上下文压缩注入
 		llmagent.WithSessionSummaryInjectionMode(llmagent.SessionSummaryInjectionUser), //摘要注入到user message，不与system prompt中的SOP规则竞争优先级
-		llmagent.WithSyncSummaryIntraRun(true),                           //在同一次对话中同步更新摘要
-		llmagent.WithEnableContextCompaction(true),                       // 启用 tool result 压缩（Pass 1+2）
-		llmagent.WithContextCompactionOversizedToolResultMaxTokens(8192), // Pass 2: 超大 tool result 首尾保留截断
-		llmagent.WithEnableOnDemandSession(true),                         // 按需加载被压缩的原始数据（session_load）
-		llmagent.WithPreloadMemory(10),                                   // 预加载最近的10条记忆到上下文中，提升模型对近期事件的记忆能力
+		llmagent.WithSyncSummaryIntraRun(true),                                         //在同一次对话中同步更新摘要
+		llmagent.WithEnableContextCompaction(true),                                     // 启用 tool result 压缩（Pass 1+2）
+		llmagent.WithContextCompactionOversizedToolResultMaxTokens(8192),               // Pass 2: 超大 tool result 首尾保留截断
+		llmagent.WithEnableOnDemandSession(true),                                       // 按需加载被压缩的原始数据（session_load）
+		llmagent.WithPreloadMemory(10),                                                 // 预加载最近的10条记忆到上下文中，提升模型对近期事件的记忆能力
+		llmagent.WithEnableParallelTools(true),                                         //启用并行工具调用，提升工具调用效率
 	}
 	if (*global.Config_p).Model.APIType == "openai" {
 		Agent_p = agent.OpenaiAgent(

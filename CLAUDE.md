@@ -52,7 +52,7 @@ main.go → tview.Application
     │   ├── runIteratively.go (user input loop: /exit, /new, /flush, ESC, text)
     │   ├── runOnce.go        (single agent execution, event stream consumption)
     │   ├── model.go          (TurnCode, TurnResult types)
-    │   └── message.go        (streaming/non-streaming render, reasoning content)
+    │   └── message.go        (streaming/non-streaming render; non-stream uses glamour + TranslateANSI for markdown)
     │
     ├── agent/
     │   ├── baseAgent.go      (LLMAgent config assembly: skills, tools, system prompt)
@@ -102,15 +102,14 @@ main.go → tview.Application
 - text → invoke `AgentRunOnce()`
 
 **Streaming Events**: `handler.AgentRunOnce()` calls `runner.Run()` and consumes an event stream. Messages render with:
-- Reasoning content: yellow dim text between `»` and `«`
-- Tool calls: magenta `⚙` icon + tool name + args
-- Tool results: gray indented output
+- Reasoning content: yellow dim text (suppressible via `show_reasoning: false`)
+- Tool calls: cyan dim name + dark gray args, compact single-line
+- Tool results: dark gray `⮡` arrow + dim gray text
 
-**LocalExec ToolSet**: Built-in 6-tool system for command lifecycle:
+**LocalExec ToolSet**: Built-in 5-tool system for command lifecycle:
 | Tool | Purpose |
 |------|---------|
 | `submit_command` | Submit command, get command ID |
-| `start_command` | Start submitted command by ID |
 | `get_status` | Query status; `wait_seconds` blocks until done or timeout (每秒轮询，完成即返回) |
 | `get_output` | Get stdout/stderr with window limits |
 | `intervene_command` | Write to stdin or send signals |
@@ -134,6 +133,7 @@ Auto-generated to `hyperbot.yaml` on first run. Supports:
 
 ## Dependencies
 
+- **glamour** v1.0.0: Markdown → ANSI renderer (non-stream mode uses `glamour.Render` + `tview.TranslateANSI`)
 - **trpc-agent-go** v1.10.0: Agent framework core
 - **trpc-agent-go/model/anthropic** v1.10.0: Anthropic model adapter
 - **trpc-agent-go/model/tiktoken** v1.10.0: Tiktoken-based token counter (replaces SimpleTokenCounter default)
@@ -147,7 +147,7 @@ Auto-generated to `hyperbot.yaml` on first run. Supports:
 
 ## Notes
 
-- Go 1.26.1+ required
+- Go 1.26.4+ required
 - No test files exist in this repository
 - Skills are loaded from `skills/` directory in Knowledge-Only mode (commands go through LocalExec)
 - Framework logs are redirected to `hyperbot.log` to avoid TUI interference
@@ -160,6 +160,12 @@ Auto-generated to `hyperbot.yaml` on first run. Supports:
 - **strings.Index loop pattern** - 在 `Now[offset:]` 上循环搜索时，`offset += idx` 定位到匹配起点后，必须再 `offset += len(matched)` 跳过已匹配内容，否则同一位置重复匹配导致死循环。
 - **Tool call 后 agent 停止输出** - 如果 `hyperbot.log` 无 error，且对 agent 说"继续"能恢复对话，说明是模型侧在 tool result 后概率性预测了 stop token，不是框架 bug。不需要迁就式修改。
 - **`models.Openai()` / `models.Anthropic()` are the canonical model constructors** — `session/summarizer.go` and agent creation use these two functions. They handle DeepSeek variant detection, reasoning backfill, and API auth. When creating a new model instance from config, call these instead of manually assembling openai/anthropic options.
+- **ANSI → tview tag conversion required** — tview's `SetDynamicColors(true)` only supports tview's own color tag format (`[red]text[-]`, `[::b]bold[::-]`). It does NOT support standard ANSI escape sequences. Any ANSI-based rendering (glamour, lipgloss, etc.) must go through `tview.TranslateANSI()` to convert ANSI codes to tview tags before writing to a TextView. Without this conversion, ANSI codes appear as visible garbage text like `[38;5;252m`.
+- **Tool response content must be skipped in content rendering** — `NewToolMessage` stores tool result in `Content` field alongside `Role="tool"`. Both stream and non-stream content paths check `Role != "tool"` to prevent tool JSON from leaking through the main content renderer. Without this, tool results appear as raw JSON in body text while also being formatted via `TToolResult`.
+- **Multi-tool results handled in `runOnce.go`** — Framework merges parallel tool results into a single `tool.response` event with N Choices. `AgentRunOnce` detects `ObjectTypeToolResponse` and iterates ALL Choices (not just `Choices[0]`), ensuring every result is rendered.
+- **Glamour markdown rendering** — Non-stream body text is rendered via `glamour` (dark theme). Two overrides in `message.go` `init()`: `document.margin = 0` (removes dark theme's 2-char left margin default), and the render call applies `strings.TrimRight` to strip trailing whitespace/newlines from glamour output to prevent alignment artifacts before tool calls.
+- **`show_reasoning` config** — `config.Model.ShowReasoning` (`yaml:"show_reasoning"`) controls whether reasoning/thinking content is displayed. Default `false`. Affects both stream (chunk-level skip) and non-stream (whole-block skip) paths. Set `show_reasoning: true` in `hyperbot.yaml` to enable.
+- **`message.go` refactored** — `printMessage` split into `renderStreamEvent`, `renderNonStreamEvent`, `renderToolCall`, `renderToolResult`. Tool call rendering uses shared `addToolCallMsg` helper.
 
 ## Agent-Driven Memory (SQLite)
 

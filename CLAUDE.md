@@ -103,8 +103,7 @@ main.go → tview.Application
 
 **Streaming Events**: `handler.AgentRunOnce()` calls `runner.Run()` and consumes an event stream. Messages render with:
 - Reasoning content: yellow dim text (suppressible via `show_reasoning: false`)
-- Tool calls: cyan dim name + dark gray args, compact single-line
-- Tool results: dark gray `⮡` arrow + dim gray text
+- Tool calls/results: compact single-line via `TToolCompact` — green `●` dot + orange tool name + dim gray `args → result_summary`. Short results (≤60 chars, single-line) inline; long results show stats (`3 lines, 12.5KB`).
 
 **LocalExec ToolSet**: Built-in 5-tool system for command lifecycle:
 | Tool | Purpose |
@@ -163,9 +162,9 @@ Auto-generated to `hyperbot.yaml` on first run. Supports:
 - **ANSI → tview tag conversion required** — tview's `SetDynamicColors(true)` only supports tview's own color tag format (`[red]text[-]`, `[::b]bold[::-]`). It does NOT support standard ANSI escape sequences. Any ANSI-based rendering (glamour, lipgloss, etc.) must go through `tview.TranslateANSI()` to convert ANSI codes to tview tags before writing to a TextView. Without this conversion, ANSI codes appear as visible garbage text like `[38;5;252m`.
 - **Tool response content must be skipped in content rendering** — `NewToolMessage` stores tool result in `Content` field alongside `Role="tool"`. Both stream and non-stream content paths check `Role != "tool"` to prevent tool JSON from leaking through the main content renderer. Without this, tool results appear as raw JSON in body text while also being formatted via `TToolResult`.
 - **Multi-tool results handled in `runOnce.go`** — Framework merges parallel tool results into a single `tool.response` event with N Choices. `AgentRunOnce` detects `ObjectTypeToolResponse` and iterates ALL Choices (not just `Choices[0]`), ensuring every result is rendered.
-- **Glamour markdown rendering** — Non-stream body text is rendered via `glamour` (dark theme). Two overrides in `message.go` `init()`: `document.margin = 0` (removes dark theme's 2-char left margin default), and the render call applies `strings.TrimRight` to strip trailing whitespace/newlines from glamour output to prevent alignment artifacts before tool calls.
+- **Glamour markdown rendering** — Non-stream body text is rendered via `glamour` (dark theme). Two overrides in `message.go` `init()`: `document.margin = 0` (removes dark theme's 2-char left margin default), and the render call applies `strings.TrimRight` to strip trailing whitespace/newlines from glamour output to prevent alignment artifacts before tool calls. **Must append `[-:-:-]` after `TranslateANSI(out)`** — glamour's ANSI output may not end with a full reset sequence, leaving unclosed tview tags that leak into the next line (tool calls appear brighter/miscolored).
 - **`show_reasoning` config** — `config.Model.ShowReasoning` (`yaml:"show_reasoning"`) controls whether reasoning/thinking content is displayed. Default `false`. Affects both stream (chunk-level skip) and non-stream (whole-block skip) paths. Set `show_reasoning: true` in `hyperbot.yaml` to enable.
-- **`message.go` refactored** — `printMessage` split into `renderStreamEvent`, `renderNonStreamEvent`, `renderToolCall`, `renderToolResult`. Tool call rendering uses shared `addToolCallMsg` helper.
+- **`message.go` refactored** — `printMessage` split into `renderStreamEvent`, `renderNonStreamEvent`, `renderToolCall`, `renderToolResult`. Tool call/result rendering uses shared `addToolCallMsg`/`addToolResultMsg` helpers in `toolMsg.go`. Compact single-line format via `pretty.TToolCompact` — no trailing `\n` (double-newline with next tool's leading `\n` causes alignment shift).
 
 ## Agent-Driven Memory (SQLite)
 

@@ -56,6 +56,8 @@ func Init(an string) {
 	//检查skills文件夹是否存在
 	checkSkillsFolder()
 
+	//加载技能文件夹中的技能
+	loadSkills()
 	// 将框架日志重定向到文件，避免输出到终端干扰 TUI显示
 	redirectFrameworkLog()
 
@@ -190,12 +192,12 @@ func checkConfig() {
 }
 
 func checkSkillsFolder() {
-	skillFolderPath := filepath.Join(global.ConfigFolderPath, SkillsFolder)
-	_, err := os.Stat(skillFolderPath)
+	global.SkillFolderPath = filepath.Join(global.ConfigFolderPath, SkillsFolder)
+	_, err := os.Stat(global.SkillFolderPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			//skills 文件夹不存在，创建一个默认的 skills 文件夹
-			err := os.MkdirAll(skillFolderPath, os.ModePerm)
+			err := os.MkdirAll(global.SkillFolderPath, os.ModePerm)
 			if err != nil {
 				global.ShowErrorAndExit(global.Log, pretty.TErrorF("创建默认skills文件夹错误：%v", err))
 			}
@@ -207,8 +209,11 @@ func checkSkillsFolder() {
 		global.ShowSuccess(global.Log, "检查skills文件夹通过")
 
 	}
-	global.SkillRepo, _ = skill.NewFSRepository(skillFolderPath)
 
+}
+
+func loadSkills() {
+	global.SkillRepo, _ = skill.NewFSRepository(global.SkillFolderPath)
 }
 
 func loadConfig() (*config.Config, error) {
@@ -344,6 +349,7 @@ func NewRunner() {
 	LoadConfig()              //加载配置文件
 	parseToolsetsFromConfig() //从配置文件加载工具集
 	loadFunctionTools()       //加载function工具
+	loadSkills()              //加载技能文件夹中的技能
 	runner := initAgent()
 	global.AgentRunner_p = &global.Agentrunner{
 		Runner: runner,

@@ -24,6 +24,7 @@ var (
 	CWD                 string                   //当前工作目录
 	ConfigFolderPath    string                   //配置文件夹路径
 	HyperBotConfigPath  string                   //配置文件路径
+	SkillFolderPath     string                   //技能文件夹路径
 	SkillRepo           *skill.FSRepository      //技能仓库
 	AgentRunner_p       *Agentrunner             //Runner，全局唯一
 	SessionService_p    *inmemory.SessionService //会话服务，包含自动摘要功能

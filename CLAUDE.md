@@ -33,7 +33,7 @@ HyperBot is a TUI AI agent chatbot built on [trpc-agent-go](https://github.com/t
 
 ```
 main.go → tview.Application
-    └── tui/tui.go (ConfigPage → AgentPage)
+    ├── global/tui.go    (TUI widget setup: App, pages, views)
 
     ┌── global/
     │   ├── backendCore.go  (Agentrunner struct, config, session, memory, tools, embedFS)
@@ -175,7 +175,7 @@ Persistent long-term memory using SQLite, managed entirely by the agent via tool
 - `global/backendCore.go` — `SqliteMemoryService *memorysqlite.Service` global
 - `bootstrap/Initializer.go` — `initSqliteMemoryService()` called in `Init()`, writes to `<configDir>/memory.db`. No longer requires `config.Model` parameter (extractor removed).
 - `bootstrap/Bootstrap.go` — `initAgent()` appends `SqliteMemoryService.Tools()` to agent tools and sets `WithPreloadMemory(10)` + `runner.WithMemoryService()`
-- `global/prompt/systemprompt.md` — `# Memory` section defines agent memory behavior: search-before-store, proactive storage, outdated correction, atomic/specific writing standards
+- `global/prompt/systemprompt.md` — `# Memory` section defines agent memory behavior: proactive storage, outdated correction, atomic/specific writing standards with concrete examples. See `global/prompt/systemprompt.md` for the full prompt.
 
 ### Key behaviors
 - **Agent-driven**: all memory creation, update, and deletion happens through explicit agent tool calls. No background extractor, no `EnqueueAutoMemoryJob`.
@@ -215,7 +215,6 @@ HyperBot uses three complementary mechanisms to prevent context overflow:
 - Post-summary hook strips `<think>...</think>` tags from summary text
 - `WithToolResultFormatter` affects summary input AND threshold token counting — the formatter truncates content before token estimation, so the effective threshold is based on truncated content, not original. This is intentional: summary model sees cleaner input and produces better state recovery
 - `extractTokenThresholdMessage` includes `ReasoningContent` in calculation (previously dropped silently, causing delayed summarization for DeepSeek reasoning models)
-- `WithSessionSummaryInjectionMode` does not exist in the current trpc-agent-go version; summary is injected as a system message
 ### 2. Context Compaction (`agent/baseAgent.go`)
 - `WithEnableContextCompaction(true)` enables deterministic tool result compression before each LLM call
 - **Pass 1**: Historical tool results > 1024 tokens → replaced with placeholder (`event_id`/`tool_call_id` preserved for `session_load` recovery)

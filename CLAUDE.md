@@ -45,7 +45,7 @@ main.go → tview.Application
     │   └── sqlite.go       (SQLite memory service factory)
     │
     ├── bootstrap/
-    │   ├── Initializer.go  (async init: logs → config → agent creation)
+    │   ├── Initializer.go  (init sequence: logs → config → skills → agent creation, called from goroutine)
     │   └── Bootstrap.go    (session lifecycle, main dialog loop)
     │
     ├── handler/
@@ -116,7 +116,7 @@ main.go → tview.Application
 
 **MCP Integration**: Configured via `config.yaml` with support for `sse` and `streamable_http` transport types. Also supports stdin-based MCP via `stdin_mcp` config.
 
-**Session Memory**: `InMemorySessionService` is stored in `global.SessionService`. When refreshing tools via `/flush`, the session service must be preserved to maintain conversation history. `LoadConfig()` and `NewRunner()` can be called independently to reload tools without resetting memory.
+**Session Memory**: `InMemorySessionService` is stored in `global.SessionService`. When refreshing tools via `/flush`, the session service must be preserved to maintain conversation history. `LoadConfig()` and `NewRunner()` can be called independently to reload tools without resetting memory. `NewRunner()` calls `loadSkills()` to re-scan the skills directory — if adding a new reload step to `NewRunner()`, keep it before `initAgent()` so the agent picks up fresh state.
 
 **Session Summarization**: `session/summarizer.go` — token + time thresholds via `WithChecksAny`, plus `WithSkipRecent`, `WithToolResultFormatter`, `WithSyncSummaryIntraRun`, and `WithSessionSummaryInjectionMode(SessionSummaryInjectionUser)`. Requires `session.NewMemorySessionService` with summarizer AND `llmagent.WithAddSessionSummary(true)`. Key gotchas: `contextwindow` in config.yaml MUST match the actual API provider limit; `WithToolResultFormatter` truncates tool results before token estimation, affecting both summary input and threshold counting. See Context Management section for full details.
 

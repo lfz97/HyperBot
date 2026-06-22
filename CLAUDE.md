@@ -90,7 +90,14 @@ main.go → tview.Application
 
 ### Key Design Patterns
 
-**Agent Creation Flow**: `bootstrap.Init()` runs async in a goroutine. It redirects framework logs to `hyperbot.log`, loads/creates `config.yaml`, replaces `{{DATE}}`, `{{OSTYPE}}`, `{{HOME}}`, `{{CWD}}` and other placeholders in system prompt, then creates the appropriate LLMAgent based on `APIType`.
+**Startup Flow**: `main()` calls three orchestration functions in `global/tui.go`:
+- `Frontendinit()` — creates `tview.Application`, `pages`, both pages (ConfigCheck + AgentPage), sets root
+- `Backendinit(initFn, startFn)` — spawns goroutine: switch to ConfigCheck → `bootstrap.Init()` → switch to AgentPage → `bootstrap.AgentStart()`
+- `TuiRun()` — runs `app_p.Run()` on the main goroutine; `app_p.Stop()` (triggered by exit/error paths) causes clean return without deadlock
+
+`Frontendinit` sets `pages` as a package-level variable (`*tview.Pages`) and `app_p` as a package-level `*tview.Application`, both accessed by `Backendinit` and TUI helpers.
+
+**Agent Creation Flow**: `bootstrap.Init()` redirects framework logs to `hyperbot.log`, loads/creates `config.yaml`, replaces `{{DATE}}`, `{{OSTYPE}}`, `{{HOME}}`, `{{CWD}}` and other placeholders in system prompt, then creates the appropriate LLMAgent based on `APIType`.
 
 **Adding Function Tools**: create function → wrap with `function.NewFunctionTool()` → register in `Get*Tools()` (e.g. `GetFileSystemTools`) → assembled in `bootstrap/Initializer.go`. Missing registration means the tool silently won't appear.
 

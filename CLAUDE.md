@@ -97,7 +97,7 @@ main.go → tview.Application
 
 `Frontendinit` sets `pages` as a package-level variable (`*tview.Pages`) and `app_p` as a package-level `*tview.Application`, both accessed by `Backendinit` and TUI helpers.
 
-**Agent Creation Flow**: `bootstrap.Init()` redirects framework logs to `hyperbot.log`, loads/creates `config.yaml`, replaces `{{DATE}}`, `{{OSTYPE}}`, `{{HOME}}`, `{{CWD}}` and other placeholders in system prompt, then creates the appropriate LLMAgent based on `APIType`.
+**Agent Creation Flow**: `bootstrap.Init()` redirects framework logs to `hyperbot.log`, loads/creates `hyperbot.yaml`, replaces `{{DATE}}`, `{{OSTYPE}}`, `{{HOME}}`, `{{CWD}}` and other placeholders in system prompt, then creates the appropriate LLMAgent based on `APIType`.
 
 **Adding Function Tools**: create function → wrap with `function.NewFunctionTool()` → register in `Get*Tools()` (e.g. `GetFileSystemTools`) → assembled in `bootstrap/Initializer.go`. Missing registration means the tool silently won't appear.
 
@@ -121,11 +121,11 @@ main.go → tview.Application
 | `intervene_command` | Write to stdin or send signals |
 | `kill_command` | Force terminate |
 
-**MCP Integration**: Configured via `config.yaml` with support for `sse` and `streamable_http` transport types. Also supports stdin-based MCP via `stdin_mcp` config.
+**MCP Integration**: Configured via `hyperbot.yaml` with support for `sse` and `streamable_http` transport types. Also supports stdin-based MCP via `stdin_mcp` config.
 
 **Session Memory**: `InMemorySessionService` is stored in `global.SessionService`. When refreshing tools via `/flush`, the session service must be preserved to maintain conversation history. `LoadConfig()` and `NewRunner()` can be called independently to reload tools without resetting memory. `NewRunner()` calls `loadSkills()` to re-scan the skills directory — if adding a new reload step to `NewRunner()`, keep it before `initAgent()` so the agent picks up fresh state.
 
-**Session Summarization**: `session/summarizer.go` — token + time thresholds via `WithChecksAny`, plus `WithSkipRecent`, `WithToolResultFormatter`, `WithSyncSummaryIntraRun`, and `WithSessionSummaryInjectionMode(SessionSummaryInjectionUser)`. Requires `session.NewMemorySessionService` with summarizer AND `llmagent.WithAddSessionSummary(true)`. Key gotchas: `contextwindow` in config.yaml MUST match the actual API provider limit; `WithToolResultFormatter` truncates tool results before token estimation, affecting both summary input and threshold counting. See Context Management section for full details.
+**Session Summarization**: `session/summarizer.go` — token + time thresholds via `WithChecksAny`, plus `WithSkipRecent`, `WithToolResultFormatter`, `WithSyncSummaryIntraRun`, and `WithSessionSummaryInjectionMode(SessionSummaryInjectionUser)`. Requires `session.NewMemorySessionService` with summarizer AND `llmagent.WithAddSessionSummary(true)`. Key gotchas: `contextwindow` in hyperbot.yaml MUST match the actual API provider limit; `WithToolResultFormatter` truncates tool results before token estimation, affecting both summary input and threshold counting. See Context Management section for full details.
 
 **Deployed Config**: User config lives in `<cwd>/.hyperbot/hyperbot.yaml` (the working directory where the binary runs). On the author's machine this is `C:\Users\<user>\OneDrive - ...\应用\hyperbot\.hyperbot\`, but it varies by platform. The repo's `.hyperbot/` is for development only.
 
@@ -173,37 +173,35 @@ Auto-generated to `hyperbot.yaml` on first run. Supports:
 - **`show_reasoning` config** — `config.Model.ShowReasoning` (`yaml:"show_reasoning"`) controls whether reasoning/thinking content is displayed. Default `false`. Affects both stream (chunk-level skip) and non-stream (whole-block skip) paths. Set `show_reasoning: true` in `hyperbot.yaml` to enable.
 - **`message.go` refactored** — `printMessage` split into `renderStreamEvent`, `renderNonStreamEvent`, `renderToolCall`, `renderToolResult`. Tool call/result rendering uses shared `addToolCallMsg`/`addToolResultMsg` helpers in `toolMsg.go`. Compact single-line format via `pretty.TToolCompact` — no trailing `\n` (double-newline with next tool's leading `\n` causes alignment shift).
 
-## Agent-Driven Memory (SQLite)
+## Auto-Extraction Memory (SQLite)
 
-Persistent long-term memory using SQLite, managed entirely by the agent via tool calls — no background auto-extraction.
+Persistent long-term memory using SQLite, with background LLM-based extraction after each turn. Agent can also manually use memory tools as a supplement.
 
 ### Architecture
-- `memory/sqlite.go` — factory: creates `memorysqlite.Service` in manual/agentic mode (no extractor). Exposes 5 tools via `WithToolEnabled(memory.DeleteToolName)` on top of `DefaultEnabledTools` (search, load, add, update). `memory_clear` is intentionally not exposed.
+- `memory/sqlite.go` — factory: creates `memorysqlite.Service` with `extractor.NewExtractor(model)` + `WithExtractor(ext)`. Exposes `memory_search`, `memory_load`, `memory_add`, `memory_update` via `WithAutoMemoryExposedTools`. `memory_delete` and `memory_clear` are not exposed to agent (extractor handles delete internally).
 - `global/backendCore.go` — `SqliteMemoryService *memorysqlite.Service` global
-- `bootstrap/Initializer.go` — `initSqliteMemoryService()` called in `Init()`, writes to `<configDir>/memory.db`. No longer requires `config.Model` parameter (extractor removed).
-- `bootstrap/Bootstrap.go` — `initAgent()` appends `SqliteMemoryService.Tools()` to agent tools and sets `WithPreloadMemory(10)` + `runner.WithMemoryService()`
-- `global/prompt/systemprompt.md` — `# Memory` section defines agent memory behavior: proactive storage, outdated correction, atomic/specific writing standards with concrete examples. See `global/prompt/systemprompt.md` for the full prompt.
+- `bootstrap/Initializer.go` — `initSqliteMemoryService()` creates extractor model from config (via `models.Openai()` / `models.Anthropic()`), passes to `NewSQLiteMemoryService(config.Model, dbPath)`. Called after `LoadConfig()`, before `NewRunner()`.
+- `bootstrap/Initializer.go` — `initAgent()` appends `SqliteMemoryService.Tools()` to agent tools and sets `WithPreloadMemory(10)` + `runner.WithMemoryService()`
+- The framework runner auto-calls `EnqueueAutoMemoryJob()` after each turn — no manual trigger needed
+- `global/prompt/systemprompt.md` — brief `# Memory` section: explains auto-extraction runs in background, lists available manual tools
 
 ### Key behaviors
-- **Agent-driven**: all memory creation, update, and deletion happens through explicit agent tool calls. No background extractor, no `EnqueueAutoMemoryJob`.
-- **Preload**: sync during content processor — `WithPreloadMemory(10)` adaptively loads all memories (≤10) or searches top-10 by user query. Injected into system prompt via `injectSystemContextMessage`.
-- **Search**: keyword-based (BM25 + CJK gse segmentation). No embedder needed. Both preload and agent `memory_search` use keyword overlap — pure BM25, no semantic understanding. Upgrading to embedder + vector backend (e.g. `sqlitevec`, `pgvector`) is the path for true semantic recall.
-- **Exposed tools**: `memory_search`, `memory_load`, `memory_add`, `memory_update`, `memory_delete`. `memory_clear` is NOT exposed (risk of wiping all memories).
+- **Auto-extraction**: extractor runs after each turn via `EnqueueAutoMemoryJob`. Uses the same model as the main agent. Determines what to store/update/delete through a dedicated LLM call with its own system prompt (`extractor/defaultPrompt`).
+- **Agent supplement**: agent has `memory_search`, `memory_load`, `memory_add`, `memory_update` exposed. Can manually store or correct when it notices something the extractor missed.
+- **Preload**: `WithPreloadMemory(10)` adaptively loads all memories (≤10) or searches top-10 by user query. Injected into system prompt.
+- **Search**: keyword-based (BM25 + CJK gse segmentation). No embedder needed.
+- **Reconcile**: extractor's `reconcileOps` checks new Add ops against existing memories for near-duplicates (BM25 score ≥0.90 or Jaccard ≥0.70 → skip; ≥0.60 or ≥0.40 → rewrite as update).
 
-### Why no auto-extraction
-Auto-extraction was removed because of dual-writer conflicts between agent and background extractor:
-- Extractor's BM25 search is topic-matched (finds "related"), not contradiction-matched (finds "outdated") → fails to update superseded memories
-- When agent updates a memory (changing its content-hash ID), extractor references the old ID → "not found" → fallback to `AddMemory` → creates duplicate
-- Extractor `UpdateMemory` passes through `reconcileOps` unchecked (only Add ops are reconciled) → extractor can overwrite agent's updates unconditionally
-- No timestamp/version protection on `UpdateMemory` → last-write-wins without any guard
-
-Agent-driven mode avoids all of these by having a single writer who understands full conversation context and can detect contradictions semantically.
+### Known tolerable issues
+- Extractor's BM25 dedup may miss semantically-similar but lexically-different duplicates → occasional near-duplicate memories. Impact is negligible since retrieval is also BM25-based (fuzzy).
+- Agent and extractor can both write (dual-writer). Extractor runs async after turn; agent writes inline. Minor race potential but practically harmless — fuzzy retrieval masks any duplicates.
+- `UpdateMemory` changes memory ID (content-hash based) → extractor referencing old ID falls back to Add → may create duplicate. Again, fuzzy retrieval makes this invisible in practice.
 
 ### Gotchas
 - `initSqliteMemoryService()` MUST be called before `initAgent()` — agent creation reads `SqliteMemoryService.Tools()`, nil service → panic → black screen
-- `stdlog.SetOutput(file)` in `redirectFrameworkLog()` redirects gse dictionary-loading chatter away from TUI
+- `NewSQLiteMemoryService` imports `config`, `models`, `extractor`, and `model` — needs full config to create extractor model
 - Default memory limit: 100000 (`memory/sqlite.go:WithMemoryLimit`)
-- `memory/sqlite.go` no longer imports `config`, `models`, `extractor`, or `model` — extractor model creation removed
+- Extractor model is the same as main model (same API endpoint/credentials)
 
 ## Context Management
 

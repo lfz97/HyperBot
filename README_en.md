@@ -2,6 +2,12 @@
 
 A terminal-native AI Agent chatbot — multi-model (OpenAI / Anthropic), unified MCP tool integration, full local command lifecycle management, ready to go out of the box.
 
+## System Requirements
+
+- **Operating System**: Linux / macOS (recommended). Windows users should use [WSL](https://learn.microsoft.com/en-us/windows/wsl/) (WSL 1 or WSL 2). Native Windows lacks PTY support — command execution falls back to plain pipes, and AI agents have significantly higher failure rates when operating PowerShell.
+- **Go 1.26+** (only needed for source builds; pre-built binaries also available)
+- An OpenAI-compatible or Anthropic API key
+
 ## What It Does
 
 ### 🖥️ AI Assistant in Your Terminal
@@ -28,13 +34,15 @@ Add any number of MCP toolsets via YAML. Three transport modes:
 
 ### 💻 Full Command Lifecycle
 
-The built-in `localexec` toolset gives the agent 6 tools covering the entire command lifecycle:
+The built-in `localexec` toolset manages the complete command lifecycle through PTY (pseudo-terminal), supporting interactive tools like `ssh`, `sudo`, and `msfconsole` without breaking the TUI layout:
 
 ```
 Submit → Start → Poll Status → Read Output → Intervene (stdin / signals) → Kill
 ```
 
 The agent can autonomously complete the "write code → compile → run → debug" loop.
+
+> **Note**: PTY is fully available on Linux/macOS. Native Windows does not support PTY — command execution degrades to plain pipes, and interactive tools will not work correctly. **Windows users should use WSL.**
 
 ### 📚 Knowledge-Only Skill System
 
@@ -80,10 +88,10 @@ Key information is automatically extracted after each conversation and persisted
 ### 🔨 Build
 
 ```bash
-# Linux
+# Linux / macOS
 ./build.sh
 
-# Windows (PowerShell)
+# Windows PowerShell (not recommended — use WSL instead)
 .\build.ps1
 ```
 
@@ -93,7 +101,8 @@ Output goes to the `release/` directory.
 
 ### Requirements
 
-- **Go 1.26+**
+- **Operating System**: Linux / macOS. Windows users should run inside WSL.
+- **Go 1.26+** (for building)
 - An OpenAI-compatible or Anthropic API key
 
 ### Install & Run
@@ -111,6 +120,21 @@ go build .
 ```
 
 The first run auto-generates the config file and skills directory. Edit your API key and restart.
+
+### Windows Users
+
+HyperBot depends on PTY (pseudo-terminal), which is not available on native Windows. Clone and run inside WSL:
+
+```powershell
+# Install WSL from PowerShell (skip if already installed)
+wsl --install
+
+# Enter WSL, then follow the Linux instructions above
+wsl
+git clone https://github.com/lfz97/HyperBot.git
+cd HyperBot
+go run .
+```
 
 ### Interactive Commands
 

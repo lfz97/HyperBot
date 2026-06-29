@@ -2,6 +2,12 @@
 
 一个运行在终端里的 AI Agent 聊天机器人——支持 OpenAI / Anthropic 多模型、任意 MCP 工具接入、本地命令全生命周期管理，开箱即用。
 
+## 系统要求
+
+- **操作系统**：Linux / macOS（推荐）。Windows 用户请使用 [WSL](https://learn.microsoft.com/zh-cn/windows/wsl/)（WSL 1 或 WSL 2 均可），原生 Windows 不支持 PTY，命令执行会降级为普通管道，且 AI 操控 PowerShell 的失败率显著偏高。
+- **Go 1.26+**（仅源码编译需要；亦可直接下载预编译二进制）
+- OpenAI 兼容或 Anthropic API Key
+
 ## 能做什么
 
 ### 🖥️ 终端里的 AI 助手
@@ -28,13 +34,15 @@
 
 ### 💻 本地命令全生命周期
 
-内置 `localexec` 工具集，6 个工具覆盖命令完整生命周期：
+内置 `localexec` 工具集，基于 PTY（伪终端）完整管理命令生命周期，支持 `ssh`、`sudo`、`msfconsole` 等需要交互式终端的工具，且不破坏 TUI 布局：
 
 ```
 提交命令 → 启动执行 → 轮询状态 → 读取输出 → 干预运行（stdin / 信号） → 强制终止
 ```
 
 Agent 可以自主完成"写代码 → 编译 → 运行 → 调试"的完整闭环。
+
+> **注意**：PTY 在 Linux/macOS 上完整可用。Windows 原生不支持 PTY，命令执行会降级为普通管道（pipe），交互式工具无法正常工作。**Windows 用户请使用 WSL。**
 
 ### 📚 知识注入式技能系统
 
@@ -80,10 +88,10 @@ Agent 可以自主完成"写代码 → 编译 → 运行 → 调试"的完整闭
 ### 🔨 本地编译
 
 ```bash
-# Linux
+# Linux / macOS
 ./build.sh
 
-# Windows (PowerShell)
+# Windows PowerShell（不推荐，建议使用 WSL）
 .\build.ps1
 ```
 
@@ -93,7 +101,8 @@ Agent 可以自主完成"写代码 → 编译 → 运行 → 调试"的完整闭
 
 ### 环境要求
 
-- **Go 1.26+**
+- **操作系统**：Linux / macOS。Windows 用户请在 WSL 中运行。
+- **Go 1.26+**（编译需要）
 - OpenAI 兼容或 Anthropic API Key
 
 ### 安装运行
@@ -111,6 +120,21 @@ go build .
 ```
 
 首次运行会自动生成配置文件和技能目录，修改 API Key 后重新启动即可。
+
+### Windows 用户
+
+HyperBot 依赖 PTY（伪终端），Windows 原生不支持。请在 WSL 中克隆并运行：
+
+```powershell
+# 在 PowerShell 中安装 WSL（如已安装可跳过）
+wsl --install
+
+# 进入 WSL，然后按上方 Linux 流程操作
+wsl
+git clone https://github.com/lfz97/HyperBot.git
+cd HyperBot
+go run .
+```
 
 ### 交互指令
 

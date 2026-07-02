@@ -83,30 +83,20 @@ func LoadTextAreaWithEnter(textArea TextArea) string {
 	return <-ch //等待channel直到获取到输入内容
 }
 
-// ShowHelpPage 显示斜杠指令帮助页
-func ShowHelpPage() {
-	flex := tview.NewFlex().SetDirection(tview.FlexRow)
-	flex.SetBackgroundColor(bg)
-	flex.AddItem(HelpList, 0, 1, true)
-	app_p.SetRoot(flex, true)
-	helpPageVisible = true
-}
-
-// HideHelpPage 关闭帮助页，回到输入框
-func HideHelpPage() {
-	app_p.SetRoot(pages, true)
-	app_p.SetFocus(InputArea)
-	helpPageVisible = false
-}
-
 var helpPageVisible bool
 
 // ToggleHelpPage 切换帮助页显示/隐藏
 func ToggleHelpPage() {
 	if helpPageVisible {
-		HideHelpPage()
+		app_p.SetRoot(pages, true)
+		app_p.SetFocus(InputArea)
+		helpPageVisible = false
 	} else {
-		ShowHelpPage()
+		flex := tview.NewFlex().SetDirection(tview.FlexRow)
+		flex.SetBackgroundColor(bg)
+		flex.AddItem(HelpList, 0, 1, true)
+		app_p.SetRoot(flex, true)
+		helpPageVisible = true
 	}
 }
 

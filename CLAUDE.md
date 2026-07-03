@@ -33,13 +33,13 @@ HyperBot is a TUI AI agent chatbot built on [trpc-agent-go](https://github.com/t
 
 ```
 main.go → tview.Application
-    ├── global/tui.go    (TUI widget setup: App, pages, views, HelpTable)
+    ├── global/TUI.go        (TUI widget setup: pages, agent page, HelpTable, PageCreate)
 
     ┌── global/
-    │   ├── backendCore.go  (Agentrunner struct, config, session, memory, tools, embedFS)
-    │   ├── tui.go          (TUI widget references: App, views, helpers)
-    │   ├── tuihandler.go   (TUI operation wrappers: PrintToTui, ShowError, etc.)
-    │   └── prompt/         (system prompt embedFS)
+    │   ├── AgentEngine.go   (Agentrunner struct, global state vars, embedFS, AgentEngineRun)
+    │   ├── TUI.go           (TUI widget creation: agentPage, InitHelpTable, RefreshHelpTable)
+    │   ├── tuihandler.go    (TUI operation wrappers: PrintToTui, ShowError, ToggleHelpPage)
+    │   └── prompt/          (system prompt embedFS)
     │
     ├── memory/
     │   └── sqlite.go       (SQLite memory service factory)
@@ -90,16 +90,18 @@ main.go → tview.Application
 
 ### Key Design Patterns
 
-**UI Layout**: AgentPage 全屏布局：StatusBar(1行) + AgentMessage(弹性，无边框) + InputRow(1行)。InputRow 内 InputArea 占弹性空间，右侧 15 列显示 `Ctrl+K 帮助` 灰色提示。HelpTable（`tview.List`）通过 `app_p.SetRoot()` 整体替换根组件来全屏展示，Esc/Ctrl+K 关闭后恢复原 pages。不再有固定 Sidebar。
+**UI Layout**: AgentPage 全屏布局：StatusBar(1行) + AgentMessage(弹性，无边框) + InputRow(1行)。InputRow 内 InputArea 占弹性空间，右侧 15 列显示 `Ctrl+K 帮助` 灰色提示。HelpTable（`tview.Table`，左右两栏：指令名 + 描述）通过 `app_p.SetRoot()` 整体替换根组件来全屏展示，Esc/Ctrl+K 关闭后恢复原 pages。
 
-**Startup Flow**: `main()` calls three orchestration functions in `global/tui.go`:
-- `Frontendinit()` — creates `tview.Application`, `pages`, both pages (ConfigCheck + AgentPage), sets root
-- `Backendinit(initFn, startFn)` — spawns goroutine: switch to ConfigCheck → `bootstrap.Init()` → switch to AgentPage → `bootstrap.AgentStart()`
+**Startup Flow**: `main()` calls three functions in order:
+- `PageCreate()` — synchronously creates `tview.Application`, `pages`, adds only `AgentPage`, calls `InitHelpTable()`, sets root
+- `AgentEngineRun(initFn, startFn)` — spawns a goroutine that runs `bootstrap.Init()` then `bootstrap.AgentStart()` (thin wrapper in `global/AgentEngine.go`)
 - `TuiRun()` — runs `app_p.Run()` on the main goroutine; `app_p.Stop()` (triggered by exit/error paths) causes clean return without deadlock
 
-`Frontendinit` sets `pages` as a package-level variable (`*tview.Pages`) and `app_p` as a package-level `*tview.Application`, both accessed by `Backendinit` and TUI helpers.
+`PageCreate()` must run BEFORE `AgentEngineRun()` to ensure `app_p` is initialized when the goroutine calls `QueueUpdateDraw`.
 
-**Agent Creation Flow**: `bootstrap.Init()` redirects framework logs to `hyperbot.log`, loads/creates `hyperbot.yaml`, replaces `{{DATE}}`, `{{OSTYPE}}`, `{{HOME}}`, `{{CWD}}` and other placeholders in system prompt, then creates the appropriate LLMAgent based on `APIType`.
+ConfigCheck page and its widgets (`bannerBar`, `Log`, `banner`) were removed — init progress messages now write to `AgentMessage` directly on the agent page.
+
+**Agent Creation Flow**: `bootstrap.Init()` runs in a goroutine spawned by `AgentEngineRun()`. It redirects framework logs to `hyperbot.log`, loads/creates `hyperbot.yaml` and `skills/` folder, replaces `{{DATE}}`, `{{OSTYPE}}`, `{{HOME}}`, `{{CWD}}` and other placeholders in system prompt, calls `loadSkills()` (populates `helpItems` for HelpTable), then creates the appropriate LLMAgent based on `APIType`. All init progress/error messages go to `AgentMessage` (no separate ConfigCheck page).
 
 **Adding Function Tools**: create function → wrap with `function.NewFunctionTool()` → register in `Get*Tools()` (e.g. `GetFileSystemTools`) → assembled in `bootstrap/Initializer.go`. Missing registration means the tool silently won't appear.
 
@@ -125,7 +127,7 @@ main.go → tview.Application
 
 **MCP Integration**: Configured via `hyperbot.yaml` with support for `sse` and `streamable_http` transport types. Also supports stdin-based MCP via `stdin_mcp` config.
 
-**Session Memory**: `InMemorySessionService` is stored in `global.SessionService`. When refreshing tools via `/flush`, the session service must be preserved to maintain conversation history. `LoadConfig()` and `NewRunner()` can be called independently to reload tools without resetting memory. `NewRunner()` calls `loadSkills()` to re-scan the skills directory — if adding a new reload step to `NewRunner()`, keep it before `initAgent()` so the agent picks up fresh state.
+**Session Memory**: `InMemorySessionService` is stored in `global.SessionService_p`. When refreshing tools via `/flush`, the session service must be preserved to maintain conversation history. `LoadConfig()` and `NewRunner()` can be called independently to reload tools without resetting memory. `NewRunner()` calls `loadSkills()` to re-scan the skills directory and refresh `helpItems` for the HelpTable — if adding a new reload step to `NewRunner()`, keep it before `initAgent()` so the agent picks up fresh state.
 
 **Session Summarization**: `session/summarizer.go` — token + time thresholds via `WithChecksAny`, plus `WithSkipRecent`, `WithToolResultFormatter`, `WithSyncSummaryIntraRun`, and `WithSessionSummaryInjectionMode(SessionSummaryInjectionUser)`. Requires `session.NewMemorySessionService` with summarizer AND `llmagent.WithAddSessionSummary(true)`. Key gotchas: `contextwindow` in hyperbot.yaml MUST match the actual API provider limit; `WithToolResultFormatter` truncates tool results before token estimation, affecting both summary input and threshold counting. See Context Management section for full details.
 
@@ -159,9 +161,10 @@ Auto-generated to `hyperbot.yaml` on first run. Supports:
 - No test files exist in this repository
 - Skills are loaded from `skills/` directory in Knowledge-Only mode (commands go through LocalExec)
 - Framework logs are redirected to `hyperbot.log` to avoid TUI interference
+- **HelpTable dynamic items** — Default slash commands in `helpItems` initialized via `defaultHelpItems()`. Skills appended via `loadSkills()` → `ResetHelpItems()` + `AddHelpItems()`. `RefreshHelpTable()` rebuilds Table cells and is called in `ToggleHelpPage()` on every open.
 - **embedFS case sensitivity** - `//go:embed` + `ReadFile` paths are case-sensitive on Linux. File named `systemprompt.md` but code reading `systemPrompt.md` silently returns empty string (error ignored with `_`). Always match exact file name case between `go:embed` glob patterns and `ReadFile` calls.
 - **Skills identity contamination** - The deployed `skills/` folder (`~/.hyperbot/skills/`) contains OpenClaw skill files (self-improving-agent, find-skills, etc.) that reference "OpenClaw", "Claude Code", "clawdhub". When loaded via `llmagent.WithSkills()`, these contaminate the agent's identity. Use only HyperBot-specific skills or keep the folder empty.
-- **bracketed paste** - tview TextArea 对大块粘贴支持不好，需在 tui.go 中启用 `EnableBracketedPaste()` 让终端分片发送，框架才能正常处理。参考 commit 70bb8f3。
+- **bracketed paste** - tview TextArea 对大块粘贴支持不好，需在 TUI.go 中启用 `EnableBracketedPaste()` 让终端分片发送，框架才能正常处理。参考 commit 70bb8f3。
 - **Go RE2 regex in tool descriptions** - 在给 agent 暴露正则的 tool 中，jsonschema description 必须写明 RE2 限制：`(?s)` 让 `.` 匹配换行、`(?m)` 让 `^`/`$` 匹配行边界、不支持 lookahead/lookbehind/backreference。参考 `functionTools/File.go` 中 SearchInFile 的 description。
 - **MV/CP tools use otiai10/copy** - `functionTools/FileSystem.go` 的 CP 和 MV 跨设备移动使用 `github.com/otiai10/copy`（不区分文件/目录）。MV 同设备优先 `os.Rename`（快速+原子），跨设备走 `os.RemoveAll(dst)` → `copy.Copy` → `os.RemoveAll(src)`（先删目标避免合并语义）。
 - **EditFile replace_all semantics** - `replace_all=false`（默认）是安全检查：多处匹配时报错拒绝替换，而非只替换第一处。`replace_all=true` 才执行全量替换。修改时不要移除 `len(Indexes) > 1` 的检查。
@@ -181,7 +184,7 @@ Persistent long-term memory using SQLite, with background LLM-based extraction a
 
 ### Architecture
 - `memory/sqlite.go` — factory: creates `memorysqlite.Service` with `extractor.NewExtractor(model)` + `WithExtractor(ext)`. Exposes `memory_search`, `memory_load`, `memory_add`, `memory_update` via `WithAutoMemoryExposedTools`. `memory_delete` and `memory_clear` are not exposed to agent (extractor handles delete internally).
-- `global/backendCore.go` — `SqliteMemoryService *memorysqlite.Service` global
+- `global/AgentEngine.go` — `SqliteMemoryService *memorysqlite.Service` global
 - `bootstrap/Initializer.go` — `initSqliteMemoryService()` creates extractor model from config (via `models.Openai()` / `models.Anthropic()`), passes to `NewSQLiteMemoryService(config.Model, dbPath)`. Called after `LoadConfig()`, before `NewRunner()`.
 - `bootstrap/Initializer.go` — `initAgent()` appends `SqliteMemoryService.Tools()` to agent tools and sets `WithPreloadMemory(10)` + `runner.WithMemoryService()`
 - The framework runner auto-calls `EnqueueAutoMemoryJob()` after each turn — no manual trigger needed

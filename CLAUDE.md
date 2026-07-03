@@ -33,7 +33,7 @@ HyperBot is a TUI AI agent chatbot built on [trpc-agent-go](https://github.com/t
 
 ```
 main.go → tview.Application
-    ├── global/tui.go    (TUI widget setup: App, pages, views, HelpList)
+    ├── global/tui.go    (TUI widget setup: App, pages, views, HelpTable)
 
     ┌── global/
     │   ├── backendCore.go  (Agentrunner struct, config, session, memory, tools, embedFS)
@@ -90,7 +90,7 @@ main.go → tview.Application
 
 ### Key Design Patterns
 
-**UI Layout**: AgentPage 全屏布局：StatusBar(1行) + AgentMessage(弹性，无边框) + InputRow(1行)。InputRow 内 InputArea 占弹性空间，右侧 15 列显示 `Ctrl+K 帮助` 灰色提示。HelpList（`tview.List`）通过 `app_p.SetRoot()` 整体替换根组件来全屏展示，Esc/Ctrl+K 关闭后恢复原 pages。不再有固定 Sidebar。
+**UI Layout**: AgentPage 全屏布局：StatusBar(1行) + AgentMessage(弹性，无边框) + InputRow(1行)。InputRow 内 InputArea 占弹性空间，右侧 15 列显示 `Ctrl+K 帮助` 灰色提示。HelpTable（`tview.List`）通过 `app_p.SetRoot()` 整体替换根组件来全屏展示，Esc/Ctrl+K 关闭后恢复原 pages。不再有固定 Sidebar。
 
 **Startup Flow**: `main()` calls three orchestration functions in `global/tui.go`:
 - `Frontendinit()` — creates `tview.Application`, `pages`, both pages (ConfigCheck + AgentPage), sets root

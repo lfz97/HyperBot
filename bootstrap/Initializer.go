@@ -214,6 +214,24 @@ func checkSkillsFolder() {
 
 func loadSkills() {
 	global.SkillRepo, _ = skill.NewFSRepository(global.SkillFolderPath)
+	summaries := global.SkillRepo.Summaries()
+	global.ResetHelpItems()
+	itms := []global.HelpItem{}
+	for _, s := range summaries {
+
+		des_rune := []rune(s.Description)
+		if len(des_rune) >= 50 {
+			des_rune = des_rune[:50]
+		}
+		des := string(des_rune) + "......"
+
+		i := global.HelpItem{
+			Cmd:  "/" + s.Name,
+			Desc: des,
+		}
+		itms = append(itms, i)
+	}
+	global.AddHelpItems(itms)
 }
 
 func loadConfig() (*config.Config, error) {

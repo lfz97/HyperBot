@@ -106,7 +106,7 @@ func Frontendinit() {
 	pages = tview.NewPages()
 	pages.AddPage("ConfigCheck", CreateConfigPage(), true, true) // 初始配置页，默认显示
 	pages.AddPage("AgentPage", createAgentPage(), true, true)    // Agent页面，可见以参与布局，等 Init 完成后再切
-	InitHelpList() // 初始化帮助页（通过 SetRoot 切换，不放入 Pages）
+	InitHelpTable()                                              // 初始化帮助页（通过 SetRoot 切换，不放入 Pages）
 
 	//设置应用根组件
 	app_p.SetRoot(pages, true) // true = 全屏模式
@@ -115,33 +115,59 @@ func Frontendinit() {
 
 }
 
-// InitHelpList 初始化斜杠指令帮助页（List 组件，在 ShowHelpPage 中通过 SetRoot 全屏展示）
-func InitHelpList() {
-	HelpList = tview.NewList()
-	HelpList.SetBackgroundColor(bg)
-	HelpList.SetMainTextColor(tcell.GetColor(pretty.TuiMainText))
-	HelpList.SetSecondaryTextColor(tcell.GetColor(pretty.TuiSubText))
-	HelpList.SetSelectedBackgroundColor(tcell.GetColor("#2A3A5C"))
-	HelpList.SetBorder(true)
-	HelpList.SetBorderColor(borderColor)
-	HelpList.SetTitle(" 斜杠指令 — Ctrl+K / Esc 关闭 ")
-	HelpList.SetTitleAlign(tview.AlignLeft)
+// InitHelpTable 初始化斜杠指令帮助页（Table 组件，在 ToggleHelpPage 中通过 SetRoot 全屏展示）
+// 左右两栏：左栏为指令名，右栏为功能描述
+type HelpItem struct {
+	Cmd  string
+	Desc string
+}
 
-	for _, cmd := range DefaultSlashCommands {
-		HelpList.AddItem(cmd.Command, cmd.Description, 0, nil)
-	}
-	HelpList.AddItem("Enter", "提交输入", 0, nil)
-	HelpList.AddItem("Shift+Enter", "插入换行", 0, nil)
-	HelpList.AddItem("ESC", "取消当前回复", 0, nil)
-	HelpList.AddItem("Ctrl+K", "切换此帮助页", 0, nil)
+func InitHelpTable() {
+	HelpTable = tview.NewTable()
+	HelpTable.SetBackgroundColor(bg)
+	HelpTable.SetBorder(true)
+	HelpTable.SetBorderColor(borderColor)
+	HelpTable.SetTitle(" 斜杠指令 — Ctrl+K / Esc 关闭 ")
+	HelpTable.SetTitleAlign(tview.AlignLeft)
+	HelpTable.SetSelectable(true, false) // 行可选，列不可选
 
-	HelpList.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+	HelpTable.SetSelectedStyle(tcell.StyleDefault.
+		Background(tcell.GetColor("#2A3A5C")).
+		Foreground(tcell.GetColor(pretty.TuiMainText)))
+
+	HelpTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyEscape || event.Key() == tcell.KeyCtrlK {
 			ToggleHelpPage()
 			return nil
 		}
 		return event
 	})
+
+	// 先填充默认指令（skills 稍后通过 RefreshHelpTable 动态刷新）
+	RefreshHelpTable()
+}
+
+// RefreshHelpTable 根据当前 helpItems 重建 Table 行数据，在 ToggleHelpPage 显示时调用
+func RefreshHelpTable() {
+	HelpTable.Clear()
+
+	mainColor := tcell.GetColor(pretty.TuiMainText)
+	subColor := tcell.GetColor(pretty.TuiSubText)
+
+	for index, item := range helpItems {
+		cmdCell := tview.NewTableCell(item.Cmd).
+			SetTextColor(mainColor).
+			SetAlign(tview.AlignLeft).
+			SetExpansion(0)
+
+		descCell := tview.NewTableCell(item.Desc).
+			SetTextColor(subColor).
+			SetAlign(tview.AlignLeft).
+			SetExpansion(1)
+
+		HelpTable.SetCell(index, 0, cmdCell)
+		HelpTable.SetCell(index, 1, descCell)
+	}
 }
 
 func Backendinit(initFn, startFn func()) {

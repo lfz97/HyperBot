@@ -374,7 +374,7 @@ func NewRunner() {
 		Stream: (*global.Config_p).Model.Stream,
 	}
 
-	global.PrintToTui(global.AgentMessage, pretty.TReady(global.Agentname), false)
+	global.PrintToTui(global.AgentMessage, pretty.TReady(global.Agentname), true)
 
 }
 

@@ -19,10 +19,6 @@ type Pages = *tview.Pages
 
 var (
 	pages Pages
-	//page config
-	bannerBar View
-	Log       View
-
 	//page agent
 	StatusBar    View
 	AgentMessage View

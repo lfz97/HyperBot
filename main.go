@@ -6,8 +6,9 @@ import (
 )
 
 func main() {
-	global.Frontendinit()
-	global.Backendinit(func() { bootstrap.Init("HyperBot") },
+	global.PageCreate()
+
+	global.AgentEngineRun(func() { bootstrap.Init("HyperBot") },
 		func() { bootstrap.AgentStart() })
 
 	global.TuiRun()

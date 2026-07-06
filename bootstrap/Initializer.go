@@ -156,8 +156,6 @@ func checkConfigFolder() {
 		} else {
 			global.ShowErrorAndExit(global.AgentMessage, pretty.TErrorF("检查config文件夹错误：%v", err))
 		}
-	} else {
-		global.ShowSuccess(global.AgentMessage, "检查配置文件夹通过")
 	}
 
 }
@@ -185,8 +183,6 @@ func checkConfig() {
 		} else {
 			global.ShowErrorAndExit(global.AgentMessage, pretty.TErrorF("检查配置文件错误：%v", err))
 		}
-	} else {
-		global.ShowSuccess(global.AgentMessage, "检查配置文件通过!")
 	}
 
 }
@@ -205,9 +201,6 @@ func checkSkillsFolder() {
 		} else {
 			global.ShowErrorAndExit(global.AgentMessage, pretty.TErrorF("检查skills文件夹错误：%v", err))
 		}
-	} else {
-		global.ShowSuccess(global.AgentMessage, "检查skills文件夹通过")
-
 	}
 
 }
@@ -373,8 +366,6 @@ func NewRunner() {
 		Runner: runner,
 		Stream: (*global.Config_p).Model.Stream,
 	}
-
-	global.PrintToTui(global.AgentMessage, pretty.TReady(global.Agentname), true)
 
 }
 

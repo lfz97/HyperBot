@@ -52,7 +52,8 @@ main.go → tview.Application
     │   ├── runIteratively.go (user input loop: /exit, /new, /flush, ESC, text)
     │   ├── runOnce.go        (single agent execution, event stream consumption)
     │   ├── model.go          (TurnCode, TurnResult types)
-    │   └── message.go        (streaming/non-streaming render; non-stream uses glamour + TranslateANSI for markdown)
+    │   ├── message.go        (streaming/non-streaming render; non-stream uses glamour + TranslateANSI for markdown)
+    │   └── toolMsg.go        (addToolCallMsg/addToolResultMsg helpers)
     │
     ├── agent/
     │   ├── baseAgent.go      (LLMAgent config assembly: skills, tools, system prompt)
@@ -174,9 +175,10 @@ Auto-generated to `hyperbot.yaml` on first run. Supports:
 - **ANSI → tview tag conversion required** — tview's `SetDynamicColors(true)` only supports tview's own color tag format (`[red]text[-]`, `[::b]bold[::-]`). It does NOT support standard ANSI escape sequences. Any ANSI-based rendering (glamour, lipgloss, etc.) must go through `tview.TranslateANSI()` to convert ANSI codes to tview tags before writing to a TextView. Without this conversion, ANSI codes appear as visible garbage text like `[38;5;252m`.
 - **Tool response content must be skipped in content rendering** — `NewToolMessage` stores tool result in `Content` field alongside `Role="tool"`. Both stream and non-stream content paths check `Role != "tool"` to prevent tool JSON from leaking through the main content renderer. Without this, tool results appear as raw JSON in body text while also being formatted via `TToolResult`.
 - **Multi-tool results handled in `runOnce.go`** — Framework merges parallel tool results into a single `tool.response` event with N Choices. `AgentRunOnce` detects `ObjectTypeToolResponse` and iterates ALL Choices (not just `Choices[0]`), ensuring every result is rendered.
-- **Glamour markdown rendering** — Non-stream body text is rendered via `glamour` (dark theme). Two overrides in `message.go` `init()`: `document.margin = 0` (removes dark theme's 2-char left margin default), and the render call applies `strings.TrimRight` to strip trailing whitespace/newlines from glamour output to prevent alignment artifacts before tool calls. **Must append `[-:-:-]` after `TranslateANSI(out)`** — glamour's ANSI output may not end with a full reset sequence, leaving unclosed tview tags that leak into the next line (tool calls appear brighter/miscolored).
+- **Glamour markdown rendering** — Non-stream body text is rendered via `glamour` (dark theme). `newGlamourRenderer()` in `message.go` dynamically creates a renderer per call: `WithWordWrap(w)` uses `AgentMessage.GetInnerRect()` width so content fills the terminal and re-wraps on resize; `document.margin = 0` removes the dark theme's 2-char left margin. The render call applies `strings.TrimRight` to strip trailing whitespace/newlines from glamour output to prevent alignment artifacts before tool calls. **Must append `[-:-:-]` after `TranslateANSI(out)`** — glamour's ANSI output may not end with a full reset sequence, leaving unclosed tview tags that leak into the next line (tool calls appear brighter/miscolored).
 - **`show_reasoning` config** — `config.Model.ShowReasoning` (`yaml:"show_reasoning"`) controls whether reasoning/thinking content is displayed. Default `false`. Affects both stream (chunk-level skip) and non-stream (whole-block skip) paths. Set `show_reasoning: true` in `hyperbot.yaml` to enable.
 - **`message.go` refactored** — `printMessage` split into `renderStreamEvent`, `renderNonStreamEvent`, `renderToolCall`, `renderToolResult`. Tool call/result rendering uses shared `addToolCallMsg`/`addToolResultMsg` helpers in `toolMsg.go`. Compact single-line format via `pretty.TToolCompact` — no trailing `\n` (double-newline with next tool's leading `\n` causes alignment shift).
+- **Glamour default WordWrap is 80 columns** — without `WithWordWrap`, glamour wraps all markdown at 80 columns regardless of terminal width. Always pass the current view width when creating a renderer. See `newGlamourRenderer()` in `handler/message.go` for the pattern.
 
 ## Auto-Extraction Memory (SQLite)
 
@@ -225,7 +227,7 @@ HyperBot uses three complementary mechanisms to prevent context overflow:
 - Post-summary hook strips `<think>...</think>` tags from summary text
 - `WithToolResultFormatter` affects summary input AND threshold token counting — the formatter truncates content before token estimation, so the effective threshold is based on truncated content, not original. This is intentional: summary model sees cleaner input and produces better state recovery
 - `extractTokenThresholdMessage` includes `ReasoningContent` in calculation (previously dropped silently, causing delayed summarization for DeepSeek reasoning models)
-### 2. Context Compaction (`agent/baseAgent.go`)
+### 2. Context Compaction (`bootstrap/Initializer.go` — `initAgent()`)
 - `WithEnableContextCompaction(true)` enables deterministic tool result compression before each LLM call
 - **Pass 1**: Historical tool results > 1024 tokens → replaced with placeholder (`event_id`/`tool_call_id` preserved for `session_load` recovery)
   - Protects current invocation + `KeepRecentRequests` (default 1) most recent completed invocations

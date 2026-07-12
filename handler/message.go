@@ -16,7 +16,7 @@ func newGlamourRenderer() *glamour.TermRenderer {
 		w = 80
 	}
 	r, _ := glamour.NewTermRenderer(
-		glamour.WithStandardStyle("dark"),
+		glamour.WithStandardStyle("dracula"),
 		glamour.WithWordWrap(w),
 		glamour.WithStylesFromJSONBytes([]byte(`{
 			"document": {

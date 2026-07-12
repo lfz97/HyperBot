@@ -5,7 +5,7 @@ import (
 	"HyperBot/utils/pretty"
 	"strings"
 
-	"github.com/charmbracelet/glamour"
+	"charm.land/glamour/v2"
 	"github.com/rivo/tview"
 	"trpc.group/trpc-go/trpc-agent-go/model"
 )

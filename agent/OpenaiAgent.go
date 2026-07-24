@@ -1,11 +1,12 @@
 package agent
 
 import (
+	"HyperBot/config"
 	"trpc.group/trpc-go/trpc-agent-go/agent/llmagent"
 )
 
-func OpenaiAgent(agentName string, Model string, BaseUrl string, APIkey string, opts []llmagent.Option) *llmagent.LLMAgent {
+func OpenaiAgent(agentName string, m config.Model, opts []llmagent.Option) *llmagent.LLMAgent {
 
-	agent_p := ConfigBaseAgent(agentName, Model, BaseUrl, APIkey, "openai", opts)
+	agent_p := ConfigBaseAgent(agentName, m, opts)
 	return agent_p
 }

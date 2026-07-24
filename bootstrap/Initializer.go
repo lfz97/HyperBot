@@ -310,17 +310,13 @@ func initAgent() runner.Runner {
 	if (*global.Config_p).Model.APIType == "openai" {
 		Agent_p = agent.OpenaiAgent(
 			global.Agentname,
-			(*global.Config_p).Model.Model,
-			(*global.Config_p).Model.BaseURL,
-			(*global.Config_p).Model.APIKey,
+			(*global.Config_p).Model,
 			opts,
 		)
 	} else if (*global.Config_p).Model.APIType == "anthropic" {
 		Agent_p = agent.AnthropicAgent(
 			global.Agentname,
-			(*global.Config_p).Model.Model,
-			(*global.Config_p).Model.BaseURL,
-			(*global.Config_p).Model.APIKey,
+			(*global.Config_p).Model,
 			opts,
 		)
 

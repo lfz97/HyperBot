@@ -1,17 +1,18 @@
 package agent
 
 import (
+	"HyperBot/config"
 	"HyperBot/models"
 	"trpc.group/trpc-go/trpc-agent-go/agent/llmagent"
 )
 
-func ConfigBaseAgent(agentName string, Model string, BaseUrl string, APIkey string, ApiType string, opts []llmagent.Option) *llmagent.LLMAgent {
+func ConfigBaseAgent(agentName string, m config.Model, opts []llmagent.Option) *llmagent.LLMAgent {
 
-	if ApiType == "openai" {
-		OpenaiModel_p := models.Openai(Model, BaseUrl, APIkey)
+	if m.APIType == "openai" {
+		OpenaiModel_p := models.Openai(m.Model, m.BaseURL, m.APIKey)
 		opts = append(opts, llmagent.WithModel(OpenaiModel_p))
-	} else if ApiType == "anthropic" {
-		AnthropicModel_p := models.Anthropic(Model, BaseUrl, APIkey)
+	} else if m.APIType == "anthropic" {
+		AnthropicModel_p := models.Anthropic(m)
 		opts = append(opts, llmagent.WithModel(AnthropicModel_p))
 	}
 

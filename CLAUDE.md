@@ -139,6 +139,10 @@ ConfigCheck page and its widgets (`bannerBar`, `Log`, `banner`) were removed —
 Auto-generated to `hyperbot.yaml` on first run. Supports:
 - User ID (auto-generated UUID)
 - Model config (model name, base URL, API key, API type: `openai` or `anthropic`)
+- `anthropicAuthHeaderTransfer` (bool): if `true`, uses `Authorization: Bearer <apikey>` header instead of default `X-Api-Key` — for proxies/gateways that require Bearer auth
+- `contextwindow` (int): context window size in tokens, MUST be ≤ actual model limit
+- `show_reasoning` (bool): display reasoning/thinking content
+- `stream` (bool): enable streaming output
 - MCP services (SSE or streamable_http)
 - Stdin MCP processes
 

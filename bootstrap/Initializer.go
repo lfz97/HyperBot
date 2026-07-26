@@ -10,6 +10,8 @@ import (
 	"HyperBot/toolsets"
 	"HyperBot/toolsets/localexec"
 	"HyperBot/utils/pretty"
+	"context"
+	"errors"
 	"fmt"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -22,6 +24,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	ag "trpc.group/trpc-go/trpc-agent-go/agent"
 	"trpc.group/trpc-go/trpc-agent-go/agent/llmagent"
 	"trpc.group/trpc-go/trpc-agent-go/log"
 	"trpc.group/trpc-go/trpc-agent-go/model"
@@ -44,6 +47,15 @@ const (
 func Init(an string) {
 	global.Agentname = an
 
+	preCheckLoad()
+
+	//初始化AgentRunner
+	NewRunner()
+
+}
+
+func preCheckLoad() {
+
 	//获取Agent可执行文件所在的目录路径
 	getcwd()
 
@@ -56,8 +68,6 @@ func Init(an string) {
 	//检查skills文件夹是否存在
 	checkSkillsFolder()
 
-	//加载技能文件夹中的技能
-	loadSkills()
 	// 将框架日志重定向到文件，避免输出到终端干扰 TUI显示
 	redirectFrameworkLog()
 
@@ -73,11 +83,23 @@ func Init(an string) {
 	//初始化sqlite记忆服务
 	initSqliteMemoryService()
 
+	//加载skill
+	loadSkills()
+
+	//从配置文件加载工具集
+	parseToolsetsFromConfig()
+
 	//加载function工具
 	loadFunctionTools()
-	//初始化AgentRunner
-	NewRunner()
 
+}
+
+// 每次runner执行时重新加载以下Module
+func reload() {
+	LoadConfig()              //加载配置文件
+	parseToolsetsFromConfig() //从配置文件加载工具集
+	loadFunctionTools()       //加载function工具
+	loadSkills()              //加载技能文件夹中的技能
 }
 
 // 配置系统提示词，替换其中的占位符
@@ -280,57 +302,64 @@ func initSqliteMemoryService() {
 	global.SqliteMemoryService = service
 }
 
-func initAgent() runner.Runner {
+func NewRunner() {
 	var Runner runner.Runner
-	var Agent_p *llmagent.LLMAgent
-	global.Tools = append(global.Tools, global.SqliteMemoryService.Tools()...) //将SqliteMemoryService的工具添加到全局工具列表中，使得Agent能够调用记忆相关的工具
-	opts := []llmagent.Option{
-		llmagent.WithGenerationConfig(model.GenerationConfig{
-			Stream: (*global.Config_p).Model.Stream,
-		}),
-		llmagent.WithTools(global.Tools),
-		llmagent.WithGlobalInstruction(global.Systemprompt), //系统提示词
-		llmagent.WithToolSets(global.Toolsets),
-		llmagent.WithRefreshToolSetsOnRun(true),
-		llmagent.WithSkillsLoadedContentInToolResults(true),
-		//仅注入知识，不注入执行工具的能力，统一通过localexec执行
-		llmagent.WithSkills(global.SkillRepo),
-		llmagent.WithSkillToolProfile(
-			llmagent.SkillToolProfileKnowledgeOnly,
-		),
-		llmagent.WithAddSessionSummary(true),                                           //启用上下文压缩注入
-		llmagent.WithSessionSummaryInjectionMode(llmagent.SessionSummaryInjectionUser), //摘要注入到user message，不与system prompt中的SOP规则竞争优先级
-		llmagent.WithSyncSummaryIntraRun(true),                                         //在同一次对话中同步更新摘要
-		llmagent.WithEnableContextCompaction(true),                                     // 启用 tool result 压缩（Pass 1+2）
-		llmagent.WithContextCompactionOversizedToolResultMaxTokens(8192),               // Pass 2: 超大 tool result 首尾保留截断
-		llmagent.WithEnableOnDemandSession(true),                                       // 按需加载被压缩的原始数据（session_load）
-		llmagent.WithPreloadMemory(10),                                                 // 预加载最近的10条记忆到上下文中，提升模型对近期事件的记忆能力
-		llmagent.WithEnableParallelTools(true),                                         //启用并行工具调用，提升工具调用效率
-	}
-	if (*global.Config_p).Model.APIType == "openai" {
-		Agent_p = agent.OpenaiAgent(
-			global.Agentname,
-			(*global.Config_p).Model,
-			opts,
-		)
-	} else if (*global.Config_p).Model.APIType == "anthropic" {
-		Agent_p = agent.AnthropicAgent(
-			global.Agentname,
-			(*global.Config_p).Model,
-			opts,
-		)
-
-	} else {
-		pretty.ErrorWithExit("不支持的API类型，请检查配置文件中的 Model.APIType 字段")
-	}
-
-	Runner = runner.NewRunner(
+	Runner = runner.NewRunnerWithAgentFactory(
 		global.Agentname,
-		Agent_p,
-		runner.WithSessionService(global.SessionService_p),   // 使用内存会话服务，其中包含自动摘要功能
-		runner.WithMemoryService(global.SqliteMemoryService), // 使用sqlite记忆服务
+		global.Agentname,
+		func(ctx context.Context, ro ag.RunOptions) (ag.Agent, error) {
+			reload()
+			var Agent_p *llmagent.LLMAgent
+			global.Tools = append(global.Tools, global.SqliteMemoryService.Tools()...) //将SqliteMemoryService的工具添加到全局工具列表中，使得Agent能够调用记忆相关的工具
+			opts := []llmagent.Option{
+				llmagent.WithGenerationConfig(model.GenerationConfig{
+					Stream: (*global.Config_p).Model.Stream,
+				}),
+				llmagent.WithTools(global.Tools),
+				llmagent.WithGlobalInstruction(global.Systemprompt), //系统提示词
+				llmagent.WithToolSets(global.Toolsets),
+				llmagent.WithRefreshToolSetsOnRun(true),
+				llmagent.WithSkillsLoadedContentInToolResults(true),
+				//仅注入知识，不注入执行工具的能力，统一通过localexec执行
+				llmagent.WithSkills(global.SkillRepo),
+				llmagent.WithSkillToolProfile(
+					llmagent.SkillToolProfileKnowledgeOnly,
+				),
+				llmagent.WithAddSessionSummary(true),                                           //启用上下文压缩注入
+				llmagent.WithSessionSummaryInjectionMode(llmagent.SessionSummaryInjectionUser), //摘要注入到user message，不与system prompt中的SOP规则竞争优先级
+				llmagent.WithSyncSummaryIntraRun(true),                                         //在同一次对话中同步更新摘要
+				llmagent.WithEnableContextCompaction(true),                                     // 启用 tool result 压缩（Pass 1+2）
+				llmagent.WithContextCompactionOversizedToolResultMaxTokens(8192),               // Pass 2: 超大 tool result 首尾保留截断
+				llmagent.WithEnableOnDemandSession(true),                                       // 按需加载被压缩的原始数据（session_load）
+				llmagent.WithPreloadMemory(10),                                                 // 预加载最近的10条记忆到上下文中，提升模型对近期事件的记忆能力
+				llmagent.WithEnableParallelTools(true),                                         //启用并行工具调用，提升工具调用效率
+			}
+			if (*global.Config_p).Model.APIType == "openai" {
+				Agent_p = agent.OpenaiAgent(
+					global.Agentname,
+					(*global.Config_p).Model,
+					opts,
+				)
+			} else if (*global.Config_p).Model.APIType == "anthropic" {
+				Agent_p = agent.AnthropicAgent(
+					global.Agentname,
+					(*global.Config_p).Model,
+					opts,
+				)
+
+			} else {
+				return nil, errors.New("不支持的API类型，请检查配置文件中的 Model.APIType 字段")
+			}
+			return Agent_p, nil
+		},
+		runner.WithSessionService(global.SessionService_p),
+		runner.WithMemoryService(global.SqliteMemoryService),
 	)
-	return Runner
+	global.AgentRunner_p = &global.Agentrunner{
+		Runner: Runner,
+		Stream: (*global.Config_p).Model.Stream,
+	}
+
 }
 
 func LoadConfig() {
@@ -351,18 +380,6 @@ func loadFunctionTools() {
 	global.Tools = append(global.Tools, fileopstools...)
 	global.Tools = append(global.Tools, fileSystemTools...)
 	global.Tools = append(global.Tools, dateTools...)
-}
-func NewRunner() {
-	LoadConfig()              //加载配置文件
-	parseToolsetsFromConfig() //从配置文件加载工具集
-	loadFunctionTools()       //加载function工具
-	loadSkills()              //加载技能文件夹中的技能
-	runner := initAgent()
-	global.AgentRunner_p = &global.Agentrunner{
-		Runner: runner,
-		Stream: (*global.Config_p).Model.Stream,
-	}
-
 }
 
 // redirectFrameworkLog 将框架的日志输出从 stdout 重定向到可执行文件同目录下的 hyperbot.log 文件-created by copilot

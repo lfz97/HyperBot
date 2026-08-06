@@ -112,10 +112,10 @@ git clone https://github.com/lfz97/HyperBot.git
 cd HyperBot
 
 # Run directly
-go run .
+go run ./cmd
 
 # Or build first
-go build .
+go build -o HyperBot ./cmd
 ./HyperBot
 ```
 
@@ -133,7 +133,7 @@ wsl --install
 wsl
 git clone https://github.com/lfz97/HyperBot.git
 cd HyperBot
-go run .
+go run ./cmd
 ```
 
 ### Interactive Commands

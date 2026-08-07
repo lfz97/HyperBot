@@ -16,6 +16,8 @@ func ConfigBaseAgent(agentName string, m config.Model, opts []llmagent.Option) *
 		opts = append(opts, llmagent.WithModel(AnthropicModel_p))
 	}
 
+	opts = append(opts, setBeforeModelStatusCallback()) //追加beforeModel状态栏
+
 	agent_p := llmagent.New(agentName,
 		opts...,
 	)

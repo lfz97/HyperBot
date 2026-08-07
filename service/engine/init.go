@@ -278,8 +278,8 @@ func (e *Engine) configSystemPrompt() {
 	//Agent名称
 	(*e).Systemprompt = strings.ReplaceAll((*e).Systemprompt, "{{NAME}}", (*e).Agentname)
 
-	//当前日期
-	(*e).Systemprompt = strings.ReplaceAll((*e).Systemprompt, "{{DATE}}", time.Now().Format("2006-01-02 15:04:05 (Mon)"))
+	//当前日期（已由 BeforeModel 状态栏 TIMENOW 提供，每次调用刷新）
+	//(*e).Systemprompt = strings.ReplaceAll((*e).Systemprompt, "{{DATE}}", time.Now().Format("2006-01-02 15:04:05 (Mon)"))
 
 	//当前时区
 	zone, _ := time.Now().Zone()
@@ -306,8 +306,8 @@ func (e *Engine) configSystemPrompt() {
 	hostName, _ := os.Hostname()
 	(*e).Systemprompt = strings.ReplaceAll((*e).Systemprompt, "{{HOSTNAME}}", hostName)
 
-	//运行目录
-	(*e).Systemprompt = strings.ReplaceAll((*e).Systemprompt, "{{CWD}}", (*e).CWD)
+	//运行目录（已由 BeforeModel 状态栏 CWD 提供）
+	//(*e).Systemprompt = strings.ReplaceAll((*e).Systemprompt, "{{CWD}}", (*e).CWD)
 
 	//配置目录
 	(*e).Systemprompt = strings.ReplaceAll((*e).Systemprompt, "{{CONFIGPATH}}", (*e).ConfigFolderPath)

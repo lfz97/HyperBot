@@ -1,12 +1,13 @@
 package engine
 
 import (
+	"HyperBot/service/engine/requirements"
+	"HyperBot/utils/pretty"
 	"context"
 	"github.com/google/uuid"
-	"HyperBot/utils/pretty"
 )
 
-func GetEngineService(name string, tui tuiService) *Engine {
+func GetEngineService(name string, tui requirements.TuiService) *Engine {
 	e := &Engine{
 		tui: tui,
 	}

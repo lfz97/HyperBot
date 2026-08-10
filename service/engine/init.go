@@ -1,7 +1,15 @@
 package engine
 
 import (
-	"charm.land/glamour/v2"
+	"HyperBot/service/engine/agent"
+	"HyperBot/service/engine/config"
+	m "HyperBot/service/engine/memory"
+	"HyperBot/service/engine/requirements"
+	s "HyperBot/service/engine/session"
+	"HyperBot/service/engine/tools/functions"
+	"HyperBot/service/engine/tools/toolsets"
+	"HyperBot/service/engine/tools/toolsets/localexec"
+	"HyperBot/utils/pretty"
 	"context"
 	"embed"
 	"errors"
@@ -9,14 +17,6 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"HyperBot/service/engine/agent"
-	"HyperBot/service/engine/config"
-	m "HyperBot/service/engine/memory"
-	s "HyperBot/service/engine/session"
-	"HyperBot/service/engine/tools/functions"
-	"HyperBot/service/engine/tools/toolsets"
-	"HyperBot/service/engine/tools/toolsets/localexec"
-	"HyperBot/utils/pretty"
 	stdlog "log"
 	"os"
 	"os/user"
@@ -65,29 +65,13 @@ type Engine struct {
 	Toolsets            []tool.ToolSet      //agent挂载的工具集
 	Tools               []tool.Tool         //agent挂载的工具
 
-	tui tuiService
+	tui requirements.TuiService
 }
 type Agentrunner struct {
 	Runner    runner.Runner
 	Stream    bool
 	SessionId string
 	RequestId string
-}
-
-type tuiService interface {
-	AddHelpItems(items []map[string]string)
-	ClearAppFuncTrigger()
-	PrintToMsgView(content string, clear bool)
-	ReadInputAreaPromptWithEnter() string
-	ResetHelpItems()
-	SetAppFuncTriggerWithEsc(f func())
-	ShowErrorInMsgViewAndExit(errmsg string)
-	ShowMsgAndExitNoTrigger(msg string)
-	ShowSuccessInMsgView(sussessmsg string)
-	ShowSuccessInMsgViewAndExit(sussessmsg string)
-	StatusBarScrollingTip(ctx context.Context, tip string, TColor string)
-	StatusBarUserTip(s string)
-	NewGlamourRenderer() *glamour.TermRenderer
 }
 
 func (e *Engine) preCheckLoad() {

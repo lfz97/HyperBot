@@ -1,15 +1,15 @@
 package session
 
 import (
-	"embed"
-	"fmt"
 	"HyperBot/service/engine/config"
 	"HyperBot/service/engine/models"
+	"HyperBot/service/engine/requirements"
 	"HyperBot/utils/pretty"
+	"embed"
+	"fmt"
 	"regexp"
-	"time"
-
 	"strings"
+	"time"
 	"trpc.group/trpc-go/trpc-agent-go/event"
 	"trpc.group/trpc-go/trpc-agent-go/model"
 	"trpc.group/trpc-go/trpc-agent-go/model/tiktoken"
@@ -37,7 +37,7 @@ func initSummarizerPrompts() {
 	userSummarizerPrompt = string(userSummarizerPrompt_b)
 }
 
-func NewSummarizer(m config.Model, tui tuiService) summary.SessionSummarizer {
+func NewSummarizer(m config.Model, tui requirements.TuiService) summary.SessionSummarizer {
 	initSummarizerPrompts()
 	//设置tiktoken计算方式，默认的方式太不准确了
 	counter, _ := tiktoken.New(m.Model)

@@ -62,6 +62,7 @@ model:
   apikey: "your-api-key"
   apitype: "openai"               # openai or anthropic
   contextwindow: 64000            # Context window; must be ≤ the model's actual limit
+  anthropicAuthHeaderTransfer: false  # true=Authorization Bearer, false=X-Api-Key
   stream: true                    # Streaming output
 ```
 

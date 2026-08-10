@@ -62,6 +62,7 @@ model:
   apikey: "your-api-key"
   apitype: "openai"               # openai 或 anthropic
   contextwindow: 64000            # 上下文窗口，须 ≤ 模型实际限制
+  anthropicAuthHeaderTransfer: false  # true=Authorization Bearer 认证，false=X-Api-Key 认证
   stream: true                    # 流式输出
 ```
 

@@ -14,6 +14,7 @@ type Model struct {
 	AnthropicAuthHeaderTransfer bool   `yaml:"anthropicAuthHeaderTransfer"` //如果true，那么通过Authorization: Bearer认证，如果为false，通过X-Api-Key认证
 	Stream                      bool   `yaml:"stream"`                      //true or false
 	ContextWindow               int    `yaml:"contextwindow"`               // 上下文窗口大小
+	MaxTokens                   int    `yaml:"maxtokens"`                   // 每次请求的最大生成 token 数，默认 32000
 	ShowReasoning               bool   `yaml:"show_reasoning"`              // 是否显示推理/思考内容
 }
 type User struct {
@@ -36,6 +37,9 @@ func LoadConfig(path string) (*Config, error) {
 	err = yaml.Unmarshal(yamlFile, &YamlConfig)
 	if err != nil {
 		return nil, fmt.Errorf("解析配置文件错误：%v", err)
+	}
+	if YamlConfig.Model.MaxTokens == 0 { // maxtokens 未配置时使用默认值 32000
+		YamlConfig.Model.MaxTokens = 32000
 	}
 	return &YamlConfig, nil
 }

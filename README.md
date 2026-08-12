@@ -64,7 +64,7 @@ model:
   contextwindow: 64000            # 上下文窗口，须 ≤ 模型实际限制
   anthropicAuthHeaderTransfer: false  # true=Authorization Bearer 认证，false=X-Api-Key 认证
   stream: true                    # 流式输出
-  maxtokens: 32000                # 每次请求的最大生成 token 数，默认 32000
+  maxtokens: 12800                # 每次请求的最大生成 token 数，默认 12800
 ```
 
 MCP 服务通过 `mcp`（HTTP）和 `stdin_mcp`（子进程）列表配置。其余选项见自动生成的配置文件内注释。

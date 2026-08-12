@@ -109,7 +109,7 @@ Auto-generated to `hyperbot.yaml` on first run. Supports:
 - Model config (model name, base URL, API key, API type: `openai` or `anthropic`)
 - `anthropicAuthHeaderTransfer` (bool): if `true`, uses `Authorization: Bearer <apikey>` header instead of default `X-Api-Key` — for proxies/gateways that require Bearer auth
 - `contextwindow` (int): context window size in tokens, MUST be ≤ actual model limit
-- `maxtokens` (int): max generation tokens per request, default 32000 (`config.Model.MaxTokens`, wired into `model.GenerationConfig.MaxTokens` via `WithGenerationConfig` in `service/engine/init.go`)
+- `maxtokens` (int): max generation tokens per request, default 12800 (`config.Model.MaxTokens`, wired into `model.GenerationConfig.MaxTokens` via `WithGenerationConfig` in `service/engine/init.go`)
 - `show_reasoning` (bool): display reasoning/thinking content
 - `stream` (bool): enable streaming output
 - MCP services (SSE or streamable_http)

@@ -6,7 +6,7 @@ import (
 	m "HyperBot/service/engine/memory"
 	"HyperBot/service/engine/requirements"
 	s "HyperBot/service/engine/session"
-	"HyperBot/service/engine/tools/functions"
+	functionTools "HyperBot/service/engine/tools/functions"
 	"HyperBot/service/engine/tools/toolsets"
 	"HyperBot/service/engine/tools/toolsets/localexec"
 	"HyperBot/utils/pretty"
@@ -14,9 +14,6 @@ import (
 	"embed"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 	stdlog "log"
 	"os"
 	"os/user"
@@ -24,6 +21,10 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	ag "trpc.group/trpc-go/trpc-agent-go/agent"
 	"trpc.group/trpc-go/trpc-agent-go/agent/llmagent"
 	"trpc.group/trpc-go/trpc-agent-go/log"
@@ -33,7 +34,7 @@ import (
 	"trpc.group/trpc-go/trpc-agent-go/session"
 	"trpc.group/trpc-go/trpc-agent-go/skill"
 	"trpc.group/trpc-go/trpc-agent-go/tool"
-	"trpc.group/trpc-go/trpc-mcp-go"
+	mcp "trpc.group/trpc-go/trpc-mcp-go"
 )
 
 //go:embed prompt/*
@@ -62,8 +63,9 @@ type Engine struct {
 	FrameworkLogFile_p  *os.File            // 保存日志文件句柄，防止被 GC 回收
 	SqliteMemoryService memory.Service      // sqlite记忆服务
 	Systemprompt        string              //agent的系统提示词
-	Toolsets            []tool.ToolSet      //agent挂载的工具集
-	Tools               []tool.Tool         //agent挂载的工具
+	mcpToolsets         []tool.ToolSet      //agent挂载的工具集，每轮自动更新
+	builtinTools        []tool.Tool         //内置function清单，启动时确定，不自动刷新
+	builtinToolsets     []tool.ToolSet      //内置工具集，启动时确定，不自动刷新
 
 	tui requirements.TuiService
 }
@@ -103,14 +105,11 @@ func (e *Engine) preCheckLoad() {
 	//初始化sqlite记忆服务
 	e.initSqliteMemoryService()
 
-	//加载skill
+	//加载内置工具和工具集
+	e.loadBuiltinToolsAndToolsets()
+
+	//加载skillrepo
 	e.loadSkills()
-
-	//从配置文件加载工具集
-	e.parseToolsetsFromConfig()
-
-	//加载function工具
-	e.loadFunctionTools()
 
 }
 
@@ -120,17 +119,22 @@ func (e *Engine) newRunner() {
 		(*e).Agentname,
 		(*e).Agentname,
 		func(ctx context.Context, ro ag.RunOptions) (ag.Agent, error) {
-			(*e).reload()
+			(*e).refresh()
 			var Agent_p *llmagent.LLMAgent
-			(*e).Tools = append((*e).Tools, (*e).SqliteMemoryService.Tools()...) //将SqliteMemoryService的工具添加到全局工具列表中，使得Agent能够调用记忆相关的工具
+			toolsets := []tool.ToolSet{}
+			tools := []tool.Tool{}
+			toolsets = append(toolsets, (*e).builtinToolsets...)
+			toolsets = append(toolsets, (*e).mcpToolsets...)
+			tools = append(tools, (*e).builtinTools...)
+			tools = append(tools, (*e).SqliteMemoryService.Tools()...) //将SqliteMemoryService的工具添加到全局工具列表中，使得Agent能够调用记忆相关的工具
 			opts := []llmagent.Option{
 				llmagent.WithGenerationConfig(model.GenerationConfig{
 					MaxTokens: &(*(*e).Config_p).Model.MaxTokens, // 最大生成 token 数，来自配置 maxtokens 字段
 					Stream:    (*(*e).Config_p).Model.Stream,
 				}),
-				llmagent.WithTools((*e).Tools),
+				llmagent.WithTools(tools),
 				llmagent.WithGlobalInstruction((*e).Systemprompt), //系统提示词
-				llmagent.WithToolSets((*e).Toolsets),
+				llmagent.WithToolSets(toolsets),
 				llmagent.WithRefreshToolSetsOnRun(true),
 				llmagent.WithSkillsLoadedContentInToolResults(true),
 				//仅注入知识，不注入执行工具的能力，统一通过localexec执行
@@ -174,32 +178,26 @@ func (e *Engine) newRunner() {
 	}
 }
 
-func (e *Engine) reload() {
+// 刷新配置文件，MCP工具集，SKILL仓库
+func (e *Engine) refresh() {
 	e.loadConfig()
-	e.parseToolsetsFromConfig()
-	e.loadFunctionTools()
+	e.refreshMCPFromConfig()
 	e.loadSkills()
 }
-func (e *Engine) loadFunctionTools() {
-	(*e).Tools = []tool.Tool{} //清空全局工具列表，重新加载工具，确保工具的最新状态被加载
-	fileopstools := functionTools.GetFileOperationsTools()
-	fileSystemTools := functionTools.GetFileSystemTools()
-	dateTools := functionTools.GetDateTools()
-	(*e).Tools = append((*e).Tools, fileopstools...)
-	(*e).Tools = append((*e).Tools, fileSystemTools...)
-	(*e).Tools = append((*e).Tools, dateTools...)
-}
 
-func (e *Engine) parseToolsetsFromConfig() {
-	(*e).Toolsets = []tool.ToolSet{} //先清空工具集
-
+func (e *Engine) loadMCPFromConfig() {
+	idx := 0
 	if len((*(*e).Config_p).HttpMcp) != 0 {
 		//读取配置文件中的 MCP 配置，创建 MCP ToolSet 并添加到 Toolsets 中
 		for _, mcpConfig := range (*(*e).Config_p).HttpMcp {
 			//只有配置了 Enabled 字段为 true 的 MCP 配置才会被创建 ToolSet 并添加到 Toolsets 中
 			if mcpConfig.Enabled == true {
+				if mcpConfig.Name == "" { //未配置名称时分配默认名，避免工具前缀冲突
+					mcpConfig.Name = fmt.Sprintf("mcp_%d", idx)
+				}
 				mcpToolSet := toolsets.HttpMCP(mcpConfig)
-				(*e).Toolsets = append((*e).Toolsets, mcpToolSet)
+				(*e).mcpToolsets = append((*e).mcpToolsets, mcpToolSet)
+				idx++
 			}
 
 		}
@@ -208,14 +206,42 @@ func (e *Engine) parseToolsetsFromConfig() {
 		//读取配置文件中的 StdinMCP 配置，创建 StdinMCP ToolSet 并添加到 Toolsets 中
 		for _, stdinMcpConfig := range (*(*e).Config_p).StdinMcp {
 			if stdinMcpConfig.Enabled == true {
+				if stdinMcpConfig.Name == "" {
+					stdinMcpConfig.Name = fmt.Sprintf("mcp_%d", idx)
+				}
 				stdinMcpToolSet := toolsets.StdinMCP(stdinMcpConfig)
-				(*e).Toolsets = append((*e).Toolsets, stdinMcpToolSet)
+				(*e).mcpToolsets = append((*e).mcpToolsets, stdinMcpToolSet)
+				idx++
 			}
 		}
 	}
+}
 
-	(*e).Toolsets = append((*e).Toolsets, localexec.LocalExec()) //localexec 必须启用
+func (e *Engine) refreshMCPFromConfig() {
+	if len((*e).mcpToolsets) != 0 {
+		for _, toolset := range (*e).mcpToolsets { //先关闭当前工具集里面的工具，目的是如果有stdin_mcp，要关闭子进程
+			toolset.Close()
+		}
+		(*e).mcpToolsets = []tool.ToolSet{} //清空工具集
+	}
 
+	e.loadMCPFromConfig() //重新组装工具集
+
+}
+func (e *Engine) loadBuiltinToolsets() {
+	(*e).builtinToolsets = append((*e).builtinToolsets, localexec.LocalExec())
+}
+func (e *Engine) loadBuiltinTools() {
+	fileopstools := functionTools.GetFileOperationsTools()
+	fileSystemTools := functionTools.GetFileSystemTools()
+	dateTools := functionTools.GetDateTools()
+	(*e).builtinTools = append((*e).builtinTools, fileopstools...)
+	(*e).builtinTools = append((*e).builtinTools, fileSystemTools...)
+	(*e).builtinTools = append((*e).builtinTools, dateTools...)
+}
+func (e *Engine) loadBuiltinToolsAndToolsets() {
+	e.loadBuiltinToolsets()
+	e.loadBuiltinTools()
 }
 func (e *Engine) loadSkills() {
 	(*e).SkillRepo, _ = skill.NewFSRepository((*e).SkillFolderPath)

@@ -4,6 +4,7 @@ import (
 	"HyperBot/service/engine/requirements"
 	"HyperBot/utils/pretty"
 	"context"
+
 	"github.com/google/uuid"
 )
 
@@ -29,6 +30,9 @@ func (e *Engine) AgentStart() {
 		if (*EndTurn_p).Code == Exit { //用户主动结束对话，退出程序
 			//关闭AgentRunner，释放资源
 			(*(*e).AgentRunner_p).Runner.Close()
+			for _, toolset := range (*e).mcpToolsets {
+				toolset.Close()
+			}
 			(*e).tui.ShowMsgAndExitNoTrigger(pretty.TExit("对话已结束，感谢使用！后会有期！"))
 
 		} else if (*EndTurn_p).Code == New { //用户开始新对话，重置global.SessionID,  global.RequestID，更新MsgContext为新对话的初始状态

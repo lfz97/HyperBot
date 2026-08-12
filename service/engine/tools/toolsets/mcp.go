@@ -16,6 +16,7 @@ func HttpMCP(config config.HttpMCP) *mcp.ToolSet {
 			Headers:     config.Headers,
 			Description: config.Description,
 		},
+		mcp.WithName(config.Name), //决定工具前缀 {Name}_{toolName}，多server必须唯一
 		mcp.WithSessionReconnect(3),
 	)
 	return mcpToolSet
@@ -31,6 +32,7 @@ func StdinMCP(config config.StdinMCP) *mcp.ToolSet {
 			Timeout:     10 * time.Second,
 			Description: config.Description,
 		},
+		mcp.WithName(config.Name), //决定工具前缀 {Name}_{toolName}，多server必须唯一
 		mcp.WithSessionReconnect(3),
 	)
 	return mcpToolSet

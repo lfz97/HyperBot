@@ -20,7 +20,7 @@ import (
 func NewSQLiteMemoryService(m config.Model, dbPath string) (*memorysqlite.Service, error) {
 	var extractorModel model.Model
 	if m.APIType == "openai" {
-		extractorModel = models.Openai(m.Model, m.BaseURL, m.APIKey)
+		extractorModel = models.Openai(m)
 	} else if m.APIType == "anthropic" {
 		extractorModel = models.Anthropic(m)
 	}

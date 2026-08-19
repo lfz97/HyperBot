@@ -16,6 +16,7 @@ type Model struct {
 	ContextWindow               int    `yaml:"contextwindow"`               // 上下文窗口大小
 	MaxTokens                   int    `yaml:"maxtokens"`                   // 每次请求的最大生成 token 数，默认 12800
 	ShowReasoning               bool   `yaml:"show_reasoning"`              // 是否显示推理/思考内容
+	HttpTimeout                 int    `yaml:"httptimeout"`
 }
 type User struct {
 	UserID string `yaml:"userid"`

@@ -9,7 +9,7 @@ import (
 func ConfigBaseAgent(agentName string, m config.Model, opts []llmagent.Option) *llmagent.LLMAgent {
 
 	if m.APIType == "openai" {
-		OpenaiModel_p := models.Openai(m.Model, m.BaseURL, m.APIKey)
+		OpenaiModel_p := models.Openai(m)
 		opts = append(opts, llmagent.WithModel(OpenaiModel_p))
 	} else if m.APIType == "anthropic" {
 		AnthropicModel_p := models.Anthropic(m)

@@ -10,6 +10,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/mackerelio/go-osstat v0.2.8
 	github.com/mattn/go-sqlite3 v1.14.49
+	github.com/openai/openai-go v1.12.0
 	github.com/otiai10/copy v1.14.1
 	github.com/pmezard/go-difflib v1.0.0
 	github.com/rivo/tview v0.42.0
@@ -57,7 +58,6 @@ require (
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/oasdiff/yaml v0.1.1 // indirect
 	github.com/oasdiff/yaml3 v0.0.14 // indirect
-	github.com/openai/openai-go v1.12.0 // indirect
 	github.com/otiai10/mint v1.6.3 // indirect
 	github.com/panjf2000/ants/v2 v2.12.1 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect

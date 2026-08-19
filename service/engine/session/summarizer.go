@@ -45,7 +45,7 @@ func NewSummarizer(m config.Model, tui requirements.TuiService) summary.SessionS
 	var summarizerModel model.Model
 
 	if m.APIType == "openai" {
-		summarizerModel = models.Openai(m.Model, m.BaseURL, m.APIKey)
+		summarizerModel = models.Openai(m)
 	} else if m.APIType == "anthropic" {
 		summarizerModel = models.Anthropic(m)
 	}

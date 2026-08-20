@@ -118,14 +118,14 @@ Auto-generated to `hyperbot.yaml` on first run. Supports:
 ## Dependencies
 
 - **glamour** v2.0.1 (`charm.land/glamour/v2`): Markdown → ANSI renderer (Dracula theme, OSC 8 hyperlinks)
-- **trpc-agent-go** v1.11.0: Agent framework core（注意：session/summary 摘要机制在 v1.11 有重构，改动前对比两版行为）
-- **trpc-agent-go/model/anthropic** v1.11.0: Anthropic model adapter
+- **trpc-agent-go** v1.11.1-0.20260820131707-cdaece75b478: Agent framework core（含 #2501 修复；注意：session/summary 摘要机制在 v1.11 有重构，改动前对比两版行为）
+- **trpc-agent-go/model/anthropic** v1.11.1-0.20260820131707-cdaece75b478: Anthropic model adapter（独立子模块，须单独升级）
 - **trpc-agent-go/model/tiktoken** v1.11.0: Tiktoken-based token counter (replaces SimpleTokenCounter default)
-- **trpc-mcp-go** v0.0.17: MCP tool protocol support（独立于 agent-go 版本，可单独升降）
+- **trpc-mcp-go** v0.0.18: MCP tool protocol support（独立于 agent-go 版本，可单独升降）
 - **tview** v0.42.0: TUI framework
 - **tcell/v2** v2.13.10: Terminal event handling
 - **openai-go** v1.12.0: OpenAI API SDK
-- **anthropic-sdk-go** v1.61.0: Anthropic API SDK
+- **anthropic-sdk-go** v1.66.0: Anthropic API SDK
 - **zap** v1.28.0: Logging
 - **otiai10/copy** v1.14.1: Cross-device file/directory copy for CP and MV tools
 
@@ -137,6 +137,7 @@ Auto-generated to `hyperbot.yaml` on first run. Supports:
 - Framework logs are redirected to `hyperbot.log` to avoid TUI interference
 - **HelpTable dynamic items** — Default slash commands in `helpItems` initialized via `defaultHelpItems()` (`service/tui/tui.go`). Skills appended via `loadSkills()` → `ResetHelpItems()` + `AddHelpItems()` (`service/engine/init.go`). `refreshhelpTable()` rebuilds Table cells and is called in `toggleHelpPage()` on every open (`service/tui/Internal.go`).
 - **embedFS case sensitivity** - `//go:embed` + `ReadFile` paths are case-sensitive on Linux. File named `systemprompt.md` but code reading `systemPrompt.md` silently returns empty string (error ignored with `_`). Always match exact file name case between `go:embed` glob patterns and `ReadFile` calls.
+- **`model/anthropic` 子模块版本对齐** — 根模块与 `model/anthropic` 子模块在 go.mod 中独立锁版本，升级根模块不会带上子模块修复。DeepSeek anthropic 端点要求 object schema 的 properties 非 null；无参 MCP 工具在旧版（v1.11.2 及更早）下序列化为 `"properties":null` 导致 400。升级时必须显式同时升级两者到含修复版本（#2501，commit cdaece75；现锁 `v1.11.1-0.20260820131707-cdaece75b478`）
 - **Skills identity contamination** - The deployed `skills/` folder (`~/.hyperbot/skills/`) contains OpenClaw skill files (self-improving-agent, find-skills, etc.) that reference "OpenClaw", "Claude Code", "clawdhub". When loaded via `llmagent.WithSkills()`, these contaminate the agent's identity. Use only HyperBot-specific skills or keep the folder empty.
 - **bracketed paste** - tview TextArea 对大块粘贴支持不好，需在 `service/tui/tui.go` 中启用 `EnableBracketedPaste()` 让终端分片发送，框架才能正常处理。参考 commit 70bb8f3。
 - **Input multiplexing (InputChan)** - Tui 字段 `InputChan`（**unbuffered**），`ReadInputAreaPromptWithEnter()` 只注册捕获（非阻塞返回），引擎循环用 `select { case userPrompt = <-tui.InputChannel(): }` 读取（`service/engine/engineRun.go`）。三条约束：① 发送用 select-default——对端（引擎）未监听时不投递且**不清空输入框**（`SetText("")` 只在投递成功时执行），unbuffered send 永不阻塞 tview 事件循环、用户输入永不丢失；② **捕获常驻**——Enter 提交后不注销捕获（旧 `SetInputCapture(nil)` 已删除），agent 运行期间 Enter 被捕获消费（不换行不投递，Shift+Enter 仍可换行、Ctrl+K 帮助仍可用）；③ select 是扩展点——计划任务结果回传（schedule agent）将在 select 上加 TriggerCh 分支 + 前置 DrainPending 检查，勿改回阻塞式 `ReadInputAreaPromptWithEnter() string`。

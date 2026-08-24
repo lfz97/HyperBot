@@ -16,9 +16,9 @@ import (
 )
 
 func WriteFile(ctx context.Context, req struct {
-	Path    string `json:"path" jsonschema:"description:要写入的文件路径。"`
-	Content string `json:"content" jsonschema:"description:写入的文件内容"`
-	Append  bool   `json:"append" jsonschema:"description:是否启用追加模式，默认为false即全文覆盖，如果为true则在文件末尾追加写入。"`
+	Path    string `json:"Path" jsonschema:"description:要写入的文件路径。"`
+	Content string `json:"Content" jsonschema:"description:写入的文件内容"`
+	Append  bool   `json:"Append" jsonschema:"description:是否启用追加模式，默认为false即全文覆盖，如果为true则在文件末尾追加写入。"`
 }) (map[string]string, error) {
 
 	if req.Path == "" {
@@ -46,14 +46,14 @@ func WriteFile(ctx context.Context, req struct {
 	}
 
 	return map[string]string{
-		"bytes_written": strconv.Itoa(length),
+		"BytesWritten": strconv.Itoa(length),
 	}, nil
 }
 
 func ReadFile(ctx context.Context, req struct {
-	Path   string `json:"path" jsonschema:"description:要读取的文件路径。"`
-	Bytes  int    `json:"bytes" jsonschema:"description:读取文件的窗口大小，单位为字节。默认为1024字节。"`
-	Offset int    `json:"offset" jsonschema:"description:读取文件的偏移位置，单位为字节。默认为0，即从文件开头开始读取。"`
+	Path   string `json:"Path" jsonschema:"description:要读取的文件路径。"`
+	Bytes  int    `json:"Bytes" jsonschema:"description:读取文件的窗口大小，单位为字节。默认为1024字节。"`
+	Offset int    `json:"Offset" jsonschema:"description:读取文件的偏移位置，单位为字节。默认为0，即从文件开头开始读取。"`
 }) (map[string]string, error) {
 
 	if req.Path == "" {
@@ -86,10 +86,10 @@ func ReadFile(ctx context.Context, req struct {
 
 // EditFile：编辑指定文件中的内容，支持替换指定的旧内容为新内容。默认仅允许唯一匹配时替换（多处匹配会报错），设置replace_all为true则全量替换。
 func EditFile(ctx context.Context, req struct {
-	Path       string `json:"path" jsonschema:"description:要编辑的文件路径。"`
-	Old        string `json:"old" jsonschema:"description:要替换的旧内容。"`
-	New        string `json:"new" jsonschema:"description:要替换的新内容。"`
-	ReplaceAll bool   `json:"replace_all" jsonschema:"description:是否替换文件中所有匹配的字符串，默认为false仅允许唯一匹配（多处匹配会报错）。设置为true则全量替换。"`
+	Path       string `json:"Path" jsonschema:"description:要编辑的文件路径。"`
+	Old        string `json:"Old" jsonschema:"description:要替换的旧内容。"`
+	New        string `json:"New" jsonschema:"description:要替换的新内容。"`
+	ReplaceAll bool   `json:"ReplaceAll" jsonschema:"description:是否替换文件中所有匹配的字符串，默认为false仅允许唯一匹配（多处匹配会报错）。设置为true则全量替换。"`
 }) (map[string]string, error) {
 	if req.Path == "" {
 		return nil, errors.New("`Path` cannot be empty")
@@ -140,20 +140,20 @@ func EditFile(ctx context.Context, req struct {
 		return nil, err
 	}
 	return map[string]string{
-		"diff": text,
+		"Diff": text,
 	}, nil
 }
 
 type matchInfo struct {
-	StartlineNum int    `json:"startLineNum"`
-	EndlineNum   int    `json:"endLineNum"`
-	MatchContent string `json:"matchContent"`
+	StartlineNum int    `json:"StartLineNum"`
+	EndlineNum   int    `json:"EndLineNum"`
+	MatchContent string `json:"MatchContent"`
 }
 
 // 通过正则表达式在指定文件中搜索内容，返回所有匹配项的行号和内容。使用Go RE2语法，不支持lookahead/lookbehind/backreference。`.`默认不匹配换行，跨行匹配用`(?s)`。`^`和`$`默认匹配文本首尾，匹配行首行尾用`(?m)`。
 func SearchInFile(ctx context.Context, req struct {
-	Path  string `json:"path" jsonschema:"description:要搜索的文件路径。"`
-	Regex string `json:"regex" jsonschema:"description:要搜索的正则表达式。"`
+	Path  string `json:"Path" jsonschema:"description:要搜索的文件路径。"`
+	Regex string `json:"Regex" jsonschema:"description:要搜索的正则表达式。"`
 }) (map[string]string, error) {
 	if req.Path == "" {
 		return nil, errors.New("`Path` cannot be empty")
@@ -198,7 +198,7 @@ func SearchInFile(ctx context.Context, req struct {
 }
 
 func DeleteFile(ctx context.Context, req struct {
-	Path string `json:"path" jsonschema:"description:要删除的文件路径。"`
+	Path string `json:"Path" jsonschema:"description:要删除的文件路径。"`
 }) (map[string]string, error) {
 	if req.Path == "" {
 		return nil, errors.New("`Path` cannot be empty")
@@ -208,12 +208,12 @@ func DeleteFile(ctx context.Context, req struct {
 		return nil, err
 	}
 	return map[string]string{
-		"deleted": req.Path,
+		"Deleted": req.Path,
 	}, nil
 }
 
 func FileInfo(ctx context.Context, req struct {
-	Path string `json:"path" jsonschema:"description:要获取信息的文件路径。"`
+	Path string `json:"Path" jsonschema:"description:要获取信息的文件路径。"`
 }) (map[string]string, error) {
 	if req.Path == "" {
 		return nil, errors.New("`Path` cannot be empty")
@@ -232,15 +232,15 @@ func FileInfo(ctx context.Context, req struct {
 }
 
 func Diff(ctx context.Context, req struct {
-	PathA string `json:"path_a" jsonschema:"description:要比较的第一个文件路径。"`
-	PathB string `json:"path_b" jsonschema:"description:要比较的第二个文件路径。"`
+	PathA string `json:"PathA" jsonschema:"description:要比较的第一个文件路径。"`
+	PathB string `json:"PathB" jsonschema:"description:要比较的第二个文件路径。"`
 }) (map[string]string, error) {
 	if req.PathA == "" || req.PathB == "" {
 		return nil, errors.New("`PathA` and `PathB` cannot be empty")
 	}
 	if req.PathA == req.PathB {
 		return map[string]string{
-			"message": "The two paths are the same, no differences.",
+			"Message": "The two paths are the same, no differences.",
 		}, nil
 	}
 	fileA_bytes, err := os.ReadFile(req.PathA)
@@ -264,47 +264,57 @@ func Diff(ctx context.Context, req struct {
 		return nil, err
 	}
 	return map[string]string{
-		"diff": text,
+		"Diff": text,
 	}, nil
 }
 
 // 获取文件操作工具集合：
 // WriteFile：将内容写入指定文件，如果文件不存在则创建，已存在则覆盖。
 // ReadFile：从指定文件读取内容，支持设置读取窗口大小。
+const (
+	writeFileToolName    string = "WriteFile"
+	readFileToolName     string = "ReadFile"
+	editFileToolName     string = "EditFile"
+	searchInFileToolName string = "SearchInFile"
+	deleteFileToolName   string = "DeleteFile"
+	fileStatToolName     string = "FileStat"
+	diffToolName         string = "Diff"
+)
+
 func GetFileOperationsTools() []tool.Tool {
 	wftool := function.NewFunctionTool(
 		WriteFile,
-		function.WithName("WriteFile"),
+		function.WithName(writeFileToolName),
 		function.WithDescription("将内容写入指定文件，如果文件不存在则创建，已存在则覆盖。"),
 	)
 	rftool := function.NewFunctionTool(
 		ReadFile,
-		function.WithName("ReadFile"),
+		function.WithName(readFileToolName),
 		function.WithDescription("从指定文件读取内容，支持设置读取窗口大小和偏移量。"),
 	)
 	eftool := function.NewFunctionTool(
 		EditFile,
-		function.WithName("EditFile"),
+		function.WithName(editFileToolName),
 		function.WithDescription("编辑指定文件中的内容，支持替换指定的旧内容为新内容。默认仅允许唯一匹配时替换（多处匹配会报错），设置replace_all为true则全量替换。"),
 	)
 	sftool := function.NewFunctionTool(
 		SearchInFile,
-		function.WithName("SearchInFile"),
+		function.WithName(searchInFileToolName),
 		function.WithDescription("通过正则表达式在指定文件中搜索内容，返回所有匹配项的行号和内容。使用Go RE2语法，不支持lookahead/lookbehind/backreference。`.`默认不匹配换行，跨行匹配用`(?s)`。`^`和`$`默认匹配文本首尾，匹配行首行尾用`(?m)`。"),
 	)
 	dftool := function.NewFunctionTool(
 		DeleteFile,
-		function.WithName("DeleteFile"),
+		function.WithName(deleteFileToolName),
 		function.WithDescription("删除指定文件或目录，目录会被递归删除，请谨慎使用。"),
 	)
 	fitool := function.NewFunctionTool(
 		FileInfo,
-		function.WithName("FileStat"),
+		function.WithName(fileStatToolName),
 		function.WithDescription("获取指定文件或目录的信息，包括名称、大小、是否为目录、权限模式和修改时间等。"),
 	)
 	difftool := function.NewFunctionTool(
 		Diff,
-		function.WithName("Diff"),
+		function.WithName(diffToolName),
 		function.WithDescription("比较两个文件的差异，返回unified diff格式的结果。"),
 	)
 	return []tool.Tool{wftool, rftool, eftool, sftool, dftool, fitool, difftool}

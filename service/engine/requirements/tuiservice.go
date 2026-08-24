@@ -1,7 +1,6 @@
 package requirements
 
 import (
-	"charm.land/glamour/v2"
 	"context"
 )
 
@@ -18,7 +17,7 @@ type TuiService interface {
 	ShowSuccessInMsgViewAndExit(sussessmsg string)
 	StatusBarScrollingTip(ctx context.Context, tip string, TColor string)
 	StatusBarUserTip(s string)
-	NewGlamourRenderer() *glamour.TermRenderer
+	RenderMarkdown(in string) (string, error)
 	ResetHelpItems()
 	InputChannel() chan string
 }

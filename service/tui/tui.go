@@ -235,6 +235,10 @@ func (t *Tui) NewGlamourRenderer() *glamour.TermRenderer {
 	return r
 }
 
+func (t *Tui) RenderMarkdown(in string) (string, error) {
+	return t.NewGlamourRenderer().Render(in)
+}
+
 func (t *Tui) Run() {
 	err := (*t).app.Run()
 	if err != nil {

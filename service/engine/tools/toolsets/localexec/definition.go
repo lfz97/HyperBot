@@ -27,7 +27,7 @@ func (l *LocalExecToolSet) Name() string {
 
 func LocalExec() tool.ToolSet {
 	return &LocalExecToolSet{
-		name: "LocalExec",
+		name: localExecToolSetName,
 		mgr:  &Manager{jobs: map[string]*Job{}},
 	}
 }

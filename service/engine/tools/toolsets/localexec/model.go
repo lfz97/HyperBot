@@ -35,16 +35,16 @@ type OutputOptions struct {
 
 // 状态信息
 type StatusInfo struct {
-	ID        string    `json:"id"`
-	Status    string    `json:"status"`
-	PID       int       `json:"pid,omitempty"` // 进程PID
-	ExitCode  int       `json:"exitCode"`
-	Error     string    `json:"error,omitempty"`
-	Command   string    `json:"command"`
-	Shell     string    `json:"shell"`
-	CreatedAt time.Time `json:"createdAt"`
-	StartedAt time.Time `json:"startedAt,omitempty"`
-	EndedAt   time.Time `json:"endedAt,omitempty"`
+	ID        string    `json:"Id"`
+	Status    string    `json:"Status"`
+	PID       int       `json:"Pid,omitempty"` // 进程PID
+	ExitCode  int       `json:"ExitCode"`
+	Error     string    `json:"Error,omitempty"`
+	Command   string    `json:"Command"`
+	Shell     string    `json:"Shell"`
+	CreatedAt time.Time `json:"CreatedAt"`
+	StartedAt time.Time `json:"StartedAt,omitempty"`
+	EndedAt   time.Time `json:"EndedAt,omitempty"`
 }
 
 // Job结构

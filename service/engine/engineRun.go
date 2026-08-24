@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"HyperBot/service/engine/messagerender"
 	"HyperBot/utils/pretty"
 	"context"
 	"fmt"
@@ -124,7 +125,6 @@ type AgentError struct {
 }
 
 func (e *Engine) agentRunOnce(Ctx context.Context, userPrompt string) *AgentError {
-	toolMsgBuffer.toolMsgMap = map[string]*toolmsg{}
 	// 修改状态栏提示，显示正在运行中
 	statusBarCtx := context.Background()
 	statusBarCtx, cancel := context.WithCancel(statusBarCtx)
@@ -151,7 +151,7 @@ func (e *Engine) agentRunOnce(Ctx context.Context, userPrompt string) *AgentErro
 	}
 
 	OutputPart := ""
-	startReasoning := false
+	msgRender := messagerender.NewMessageRender((*e).tui, (*(*e).Config_p).Model.ShowReasoning, (*(*e).AgentRunner_p).Stream)
 	for event := range eventChan {
 		//只有terminal error才会中断对话，其他error直接continue
 		if event.Error != nil {
@@ -176,20 +176,12 @@ func (e *Engine) agentRunOnce(Ctx context.Context, userPrompt string) *AgentErro
 
 		default:
 		}
-		if event.Response != nil && len((*(*event).Response).Choices) > 0 {
-			response := (*event).Response
+		if (*event).Response != nil && len((*(*event).Response).Choices) > 0 {
 
-			// 工具结果事件可能包含多个 Choice（框架将并行工具调用的结果合并到一个事件中），
-			// 需要遍历所有 Choice 而非只取 Choices[0]。
-			if response.Object == model.ObjectTypeToolResponse {
-				for _, Choice := range response.Choices {
-					e.printMessage(Choice, &startReasoning, (*(*e).AgentRunner_p).Stream)
-					gatherContentMessage(&OutputPart, Choice, (*(*e).AgentRunner_p).Stream)
-				}
-			} else {
-				Choice := response.Choices[0]
-				e.printMessage(Choice, &startReasoning, (*(*e).AgentRunner_p).Stream)
-				gatherContentMessage(&OutputPart, Choice, (*(*e).AgentRunner_p).Stream)
+			for _, choice := range (*(*event).Response).Choices {
+
+				msgRender.RenderResponse(choice)
+				gatherContentMessage(&OutputPart, choice, (*(*e).AgentRunner_p).Stream)
 			}
 
 		}
@@ -202,4 +194,13 @@ func (e *Engine) agentRunOnce(Ctx context.Context, userPrompt string) *AgentErro
 
 	return nil
 
+}
+
+// 收集输出正文，如果出现错误，可以通过这段文本在下一轮对llm进行提示，帮助模型更好地理解之前发生了什么，从而调整后续输出
+func gatherContentMessage(Container_p *string, Choice model.Choice, Stream bool) {
+	if Stream {
+		*Container_p += Choice.Delta.Content
+	} else {
+		*Container_p += Choice.Message.Content
+	}
 }

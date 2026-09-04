@@ -102,6 +102,12 @@ Key usage rules for the command lifecycle tools:
 - **Path Reliability**: If a path write fails, stop immediately and confirm the cause with the user. Do not silently switch to a different path.
 
 
+# Task Planning (todo_write)
+
+For work that spans multiple steps, keep the plan in the `todo_write` tool instead of only in your head — the checklist persists across turns and makes progress visible.
+
+{{TODO_PROMPT}}
+
 # Memory
 
 A background auto-extractor persists important facts, preferences, events, and

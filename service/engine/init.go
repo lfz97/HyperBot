@@ -235,9 +235,11 @@ func (e *Engine) loadBuiltinTools() {
 	fileopstools := functionTools.GetFileOperationsTools()
 	fileSystemTools := functionTools.GetFileSystemTools()
 	dateTools := functionTools.GetDateTools()
+	todoTools := functionTools.GetTodoTools() // 框架内置 todo_write：任务清单，状态存 session，跨轮持久化
 	(*e).builtinTools = append((*e).builtinTools, fileopstools...)
 	(*e).builtinTools = append((*e).builtinTools, fileSystemTools...)
 	(*e).builtinTools = append((*e).builtinTools, dateTools...)
+	(*e).builtinTools = append((*e).builtinTools, todoTools...)
 }
 func (e *Engine) loadBuiltinToolsAndToolsets() {
 	e.loadBuiltinToolsets()
@@ -330,6 +332,9 @@ func (e *Engine) configSystemPrompt() {
 	//输出目录
 	outputPath := filepath.Join((*e).CWD, outputDir)
 	(*e).Systemprompt = strings.ReplaceAll((*e).Systemprompt, "{{OUTPUTDIR}}", outputPath)
+
+	//todo_write 工具使用说明（框架 tool/todo.DefaultToolPrompt，随框架版本走，不在提示词里硬编码）
+	(*e).Systemprompt = strings.ReplaceAll((*e).Systemprompt, "{{TODO_PROMPT}}", functionTools.GetTodoToolPrompt())
 }
 
 // redirectFrameworkLog 将框架的日志输出从 stdout 重定向到可执行文件同目录下的 hyperbot.log 文件-created by copilot

@@ -24,36 +24,48 @@ func setBeforeModelStatusCallback() llmagent.Option {
 
 	modelCallbacks := model.NewCallbacks().RegisterBeforeModel(
 		func(ctx context.Context, args *model.BeforeModelArgs) (*model.BeforeModelResult, error) {
-			//获取时间
-			datenow := time.Now().Format("2006-01-02 15:04:05")
-			//获取工作目录
-			cwd, err := os.Getwd()
-			if err != nil {
-				cwd = "UNKNOWN"
-			}
-			//获取总内存、当前内存
-			var memTotalStr string
-			var memNowStr string
-			memoryInfo, err := memory.Get()
-			if err == nil {
-				memTotalStr = strconv.FormatUint(memoryInfo.Total/1024/1024, 10)
-				memNowStr = strconv.FormatUint(memoryInfo.Used/1024/1024, 10)
-			} else {
-				memTotalStr = "UNKNOWN"
-				memNowStr = "UNKNOWN"
-			}
-			status := fmt.Sprintf(`[STATUS] TIMENOW: %s , CWD: %s , MEMORY USAGE: %s/%s MB`, datenow, cwd, memNowStr, memTotalStr)
-
-			//追加当前agent的todo清单状态（todo_write写入session state，按invocation branch读取，
-			//无清单时为空串不追加）。清单变化只影响尾部消息，不破坏前缀缓存；
-			//同轮内工具写入后下一跳请求即生效，上下文压缩掉历史后清单也不会丢。
-			if todoStatus := functionTools.TodoStatusBar(ctx); todoStatus != "" {
-				status += "\n" + todoStatus
-			}
+			var status string
+			injectBaseStatus(ctx, &status)
+			injectTodoStatus(ctx, &status)
 
 			args.Request.Messages = append(args.Request.Messages, model.NewSystemMessage(status)) //在末尾追加状态栏
 			return nil, nil
 		},
 	)
 	return llmagent.WithModelCallbacks(modelCallbacks)
+}
+
+// 基础状态栏：时间、工作目录、内存。
+func injectBaseStatus(_ context.Context, status *string) {
+	//获取时间
+	datenow := time.Now().Format("2006-01-02 15:04:05")
+	//获取工作目录
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = "UNKNOWN"
+	}
+	//获取总内存、当前内存
+	var memTotalStr string
+	var memNowStr string
+	memoryInfo, err := memory.Get()
+	if err == nil {
+		memTotalStr = strconv.FormatUint(memoryInfo.Total/1024/1024, 10)
+		memNowStr = strconv.FormatUint(memoryInfo.Used/1024/1024, 10)
+	} else {
+		memTotalStr = "UNKNOWN"
+		memNowStr = "UNKNOWN"
+	}
+	*status += fmt.Sprintf(`[STATUS] TIMENOW: %s , CWD: %s , MEMORY USAGE: %s/%s MB`, datenow, cwd, memNowStr, memTotalStr)
+}
+
+// 追加当前agent的todo清单状态（todo_write写入session state，按invocation branch读取，
+// 无清单时为空串不追加）。清单变化只影响尾部消息，不破坏前缀缓存；
+// 同轮内工具写入后下一跳请求即生效，上下文压缩掉历史后清单也不会丢。
+func injectTodoStatus(ctx context.Context, status *string) {
+	if todoStatus := functionTools.TodoStatusBar(ctx); todoStatus != "" {
+		if *status != "" {
+			*status += "\n"
+		}
+		*status += todoStatus
+	}
 }

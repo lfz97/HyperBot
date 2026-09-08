@@ -148,7 +148,6 @@ func (e *Engine) newRunner() {
 				llmagent.WithEnableContextCompaction(true),                                     // 启用 tool result 压缩（Pass 1+2）
 				llmagent.WithContextCompactionOversizedToolResultMaxTokens(8192),               // Pass 2: 超大 tool result 首尾保留截断
 				llmagent.WithEnableOnDemandSession(true),                                       // 按需加载被压缩的原始数据（session_load）
-				llmagent.WithPreloadMemory(10),                                                 // 预加载最近的10条记忆到上下文中，提升模型对近期事件的记忆能力
 				llmagent.WithEnableParallelTools(true),                                         //启用并行工具调用，提升工具调用效率
 			}
 			if (*(*e).Config_p).Model.APIType == "openai" {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -80,7 +81,7 @@ func injectTodoStatus(ctx context.Context, status *string) {
 	}
 }
 
-// 追加与当前对话相关的记忆：从消息队列尾部回溯抓取本轮 user prompt（头100字）与最近的
+// 根据当前agent推理进度匹配可能相关的记忆：从消息队列尾部回溯抓取本轮 user prompt（头100字）与最近的
 // assistant content（尾100字），拼成 query 去 memory service 检索，最多10条追加到状态栏。
 // 末尾是 user（新一轮）时 assistant 取的是上一轮的回复；末尾是 assistant/tool（ReAct 中途）
 // 时取的是本轮已产出的 assistant content。检索失败或无结果时静默不追加。
@@ -95,7 +96,11 @@ func injectMemoryStatus(ctx context.Context, messages []model.Message, status *s
 	}
 	userKey := agentmemory.UserKey{AppName: inv.Session.AppName, UserID: inv.Session.UserID}
 	entries, err := inv.MemoryService.SearchMemories(ctx, userKey, query,
-		agentmemory.WithSearchOptions(agentmemory.SearchOptions{Query: query, MaxResults: memoryMaxResults}))
+		agentmemory.WithSearchOptions(agentmemory.SearchOptions{
+			Query:               query,
+			MaxResults:          memoryMaxResults,
+			SimilarityThreshold: 0.03, //定义召回评分，默认是0.3，这个评分在这个场景下太苛刻，改成0.03
+		}))
 	if err != nil || len(entries) == 0 {
 		return
 	}
@@ -151,9 +156,7 @@ func buildMemoryQuery(messages []model.Message) string {
 		}
 	}
 	// assistantParts 是倒序收集的，翻转回时间顺序再截尾
-	for l, r := 0, len(assistantParts)-1; l < r; l, r = l+1, r-1 {
-		assistantParts[l], assistantParts[r] = assistantParts[r], assistantParts[l]
-	}
+	slices.Reverse(assistantParts)
 	assistantContent := strings.Join(assistantParts, "\n")
 
 	parts := []string{}

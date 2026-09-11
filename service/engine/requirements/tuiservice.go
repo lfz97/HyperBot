@@ -1,23 +1,19 @@
 package requirements
 
-import (
-	"context"
-)
-
 // 需要一个tui服务注入如下方法。用于tui和engine解耦
 type TuiService interface {
 	AddHelpItems(items []map[string]string)
 	ClearAppFuncTrigger()
 	PrintToMsgView(content string, clear bool)
-	ReadInputAreaPromptWithEnter()
+	ListenUserInput() chan string
+	SetAgentRunning(running bool)
+	ShowNotice(msg string)
+	ShowStartupBanner(infoLines []string)
+	SetTodoText(text string)
 	SetAppFuncTriggerWithEsc(f func())
 	ShowErrorInMsgViewAndExit(errmsg string)
 	ShowMsgAndExitNoTrigger(msg string)
-	ShowSuccessInMsgView(sussessmsg string)
 	ShowSuccessInMsgViewAndExit(sussessmsg string)
-	StatusBarScrollingTip(ctx context.Context, tip string, TColor string)
-	StatusBarUserTip(s string)
 	RenderMarkdown(in string) (string, error)
 	ResetHelpItems()
-	InputChannel() chan string
 }

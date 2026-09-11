@@ -3,7 +3,6 @@ package session
 import (
 	"HyperBot/service/engine/config"
 	"HyperBot/service/engine/models"
-	"HyperBot/service/engine/requirements"
 	"HyperBot/utils/pretty"
 	"embed"
 	"fmt"
@@ -37,7 +36,14 @@ func initSummarizerPrompts() {
 	userSummarizerPrompt = string(userSummarizerPrompt_b)
 }
 
-func NewSummarizer(m config.Model, tui requirements.TuiService) summary.SessionSummarizer {
+// msgPrinter 本包对 TUI 的全部需求：摘要生成后往消息区打一行提示。
+// 在消费方按需声明小接口，而不是依赖 requirements.TuiService 的 13 个方法——
+// 否则 TUI 门面上任何签名变动都会牵连到跟它无关的 session 包。
+type msgPrinter interface {
+	PrintToMsgView(content string, clear bool)
+}
+
+func NewSummarizer(m config.Model, tui msgPrinter) summary.SessionSummarizer {
 	initSummarizerPrompts()
 	//设置tiktoken计算方式，默认的方式太不准确了
 	counter, _ := tiktoken.New(m.Model)

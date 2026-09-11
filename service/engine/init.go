@@ -67,13 +67,18 @@ type Engine struct {
 	builtinTools        []tool.Tool         //内置function清单，启动时确定，不自动刷新
 	builtinToolsets     []tool.ToolSet      //内置工具集，启动时确定，不自动刷新
 
+	// errorStreak 当前连续错误次数，配合 engineCore.go 的 errorMaxTimes / errorSleepGap
+	// 实现自动重试的上限与退避。归零时机有四个，缺一不可：一轮成功(Continue)、/new、
+	// 用户 ESC 中断(Int)、用户在 agentRunIteratively 提交一条非空输入。
+	// 只有"自动重试链"内部不归零——那正是要计数的时候。
+	errorStreak int
+
 	tui requirements.TuiService
 }
 type Agentrunner struct {
 	Runner    runner.Runner
 	Stream    bool
 	SessionId string
-	RequestId string
 }
 
 func (e *Engine) preCheckLoad() {
@@ -150,22 +155,19 @@ func (e *Engine) newRunner() {
 				llmagent.WithEnableOnDemandSession(true),                                       // 按需加载被压缩的原始数据（session_load）
 				llmagent.WithEnableParallelTools(true),                                         //启用并行工具调用，提升工具调用效率
 			}
-			if (*(*e).Config_p).Model.APIType == "openai" {
-				Agent_p = agent.OpenaiAgent(
-					(*e).Agentname,
-					(*(*e).Config_p).Model,
-					opts,
-				)
-			} else if (*(*e).Config_p).Model.APIType == "anthropic" {
-				Agent_p = agent.AnthropicAgent(
-					(*e).Agentname,
-					(*(*e).Config_p).Model,
-					opts,
-				)
-
-			} else {
+			// APIType 校验只做一次。ConfigBaseAgent 内部也按同一字段选模型，但它对
+			// 未知类型是静默不设模型（agent 照样建得出来、跑起来才失败），所以这里
+			// 先挡住，给出可读的配置错误。
+			apiType := (*(*e).Config_p).Model.APIType
+			if apiType != "openai" && apiType != "anthropic" {
 				return nil, errors.New("不支持的API类型，请检查配置文件中的 Model.APIType 字段")
 			}
+			Agent_p = agent.ConfigBaseAgent(
+				(*e).Agentname,
+				(*(*e).Config_p).Model,
+				opts,
+				(*e).tui,
+			)
 			return Agent_p, nil
 		},
 		runner.WithSessionService((*e).SessionService_p),
@@ -386,7 +388,7 @@ func (e *Engine) checkSkillsFolder() {
 			if err != nil {
 				(*e).tui.ShowErrorInMsgViewAndExit(pretty.TErrorF("创建默认skills文件夹错误：%v", err))
 			}
-			(*e).tui.ShowSuccessInMsgView("检查到skills文件夹不存在，已创建默认skills文件夹")
+			(*e).tui.ShowNotice(pretty.TBarSuccess("skills folder not found, created default"))
 		} else {
 			(*e).tui.ShowErrorInMsgViewAndExit(pretty.TErrorF("检查skills文件夹错误：%v", err))
 		}
@@ -411,7 +413,7 @@ func (e *Engine) checkConfigFolder() {
 			if err != nil {
 				(*e).tui.ShowErrorInMsgViewAndExit(pretty.TErrorF("创建默认config文件夹错误：%v", err))
 			}
-			(*e).tui.ShowSuccessInMsgView("检查到config文件夹不存在，已创建默认config文件夹")
+			(*e).tui.ShowNotice(pretty.TBarSuccess("config folder not found, created default"))
 		} else {
 			(*e).tui.ShowErrorInMsgViewAndExit(pretty.TErrorF("检查config文件夹错误：%v", err))
 		}

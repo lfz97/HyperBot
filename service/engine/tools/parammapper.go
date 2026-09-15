@@ -2,6 +2,7 @@ package tools
 
 import (
 	functionTools "HyperBot/service/engine/tools/functions"
+	"HyperBot/service/engine/tools/toolsets/cronagent"
 	localexec "HyperBot/service/engine/tools/toolsets/localexec"
 )
 
@@ -24,5 +25,6 @@ func GetParamMapper() *Mappers {
 	mappers_p := &Mappers{}
 	functionTools.InjectMapper(mappers_p)
 	localexec.InjectMapper(mappers_p)
+	cronagent.InjectMapper(mappers_p)
 	return mappers_p
 }

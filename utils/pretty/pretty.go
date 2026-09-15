@@ -555,6 +555,10 @@ func TBarCancelled() string { return TColoredText(TColorYellow, "session cancell
 // TBarSuccess bar 版成功提示
 func TBarSuccess(text string) string { return TColoredText(TColorGreen, text) }
 
+// TBarWarning bar 版警告提示。用橙色与 TBarCancelled 的黄色区分开，
+// 供启动期非致命问题（如配置文件被隔离）使用。
+func TBarWarning(text string) string { return TColoredText(TColorOrange, text) }
+
 // ── 对话内容 ─────────────────────────────────
 
 // TUserInput TUI 用户输入回显

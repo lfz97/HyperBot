@@ -8,6 +8,7 @@ import (
 	s "HyperBot/service/engine/session"
 	functionTools "HyperBot/service/engine/tools/functions"
 	"HyperBot/service/engine/tools/toolsets"
+	"HyperBot/service/engine/tools/toolsets/cronagent"
 	"HyperBot/service/engine/tools/toolsets/localexec"
 	"HyperBot/utils/pretty"
 	"context"
@@ -154,6 +155,7 @@ func (e *Engine) newRunner() {
 				llmagent.WithContextCompactionOversizedToolResultMaxTokens(8192),               // Pass 2: 超大 tool result 首尾保留截断
 				llmagent.WithEnableOnDemandSession(true),                                       // 按需加载被压缩的原始数据（session_load）
 				llmagent.WithEnableParallelTools(true),                                         //启用并行工具调用，提升工具调用效率
+				agent.SetBeforeModelStatusCallback((*e).tui),                                   //追加beforeModel状态栏
 			}
 			// APIType 校验只做一次。ConfigBaseAgent 内部也按同一字段选模型，但它对
 			// 未知类型是静默不设模型（agent 照样建得出来、跑起来才失败），所以这里
@@ -166,7 +168,6 @@ func (e *Engine) newRunner() {
 				(*e).Agentname,
 				(*(*e).Config_p).Model,
 				opts,
-				(*e).tui,
 			)
 			return Agent_p, nil
 		},
@@ -231,6 +232,25 @@ func (e *Engine) refreshMCPFromConfig() {
 }
 func (e *Engine) loadBuiltinToolsets() {
 	(*e).builtinToolsets = append((*e).builtinToolsets, localexec.LocalExec())
+
+	// 用独立的 agent 名，避免遥测里 cron 的自主运行和主对话混在同一个 (app, agent) 对下
+	cronToolset, err := cronagent.CronAgent(
+		(*e).Agentname+"_cron",
+		(*e).Config_p,
+		(*e).Systemprompt,
+		(*e).SkillFolderPath,
+		(*e).ConfigFolderPath,
+	)
+	if err != nil {
+		(*e).tui.ShowErrorInMsgViewAndExit(pretty.TErrorF("初始化cron agent错误: %v", err))
+		return
+	}
+	// 存档加载失败是非致命的：坏文件已被挪到 .fix<时间戳>，空集合可以正常启动
+	if loadErr := cronToolset.LoadError(); loadErr != nil {
+		stdlog.Printf("cron agent 存档加载失败: %v", loadErr)
+		(*e).tui.ShowNotice(pretty.TBarWarning("cron agent config broken, moved to .fix"))
+	}
+	(*e).builtinToolsets = append((*e).builtinToolsets, cronToolset)
 }
 func (e *Engine) loadBuiltinTools() {
 	fileopstools := functionTools.GetFileOperationsTools()

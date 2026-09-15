@@ -55,9 +55,7 @@ func NewSummarizer(m config.Model, tui msgPrinter) summary.SessionSummarizer {
 	} else if m.APIType == "anthropic" {
 		summarizerModel = models.Anthropic(m)
 	}
-	// ── 创建 summarizer阈值 ───────────────
-	sum := summary.NewSummarizer(
-		summarizerModel,
+	opts := []summary.Option{
 		summary.WithChecksAny( // 任一条件满足即触发
 			summary.CheckTokenThreshold(int(CheckTokenThresholdPercent*float64(m.ContextWindow))), // 新增 n 个 token 后触发
 			summary.CheckTimeThreshold(10*time.Minute),                                            //n 分钟无活动
@@ -85,11 +83,18 @@ func NewSummarizer(m config.Model, tui msgPrinter) summary.SessionSummarizer {
 			}
 			return fmt.Sprintf("[%s returned: %s]", msg.ToolName, content)
 		}),
-		summary.WithPostSummaryHook(func(s *summary.PostSummaryHookContext) error {
+	}
+	if tui != nil {
+		opts = append(opts, summary.WithPostSummaryHook(func(s *summary.PostSummaryHookContext) error {
 			cleanSummary := reThink.ReplaceAllString(s.Summary, "") //将摘要内容中的<think>...</think>部分去掉
 			tui.PrintToMsgView(pretty.TColoredText(pretty.TColorGreen, fmt.Sprintf("\n->已生成摘要：\n%v\n", cleanSummary)), false)
 			return nil
-		}),
+		}))
+	}
+	// ── 创建 summarizer阈值 ───────────────
+	sum := summary.NewSummarizer(
+		summarizerModel,
+		opts...,
 	)
 	return sum
 

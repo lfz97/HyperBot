@@ -6,7 +6,7 @@ import (
 	"trpc.group/trpc-go/trpc-agent-go/agent/llmagent"
 )
 
-func ConfigBaseAgent(agentName string, m config.Model, opts []llmagent.Option, sink todoTextSink) *llmagent.LLMAgent {
+func ConfigBaseAgent(agentName string, m config.Model, opts []llmagent.Option) *llmagent.LLMAgent {
 
 	if m.APIType == "openai" {
 		OpenaiModel_p := models.Openai(m)
@@ -15,8 +15,6 @@ func ConfigBaseAgent(agentName string, m config.Model, opts []llmagent.Option, s
 		AnthropicModel_p := models.Anthropic(m)
 		opts = append(opts, llmagent.WithModel(AnthropicModel_p))
 	}
-
-	opts = append(opts, setBeforeModelStatusCallback(sink)) //追加beforeModel状态栏
 
 	agent_p := llmagent.New(agentName,
 		opts...,

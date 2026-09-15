@@ -24,11 +24,12 @@ const (
 	memoryEntryMaxRunes = 200
 )
 
-// todoTextSink 接收渲染好的 todo 文本，供 TUI 的 TodoBar 显示。
+// Display 是 agent 把渲染好的文本推给展示端的出口，当前只有 todo 清单（供 TUI 的 TodoBar 显示）。
 // 在 agent 包内声明（1 个方法），避免把 requirements.TuiService 这个 13 方法的
 // 胖接口渗进 agent 包——agent 只需要"能把文本推给 UI"这一个能力。
+// 按能力命名而非按当前唯一调用方命名（不叫 TodoTextSink）：以后加别的展示项直接扩方法即可，不用改名。
 // 非交互调用方（如将来的 schedule agent）传 nil：仍然注入 prompt，只是不推 UI。
-type todoTextSink interface {
+type Display interface {
 	SetTodoText(text string)
 }
 
@@ -38,13 +39,13 @@ type todoTextSink interface {
 // 使用本功能必须关闭框架的 system 前置重排（openai.WithOptimizeForCache），否则
 // 尾部状态栏会被框架挪回头部、缓存收益失效；关闭位置：service/engine/models/openai.go。
 // 状态栏不进 session（仅存在于当次请求副本），不污染摘要/上下文压缩。
-func setBeforeModelStatusCallback(sink todoTextSink) llmagent.Option {
+func SetBeforeModelStatusCallback(display Display) llmagent.Option {
 
 	modelCallbacks := model.NewCallbacks().RegisterBeforeModel(
 		func(ctx context.Context, args *model.BeforeModelArgs) (*model.BeforeModelResult, error) {
 			var status string
 			injectBaseStatus(ctx, &status)
-			injectTodoStatus(ctx, sink, &status)
+			injectTodoStatus(ctx, display, &status)
 			injectMemoryStatus(ctx, args.Request.Messages, &status)
 
 			args.Request.Messages = append(args.Request.Messages, model.NewSystemMessage(status)) //在末尾追加状态栏
@@ -81,16 +82,16 @@ func injectBaseStatus(_ context.Context, status *string) {
 // 无清单时为空串不追加）。清单变化只影响尾部消息，不破坏前缀缓存；
 // 同轮内工具写入后下一跳请求即生效，上下文压缩掉历史后清单也不会丢。
 //
-// 同一份文本推两个去处：注入 prompt 的 [STATUS] 尾部，以及推给 sink 让 TodoBar 显示。
+// 同一份文本推两个去处：注入 prompt 的 [STATUS] 尾部，以及推给 display 让 TodoBar 显示。
 // 因此 todo.go 不需要任何改动，也不需要渲染两份。
 //
-// ⚠️ 空串也要推给 sink：清单做完后 TodoStatusBar 返回 ""（todo_write 在全 completed
+// ⚠️ 空串也要推给 display：清单做完后 TodoStatusBar 返回 ""（todo_write 在全 completed
 // 时自动清空清单），TodoBar 靠这个空串把高度 ResizeItem 回 0。只在非空时推的话，
 // bar 会永远挂着最后一版内容、高度也收不回来。
-func injectTodoStatus(ctx context.Context, sink todoTextSink, status *string) {
+func injectTodoStatus(ctx context.Context, display Display, status *string) {
 	todoStatus := functionTools.TodoStatusBar(ctx)
-	if sink != nil {
-		sink.SetTodoText(todoStatus)
+	if display != nil {
+		display.SetTodoText(todoStatus)
 	}
 	if todoStatus != "" {
 		if *status != "" {

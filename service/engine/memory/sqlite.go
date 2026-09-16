@@ -25,7 +25,12 @@ func NewSQLiteMemoryService(m config.Model, dbPath string) (*memorysqlite.Servic
 		extractorModel = models.Anthropic(m)
 	}
 
-	dsn := dbPath + "?_busy_timeout=5000"
+	// WAL：读写并发。每轮 BeforeModel 都会全表扫描召回记忆，rollback 模式下这个长读会挡住写、顶穿 busy_timeout。
+	// _txlock=immediate 不可删：框架 rotateMemory 是"先 SELECT 再 UPDATE"的延迟事务，中途升级撞锁时
+	// SQLite 直接返回 BUSY 且不走 busy handler，busy_timeout 救不了；只有让 BeginTx 发 BEGIN IMMEDIATE、
+	// 把写锁提到事务开头，这个错误才变成可等待的。（WAL 已隐含 synchronous=NORMAL，无需重复指定）
+	// 以上参数由 mattn/go-sqlite3 在每条新连接建立时自动 PRAGMA，框架不参与。
+	dsn := dbPath + "?_journal_mode=WAL&_busy_timeout=15000&_txlock=immediate"
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite db: %w", err)

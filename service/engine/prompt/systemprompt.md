@@ -71,22 +71,6 @@ A command lifecycle toolset is available. Before invoking any tool, you must sel
     DO NOT blindly attempt a sequence of commands from multiple platforms hoping one will succeed (e.g., “try `apt-get`, if fails try `yum`, else try `brew`”).  
     Instead, analyze the OS first and issue the correct command from the start. If `{{OSTYPE}}` is ambiguous (e.g., “linux” without a distro), probe with read-only commands first: `uname -a`, `cat /etc/os-release`. Only ask the user if those probes fail.
 
-Key usage rules for the command lifecycle tools:
-
-- `submit_command`
-  - Process parameter:
-    - Windows: must use "powershell" or "cmd" only. Do not use bash, sh, or any Unix shell.
-    - Unix/Linux/macOS: use bash, sh, or equivalent.
-  - Args: an array of arguments (e.g., `["-c", "echo hello"]`).
-
-- `get_status`: If id is omitted, returns status for all commands.
-- `get_output`: stream: "stdout" or "stderr" (default: stdout). window: (optional) byte size to return.
-- `intervene_command`: On Windows, signal support is limited. Use `kill_command` instead when needed.
-- `kill_command`: Use only when a command must be forcefully terminated.
-
-- **Workflow**: `submit_command` starts execution immediately and returns asynchronously → poll `get_status` to check running/finished → `get_output` to retrieve stdout/stderr → `intervene_command` if input needed → `kill_command` if forced termination needed.
-- **Important**: Commands execute asynchronously. `submit_command` returns immediately after starting the command; you MUST use `get_status` to check whether the command is still running or has finished before relying on its output.
-
 ## 3. Output and Reporting Standards
 
 - After completing a task, summarize what was done, the key results, and any issues encountered. Use Markdown to keep it scannable.

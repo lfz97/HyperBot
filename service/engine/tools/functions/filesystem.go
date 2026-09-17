@@ -47,7 +47,7 @@ type fileInfo struct {
 }
 
 func LS(ctx context.Context, req struct {
-	Path string `json:"Path" jsonschema:"description:要列出文件的目录路径。默认为当前目录。"`
+	Path string `json:"Path" jsonschema:"description=Path of the directory to list. Defaults to the current directory."`
 }) (map[string]string, error) {
 	if req.Path == "" {
 		req.Path = "."
@@ -82,7 +82,7 @@ func LS(ctx context.Context, req struct {
 
 // 切换当前工作目录
 func CD(ctx context.Context, req struct {
-	Path string `json:"Path" jsonschema:"description:要切换到的目录路径。"`
+	Path string `json:"Path" jsonschema:"description=Path of the directory to change into."`
 }) (map[string]string, error) {
 	if req.Path == "" {
 		req.Path = "."
@@ -102,8 +102,8 @@ func CD(ctx context.Context, req struct {
 
 // 创建目录
 func Mkdir(ctx context.Context, req struct {
-	Path    string `json:"Path" jsonschema:"description:要创建的目录路径。"`
-	Parents bool   `json:"Parents" jsonschema:"description:是否自动创建父目录。默认为false。"`
+	Path    string `json:"Path" jsonschema:"description=Path of the directory to create."`
+	Parents bool   `json:"Parents" jsonschema:"description=Create parent directories automatically. Defaults to false."`
 }) (map[string]string, error) {
 	if req.Path == "" {
 		return nil, errors.New("`path` can't be empty!")
@@ -126,8 +126,8 @@ func Mkdir(ctx context.Context, req struct {
 
 // 复制文件或目录
 func Copy(ctx context.Context, req struct {
-	Src string `json:"Src" jsonschema:"description:源文件或目录路径。"`
-	Dst string `json:"Dst" jsonschema:"description:目标文件或目录路径。"`
+	Src string `json:"Src" jsonschema:"description=Path of the source file or directory."`
+	Dst string `json:"Dst" jsonschema:"description=Path of the destination file or directory."`
 }) (map[string]string, error) {
 	if req.Src == "" || req.Dst == "" {
 		return nil, errors.New("`src` and `dst` can't be empty!")
@@ -151,8 +151,8 @@ func Copy(ctx context.Context, req struct {
 
 // 移动或重命名文件或目录
 func MV(ctx context.Context, req struct {
-	OldPath string `json:"OldPath" jsonschema:"description:要移动或重命名的文件或目录的原路径。"`
-	NewPath string `json:"NewPath" jsonschema:"description:要移动或重命名的文件或目录的新路径。"`
+	OldPath string `json:"OldPath" jsonschema:"description=Original path of the file or directory to move or rename."`
+	NewPath string `json:"NewPath" jsonschema:"description=New path of the file or directory."`
 }) (map[string]string, error) {
 	if req.OldPath == "" || req.NewPath == "" {
 		return nil, errors.New("`oldPath` and `newPath` can't be empty!")
@@ -185,9 +185,9 @@ func MV(ctx context.Context, req struct {
 }
 
 func Glob(ctx context.Context, req struct {
-	Regex string `json:"Regex" jsonschema:"description:要搜索的正则表达式。"`
-	Root  string `json:"Root" jsonschema:"description:要搜索的起始路径。默认为当前目录。"`
-	Depth int    `json:"Depth" jsonschema:"description:搜索深度，默认为0表示同目录，如果传入-1，则无深度限制。"`
+	Regex string `json:"Regex" jsonschema:"description=Regular expression matched against file names."`
+	Root  string `json:"Root" jsonschema:"description=Path to start searching from. Defaults to the current directory."`
+	Depth int    `json:"Depth" jsonschema:"description=Search depth. Defaults to 0 which only covers the same directory; pass -1 for unlimited depth."`
 }) (map[string]string, error) {
 	if req.Depth < -1 {
 		return nil, errors.New("`depth` must be -1 (for unlimited) or a non-negative integer")
@@ -243,37 +243,37 @@ func GetFileSystemTools() []tool.Tool {
 	pwdtool := function.NewFunctionTool(
 		PWD,
 		function.WithName(pwdToolName),
-		function.WithDescription("获取当前工作目录"),
+		function.WithDescription("Get the current working directory."),
 	)
 	cdtool := function.NewFunctionTool(
 		CD,
 		function.WithName(cdToolName),
-		function.WithDescription("切换当前工作目录"),
+		function.WithDescription("Change the current working directory."),
 	)
 	lstool := function.NewFunctionTool(
 		LS,
 		function.WithName(lsToolName),
-		function.WithDescription("列出指定目录下的文件和子目录"),
+		function.WithDescription("List the files and subdirectories in the specified directory."),
 	)
 	mkdirTool := function.NewFunctionTool(
 		Mkdir,
 		function.WithName(mkdirToolName),
-		function.WithDescription("创建目录，支持递归创建父目录"),
+		function.WithDescription("Create a directory, optionally creating parent directories recursively."),
 	)
 	copyTool := function.NewFunctionTool(
 		Copy,
 		function.WithName(cpToolName),
-		function.WithDescription("复制文件或目录，支持跨设备复制"),
+		function.WithDescription("Copy a file or directory, including across devices."),
 	)
 	mvTool := function.NewFunctionTool(
 		MV,
 		function.WithName(mvToolName),
-		function.WithDescription("移动或重命名文件或目录，支持跨设备移动"),
+		function.WithDescription("Move or rename a file or directory, including across devices."),
 	)
 	globTool := function.NewFunctionTool(
 		Glob,
 		function.WithName(globToolName),
-		function.WithDescription("按正则表达式搜索文件名，支持指定根目录和搜索深度"),
+		function.WithDescription("Search for file names by regular expression, with a configurable root directory and search depth."),
 	)
 	return []tool.Tool{pwdtool, cdtool, lstool, mkdirTool, copyTool, mvTool, globTool}
 }

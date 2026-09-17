@@ -13,8 +13,8 @@ func getTools(m *manager) []tool.Tool {
 
 	CreateAgentTool := function.NewFunctionTool(
 		func(ctx context.Context, req struct {
-			Cronexpr string `json:"Cronexpr" jsonschema:"description:Agent执行的周期cron表达式。支持5字段标准Unix cron（分 时 日 月 周，如 0 9 * * * 表示每天9点整），也支持6字段带秒（秒 分 时 日 月 周，如 */30 * * * * * 表示每30秒），以及 @every 5m 这类描述符"`
-			Prompt   string `json:"Prompt" jsonschema:"description:对此agent下达的指令"`
+			Cronexpr string `json:"Cronexpr" jsonschema:"description=Cron expression defining how often the agent runs. Supports 5-field standard Unix cron (minute hour day-of-month month day-of-week; 0 9 * * * means 09:00 every day); 6-field cron with seconds (second minute hour day-of-month month day-of-week; */30 * * * * * means every 30 seconds); and descriptors such as @every 5m."`
+			Prompt   string `json:"Prompt" jsonschema:"description=The instruction given to this agent."`
 		}) (map[string]string, error) {
 			id, err := m.Create(req.Cronexpr, req.Prompt)
 			if err != nil {
@@ -25,12 +25,12 @@ func getTools(m *manager) []tool.Tool {
 			}, nil
 		},
 		function.WithName(createAgentToolName),
-		function.WithDescription("注册并启动一个Cron Agent，它可以按照cron表达式周期执行，返回agent唯一id"),
+		function.WithDescription("Register and start a cron agent that runs periodically according to a cron expression; returns the agent's unique ID."),
 	)
 
 	StartAgentTool := function.NewFunctionTool(
 		func(ctx context.Context, req struct {
-			Id string `json:"Id" jsonschema:"description:agent唯一id"`
+			Id string `json:"Id" jsonschema:"description=Unique agent ID."`
 		}) (string, error) {
 			if err := m.Start(req.Id); err != nil {
 				return "", fmt.Errorf("agent id %s started error: %w", req.Id, err)
@@ -38,12 +38,12 @@ func getTools(m *manager) []tool.Tool {
 			return fmt.Sprintf("agent id %s started", req.Id), nil
 		},
 		function.WithName(startAgentToolName),
-		function.WithDescription("启动一个处于暂停状态的agent；agent已在运行时调用无副作用"),
+		function.WithDescription("Start an agent that is currently paused; calling it on an already running agent has no side effects."),
 	)
 
 	StopAgentTool := function.NewFunctionTool(
 		func(ctx context.Context, req struct {
-			Id string `json:"Id" jsonschema:"description:agent唯一id"`
+			Id string `json:"Id" jsonschema:"description=Unique agent ID."`
 		}) (string, error) {
 			if err := m.Stop(req.Id); err != nil {
 				return "", fmt.Errorf("agent id %s stopped error: %w", req.Id, err)
@@ -51,12 +51,12 @@ func getTools(m *manager) []tool.Tool {
 			return fmt.Sprintf("agent id %s stopped", req.Id), nil
 		},
 		function.WithName(stopAgentToolName),
-		function.WithDescription("暂停一个处于运行状态的agent，并终止它当前正在执行的那一轮；agent已暂停时调用无副作用"),
+		function.WithDescription("Pause a running agent and abort the round it is currently executing; calling it on an already paused agent has no side effects."),
 	)
 
 	RemoveAgentTool := function.NewFunctionTool(
 		func(ctx context.Context, req struct {
-			Id string `json:"Id" jsonschema:"description:agent唯一id"`
+			Id string `json:"Id" jsonschema:"description=Unique agent ID."`
 		}) (string, error) {
 			if err := m.Remove(req.Id); err != nil {
 				return "", fmt.Errorf("agent id %s removed error: %w", req.Id, err)
@@ -64,12 +64,12 @@ func getTools(m *manager) []tool.Tool {
 			return fmt.Sprintf("agent id %s removed", req.Id), nil
 		},
 		function.WithName(removeAgentToolName),
-		function.WithDescription("移除一个agent，无需先暂停"),
+		function.WithDescription("Remove an agent; it does not need to be paused first."),
 	)
 
 	GetAgentStatusTool := function.NewFunctionTool(
 		func(ctx context.Context, req struct {
-			Id string `json:"Id" jsonschema:"description:agent唯一id"`
+			Id string `json:"Id" jsonschema:"description=Unique agent ID."`
 		}) (string, error) {
 			status, err := m.Status(req.Id)
 			if err != nil {
@@ -78,7 +78,7 @@ func getTools(m *manager) []tool.Tool {
 			return status, nil
 		},
 		function.WithName(getAgentStatusToolName),
-		function.WithDescription("获取一个cron agent的状态"),
+		function.WithDescription("Get the status of a single cron agent."),
 	)
 	GetAllStatusTool := function.NewFunctionTool(
 		func(ctx context.Context, req struct{}) (string, error) {
@@ -89,12 +89,12 @@ func getTools(m *manager) []tool.Tool {
 			return status, nil
 		},
 		function.WithName(getAllStatusToolName),
-		function.WithDescription("获取全部cron agent的状态"),
+		function.WithDescription("Get the status of all cron agents."),
 	)
 	GetAgentOutputTool := function.NewFunctionTool(
 		func(ctx context.Context, req struct {
-			Id     string `json:"Id" jsonschema:"description:agent唯一id"`
-			Window int    `json:"Window" jsonschema:"description:可选：返回末尾 Window 个字符；默认0表示返回全部输出"`
+			Id     string `json:"Id" jsonschema:"description=Unique agent ID."`
+			Window int    `json:"Window" jsonschema:"description=Optional: return only the last Window characters. Defaults to 0 which returns the entire output."`
 		}) (string, error) {
 			result, err := m.Output(req.Id, req.Window)
 			if err != nil {
@@ -103,7 +103,7 @@ func getTools(m *manager) []tool.Tool {
 			return result, nil
 		},
 		function.WithName(getAgentOutputToolName),
-		function.WithDescription("获取指定agent最近一轮执行的输出内容"),
+		function.WithDescription("Get the output of the specified agent's most recent run."),
 	)
 	ClearAllTool := function.NewFunctionTool(
 		func(ctx context.Context, req struct{}) (string, error) {
@@ -111,10 +111,10 @@ func getTools(m *manager) []tool.Tool {
 			if err != nil {
 				return "", fmt.Errorf("clear all agents error: %w", err)
 			}
-			return fmt.Sprintf("已停止并移除全部 %d 个 cron agent，持久化存档已清空", n), nil
+			return fmt.Sprintf("stopped and removed all %d cron agents; the persisted archive has been cleared", n), nil
 		},
 		function.WithName(clearAllToolName),
-		function.WithDescription("停止并移除全部 cron agent，同时清空持久化存档。此操作不可撤销：重启后这些任务不会恢复。只想停掉单个任务请用 stop 或 remove"),
+		function.WithDescription("Stop and remove all cron agents and clear the persisted archive. This cannot be undone: these tasks will not come back after a restart. Use stop or remove instead if you only want to stop a single task."),
 	)
 	toolSets = append(toolSets, CreateAgentTool, StartAgentTool, StopAgentTool, RemoveAgentTool, GetAgentStatusTool, GetAllStatusTool, GetAgentOutputTool, ClearAllTool)
 	return toolSets

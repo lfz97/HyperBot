@@ -21,7 +21,7 @@ func GetDateTools() []tool.Tool {
 	dtool := function.NewFunctionTool(
 		DateNow,
 		function.WithName(dateToolName),
-		function.WithDescription("获取当前日期和时间，格式为YYYY-MM-DD HH:MM:SS"),
+		function.WithDescription("Get the current date and time, formatted as YYYY-MM-DD HH:MM:SS."),
 	)
 	return []tool.Tool{dtool}
 }

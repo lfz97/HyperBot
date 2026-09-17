@@ -93,14 +93,18 @@ cmd/main.go → boot.Boot() → service/engine + service/tui
 - Reasoning content: yellow dim text (suppressible via `show_reasoning: false`)
 - Tool calls/results: compact single-line via `TToolCompact` — green `●` dot + orange tool name + dim gray `args → result_summary`. Short results (≤60 chars, single-line) inline; long results show stats (`3 lines, 12.5KB`).
 
-**LocalExec ToolSet**: Built-in 5-tool system for command lifecycle:
+**LocalExec ToolSet**: Built-in 5-tool system for command lifecycle（框架加前缀后 LLM 看到的实际名是 `LocalExec_<tool>`）:
 | Tool | Purpose |
 |------|---------|
-| `submit_command` | Submit command, get command ID |
-| `get_status` | Query status; `wait_seconds` blocks until done or timeout (每秒轮询，完成即返回) |
-| `get_output` | Get stdout/stderr with window limits |
-| `intervene_command` | Write to stdin or send signals |
-| `kill_command` | Force terminate |
+| `run` | Execute a command; blocks up to 20s — returns Status/ExitCode/Output inline if it finishes, otherwise switches to background and returns the command ID |
+| `status` | Query status; `WaitSeconds` blocks until done or timeout (每秒轮询，完成即返回) |
+| `output` | Get stdout or stderr of a command |
+| `intervene` | Write to stdin or send signals |
+| `kill` | Force terminate |
+
+`run` 与 `output` 的输出体量不可控，超过 `inlineMaxBytes`（64KB，定义在 `localexec/tooloutput.go`）就整份落盘到 `<exeDir>/output/tool-outputs/`，只内联头部 2KB 预览，并在结果里附 `OutputFile`/`TotalBytes`/`Note`，引导 agent 用 `ReadFile`（靠 `NextOffset` 分页）或 `SearchInFile` 取用完整内容。落盘是「成功交付」而不是失败，所以走正常返回值、不走 error——否则调用方的 `if err != nil` 会把整个结果 map 连同文件路径一起丢掉。落盘文件名是 `<id>.<创建时间戳>.<seq>.output`（`20060102-150405` + 进程内自增序号）：时间戳供 GC 判新旧——落盘文件是 `deliver` 一次性写完的快照、写完不再改动，所以创建时间就是全部信息，不必 stat mtime；seq 兜住同一秒内的多次落盘，因为同一 job 会被反复取用（run 落一次、output 查 stdout/stderr 又各落一次），只用 id 命名会让后一次悄悄覆盖前一次。GC 对解析不出时间戳的名字一律跳过，宁可漏删不可误删。这套机制只有 localexec 用，所以是包内私有而非独立包；`functions/file.go` 只需要其中的 rune 边界裁剪，自带一份 `trimPartialRune`。
+
+工具用法不写进 `systemprompt.md`——参数形状与跨工具引用都由 `tools.go` 的 `function.WithDescription` 和 jsonschema tag 承载（描述跟着工具走，cronagent 复用时也带得上）。prompt 的 `## 2. Command Execution` 只保留"该写什么命令"（OS-aware 选型），不讲"该调哪个工具"。
 
 **MCP Integration**: Configured via `hyperbot.yaml` with support for `sse` and `streamable_http` transport types. Also supports stdin-based MCP via `stdin_mcp` config.
 

@@ -69,9 +69,10 @@ type Engine struct {
 	builtinToolsets     []tool.ToolSet      //内置工具集，启动时确定，不自动刷新
 
 	// errorStreak 当前连续错误次数，配合 engineCore.go 的 errorMaxTimes / errorSleepGap
-	// 实现自动重试的上限与退避。归零时机有四个，缺一不可：一轮成功(Continue)、/new、
-	// 用户 ESC 中断(Int)、用户在 agentRunIteratively 提交一条非空输入。
-	// 只有"自动重试链"内部不归零——那正是要计数的时候。
+	// 实现自动重试的上限与退避。归零时机：收到任何带 Choices 的 Response 事件(第一个
+	// token 即归，语义见 engineRun.go 的注释)、/new、用户 ESC 中断(同在 agentRunOnce 归)、
+	// AgentStart 的 else 分支兜底。手动提交输入不归零。
+	// 只有"零输出的自动重试链"内部不归零——那正是要计数的时候。
 	errorStreak int
 
 	tui requirements.TuiService

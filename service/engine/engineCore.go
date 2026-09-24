@@ -50,8 +50,8 @@ func (e *Engine) AgentStart() {
 			(*e).tui.ShowMsgAndExitNoTrigger(pretty.TExit("对话已结束，感谢使用！后会有期！"))
 
 		} else if (*EndTurn_p).Code == New { //用户开始新对话，重置 SessionID 与错误计数，更新MsgContext为新对话的初始状态
-			// /new 在 agentRunIteratively 的输入分支里是提前 return 的，走不到"用户提交
-			// 非空输入"那处归零，所以必须在这里单独归
+			// /new 在 agentRunIteratively 的输入分支里是提前 return 的，跑不到
+			// agentRunOnce 里的归零点，所以必须在这里单独归
 			(*e).errorStreak = 0
 			e.newSessionID()
 			MsgContext = turnInfo{
@@ -67,8 +67,9 @@ func (e *Engine) AgentStart() {
 				// ① Code 保持 Error —— Int 的语义是"用户按了 ESC 中断"，与事实不符，
 				//    不能为了蹭"回到输入循环"这个副作用而填一个假状态码。真正让下一轮
 				//    等用户输入的是 agentRunIteratively 里的 errorStreak < errorMaxTimes 判定。
-				// ② errorStreak 不归零 —— 归零会让下一轮重新满足自动重试条件，无限循环照旧。
-				//    它只在成功/新对话/中断/用户手动提交输入时归零。
+				// ② errorStreak 不归零 —— 归零会让下一轮重新满足自动重试条件。它只在
+				//    收到 Response 事件（配置层健康的证据，见 agentRunOnce 注释）/
+				//    新对话/中断时归零；耗尽因此只可能由零输出失败触发。
 				// ③ 整个复用 *EndTurn_p，不新造 literal —— 新建会静默丢掉 Reason 与
 				//    PartialOutput（TerminalError 时后者是真实累积到的部分输出）。
 				(*e).tui.PrintToMsgView(pretty.TErrorF("连续 %d 次失败，已停止自动重试。请检查网络/配置后重新输入。", errorMaxTimes), false)
@@ -82,8 +83,9 @@ func (e *Engine) AgentStart() {
 			MsgContext = *EndTurn_p
 
 		} else { //其他情况（Continue 正常结束 / Int 用户中断），错误链断开、计数归零；继续使用当前的 SessionID 与 UserID，更新MsgContext为当前对话的结束状态，供下一轮对话使用
-			// 归零在这里覆盖了两个时机：Continue（自动重试链里第 2 次尝试成功时靠它收口，
-			// 否则 streak 会留着，下次失败只剩 2 次预算）与 Int（ESC 打断，人已介入）
+			// 归零主力在 agentRunOnce（Ctx.Done / Response 事件两个第一现场分支）；这里
+			// 是对 Continue / Int 的兜底——万一事件流没走完就关闭，Continue 仍能在这里
+			// 断开错误链
 			(*e).errorStreak = 0
 			MsgContext = *EndTurn_p
 			continue

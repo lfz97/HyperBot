@@ -287,7 +287,7 @@ func (e *Engine) loadSkills() {
 	(*e).tui.AddHelpItems(itms)
 }
 func (e *Engine) initSqliteMemoryService() {
-	service, err := m.NewSQLiteMemoryService(((*e).Config_p).Model, filepath.Join((*e).ConfigFolderPath, memoryDBFileName))
+	service, err := m.NewSQLiteMemoryService(filepath.Join((*e).ConfigFolderPath, memoryDBFileName))
 	if err != nil {
 		(*e).tui.ShowErrorInMsgViewAndExit(pretty.TErrorF("初始化sqlite记忆服务错误: %v", err))
 	}

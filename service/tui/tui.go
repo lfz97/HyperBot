@@ -11,80 +11,61 @@ import (
 )
 
 const (
-	// tickInterval staging → 元素的物化心跳。沿用 tview 版 drawLoop 的 30ms：
-	// 流式输出期间框架自身没有重绘事件源，节流全靠这个 tick。
-	tickInterval = 30 * time.Millisecond
-	// spinnerTicks 每 3 个 tick（90ms）推进一帧 spinner，10 帧约 0.9s 一圈。
-	spinnerTicks = 3
+	// spinnerInterval spinner 推进周期（约 0.9s 一圈）。同时兼任通知 TTL 的检查时钟。
+	spinnerInterval = 90 * time.Millisecond
 	// noticeTTL 临时通知停留时长，到期回落兜底提示。
 	noticeTTL = 4 * time.Second
-	// indicatorWidth 输入行左侧指示器宽度。
-	indicatorWidth = 2
-	// minMessageRows 矮终端下消息区至少保留的行数（钳制清单栏高度）。
-	minMessageRows = 3
-	// 两个行池的大小：todo 每任务一行、帮助每条目一行。
-	todoLinePool = 24
-	helpRowPool  = 32
+	// exitFlushDelay 无按键退出前，保证退出消息至少渲染过几帧。
+	exitFlushDelay = 200 * time.Millisecond
 )
 
 var spinnerFrames = []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
 
-// NoticeBar 常驻兜底提示（保留 tview 标签形式，由 tagbridge 解析上色）。
+// NoticeBar 常驻兜底提示（tview 标签形式，由 tagbridge 解析上色）。
 const (
 	hintIdle    = `[gray::d]ctrl+k for help[-:-:-]`
-	hintRunning = `[gray::d]esc to interrupt · ctrl+k for help[-:-:-]`
+	hintRunning = `[gray::d]ctrl+c/esc to interrupt · ctrl+k for help[-:-:-]`
 )
 
-// segKind 消息段类型。PrintToMsgView 的连续调用会合并进最近的 segRaw 段
-// （对应 tview 版"同一个 TextView 缓冲"的语义），ReplaceTail 把尾段原位转成 markdown。
+// segKind 消息段类型。连续的 PrintToMsgView 调用会合并进最近的 segText 段
+// （对应 tview 版"同一个 TextView 缓冲"的语义），ReplaceTail 把尾段转成 markdown。
 type segKind int
 
 const (
-	segRaw      segKind = iota // 流式原文（纯文本，随 delta 增量增长）
-	segMarkdown                // 渲染完成的 markdown（go-tui 内置渲染）
-	segRich                    // tview 标签文本（工具块/用户回显/摘要/退出消息）
+	segText     segKind = iota // 受信 tview 标签文本（流式原文/工具块/用户回显/退出消息），tagbridge 解析
+	segMarkdown                // 渲染完成的 markdown 源码（go-tui 内置 Markdown 组件渲染）
 )
 
 type msgSeg struct {
 	id   int
 	kind segKind
-	text string        // raw：累计原文；markdown：源码；rich：标签文本
-	el   *gotui.Element // raw/rich 的保留元素
-	md   *gotui.Markdown
+	text string
 }
 
 type helpItem struct{ cmd, desc string }
 
 type Tui struct {
-	app *gotui.App
-	ui  *agentUI
+	app       *gotui.App
+	ui        *agentUI
 	inputChan chan string
 
-	// ── staging：引擎 goroutine 写（全部走 mu，永不阻塞），
-	// tick 在主循环物化到元素。这是 tview 版"mutex 字段 + drawLoop"的直译，
-	// 也是对 go-tui QueueUpdate"队列满则丢弃"语义的规避：消息内容绝不能丢。──
+	// ── staging：引擎 goroutine 写（走 mu，永不阻塞），主循环渲染时读取。
+	// 引擎侧改动后调 app.MarkDirty()（atomic 标志，跨 goroutine 安全），
+	// 主循环下一帧在 Render() 里以 staging 为唯一事实来源重建整棵元素树。
+	// 这是 go-tui 的标准反应式模型：Render 必须每帧构建新树（状态驱动的
+	// 重渲染），有状态 widget（TextArea/Markdown）通过 app.Mount 跨帧复用。
 	mu          sync.Mutex
 	segs        []*msgSeg
 	buf         string // 平面文本缓冲，复刻 TextView.GetText 的 LastIndex 语义
-	msgVersion  uint64
 	todoText    string
 	noticeMsg   string
 	noticeUntil time.Time
 	helpItems   []helpItem
-	helpVersion int
 	bannerLines []string
 	bannerSet   bool
 	escFn       func()
 
-	// ── tick 私有：仅主循环读写，无锁 ──
-	appliedVersion     uint64
-	lastTodo           string
-	lastNotice         string
-	appliedHelpVersion int
-	bannerDone         bool
-	lastRun            bool
-	spinTickN          int
-	segID              int
+	segID int // 消息段稳定 id，作为 Markdown 组件的 mount key
 
 	running atomic.Bool
 	exiting atomic.Bool
@@ -98,7 +79,8 @@ func GetTuiService() *Tui {
 	app, err := gotui.NewApp(
 		gotui.WithRootComponent(t.ui),
 		gotui.WithMouse(),
-		gotui.WithGlobalKeyHandler(t.globalKeys),
+		// 30fps：流式输出期间每帧重建整棵树（含全量文本重排），60fps 没有必要
+		gotui.WithFrameRate(30),
 	)
 	if err != nil {
 		panic("tui: 创建 go-tui App 失败: " + err.Error())
@@ -108,88 +90,59 @@ func GetTuiService() *Tui {
 	return t
 }
 
-// globalKeys 全局按键拦截：exiting 时任意键退出；Ctrl+K 切帮助页；
-// Esc 转发引擎注册的中断回调（弹层打开时让位给 closeOnEscape）。
-func (t *Tui) globalKeys(ke gotui.KeyEvent) bool {
-	if t.exiting.Load() {
-		t.app.Stop()
-		return true
-	}
-	if ke.Key == gotui.KeyRune && ke.Rune == 'k' && ke.Mod == gotui.ModCtrl {
-		t.ui.helpOpen.Update(func(b bool) bool { return !b })
-		// helpOpen 未走 AppBinder 绑定，不会自动标脏，这里显式刷一帧
+// markDirty 引擎 goroutine 通知主循环重绘。dirty 是 atomic 标志，
+// 主循环每帧检查并消费，多次调用自动合并成一帧。
+func (t *Tui) markDirty() {
+	if t.app != nil {
 		t.app.MarkDirty()
-		return true
 	}
-	if ke.Key == gotui.KeyEscape {
-		if t.ui.helpOpen.Get() {
-			return false // 弹层打开时交给 modal 的 closeOnEscape
-		}
-		t.mu.Lock()
-		f := t.escFn
-		t.mu.Unlock()
-		if f != nil {
-			f()
-			return true
-		}
-	}
-	return false
 }
 
 // submitInput textarea 的提交回调（主循环执行）。
-// default 分支与 tview 版语义一致：引擎未在监听（自动 turn 期间）时保留文本，
+// 与 tview 版语义一致：引擎未在监听（自动 turn 期间）时保留文本，
 // 只有投递成功才清空输入框。
 func (t *Tui) submitInput(text string) {
 	select {
 	case t.inputChan <- text:
-		t.ui.textarea.Clear()
+		t.ui.ta.Clear()
 	default:
 	}
 }
 
-func (t *Tui) tick() { t.ui.tickAndFlush() }
-
 // ── TuiService 接口实现 ─────────────────────────────
-// 所有方法的线程契约与 tview 版一致：引擎侧任意 goroutine 可调、不阻塞；
-// 真正的 UI 变更统一在 tick（主循环）落地。
+// 线程契约与 tview 版一致：引擎侧任意 goroutine 可调、不阻塞；
+// UI 变更统一在主循环的 Render 里落地。
 
 func (t *Tui) PrintToMsgView(content string, clear bool) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	if clear {
 		t.resetMsgsLocked()
 	}
-	if content == "" {
-		return
-	}
-	t.buf += content
-	// 连续的流式 delta 合并进同一个 raw 段：tick 里只需 SetText 一次，
-	// 元素数量不随 token 数膨胀
-	if n := len(t.segs); n > 0 && t.segs[n-1].kind == segRaw {
-		t.segs[n-1].text += content
-	} else {
-		t.segID++
-		t.segs = append(t.segs, &msgSeg{id: t.segID, kind: segRaw, text: content})
-	}
-	t.msgVersion++
-}
-
-// resetMsgsLocked 清空平面缓冲与段列表。目前引擎没有 clear=true 的调用方，
-// 但元素层的 AddChild 没有逆操作，旧元素只能置空文本（占零行高）。
-func (t *Tui) resetMsgsLocked() {
-	t.buf = ""
-	for _, s := range t.segs {
-		if s.el != nil {
-			s.el.SetText("")
+	if content != "" {
+		t.buf += content
+		// 连续文本合并进同一个 segText 段：流式 delta 不膨胀段数量，
+		// ReplaceTail 的"尾段后缀"判断也依赖这一合并语义
+		if n := len(t.segs); n > 0 && t.segs[n-1].kind == segText {
+			t.segs[n-1].text += content
+		} else {
+			t.segID++
+			t.segs = append(t.segs, &msgSeg{id: t.segID, kind: segText, text: content})
 		}
 	}
-	t.segs = nil
-	t.msgVersion++
+	t.mu.Unlock()
+	t.markDirty()
 }
 
-// ReplaceTailInMsgView 把消息区末尾的 raw 文本替换成渲染版，返回是否替换成功。
+// resetMsgsLocked 清空平面缓冲与段列表。元素树由 Render 每帧重建，
+// 这里只动数据。
+func (t *Tui) resetMsgsLocked() {
+	t.buf = ""
+	t.segs = nil
+}
+
+// ReplaceTailInMsgView 把消息区末尾的文本段替换成 markdown 段，返回是否替换成功。
 // 平面缓冲上的判断与 tview 版逐字节等价（LastIndex + 尾部对齐）；
-// 元素层额外要求尾部正好是最后一个 raw 段——连续 delta 已合并进单段，
+// 元素层要求尾部正好是最后一个 segText 段——连续 delta 已合并进单段，
 // 正常流式路径必然满足，极端交错场景宁可放弃替换也不改历史。
 func (t *Tui) ReplaceTailInMsgView(raw string, replacement string) bool {
 	t.mu.Lock()
@@ -202,24 +155,30 @@ func (t *Tui) ReplaceTailInMsgView(raw string, replacement string) bool {
 		return false
 	}
 	n := len(t.segs)
-	if n == 0 || t.segs[n-1].kind != segRaw || !strings.HasSuffix(t.segs[n-1].text, raw) {
+	if n == 0 || t.segs[n-1].kind != segText || !strings.HasSuffix(t.segs[n-1].text, raw) {
 		return false
 	}
 	t.buf = t.buf[:i] + replacement
 	last := t.segs[n-1]
 	last.text = strings.TrimSuffix(last.text, raw)
-	t.segID++
-	t.segs = append(t.segs, &msgSeg{id: t.segID, kind: segMarkdown, text: replacement})
-	t.msgVersion++
+	if last.text == "" {
+		// 尾段被完整替换：原位变成 markdown 段，mount key 不变
+		last.kind = segMarkdown
+		last.text = replacement
+	} else {
+		t.segID++
+		t.segs = append(t.segs, &msgSeg{id: t.segID, kind: segMarkdown, text: replacement})
+	}
 	return true
 }
 
-// SetTodoText 更新清单栏文本，空串整栏塌成 0 行。
-// 收到的是框架/LLM 的多行纯文本——go-tui 没有标签语法，无需转义。
+// SetTodoText 更新清单栏文本，空串整栏隐藏。
+// 收到的是框架/LLM 的多行纯文本，按行渲染。
 func (t *Tui) SetTodoText(text string) {
 	t.mu.Lock()
 	t.todoText = text
 	t.mu.Unlock()
+	t.markDirty()
 }
 
 // ShowNotice 显示一条临时通知，noticeTTL 后回落兜底提示。
@@ -229,20 +188,22 @@ func (t *Tui) ShowNotice(msg string) {
 	t.noticeMsg = msg
 	t.noticeUntil = time.Now().Add(noticeTTL)
 	t.mu.Unlock()
+	t.markDirty()
 }
 
-// SetAgentRunning 标记 agent 运行态。只写原子标志，指示器切换由 tick 完成。
+// SetAgentRunning 标记 agent 运行态（指示器与提示行随渲染帧切换）。
 func (t *Tui) SetAgentRunning(running bool) {
 	t.running.Store(running)
+	t.markDirty()
 }
 
-// ShowStartupBanner 物化启动横幅。布局交给 flexbox：
-// 信息列 grow + truncate，窄终端自动压缩，无需原版的宽度度量与堆叠降级。
+// ShowStartupBanner 在消息区顶部物化启动横幅（随对话滚动）。
 func (t *Tui) ShowStartupBanner(infoLines []string) {
 	t.mu.Lock()
 	t.bannerLines = infoLines
 	t.bannerSet = true
 	t.mu.Unlock()
+	t.markDirty()
 }
 
 func (t *Tui) AddHelpItems(items []map[string]string) {
@@ -253,7 +214,6 @@ func (t *Tui) AddHelpItems(items []map[string]string) {
 			t.helpItems = append(t.helpItems, helpItem{cmd: k, desc: v})
 		}
 	}
-	t.helpVersion++
 }
 
 func (t *Tui) ResetHelpItems() {
@@ -263,7 +223,6 @@ func (t *Tui) ResetHelpItems() {
 		{"/new", "开始新对话"},
 		{"/exit", "退出程序"},
 	}
-	t.helpVersion++
 }
 
 func (t *Tui) SetAppFuncTriggerWithEsc(f func()) {
@@ -278,8 +237,8 @@ func (t *Tui) ClearAppFuncTrigger() {
 	t.mu.Unlock()
 }
 
-// RenderMarkdown go-tui 分支：markdown 由消息区的内置 markdown 元素原生渲染
-// （glow 风格主题、代码高亮、表格网格），这里原样返回源码即可。
+// RenderMarkdown markdown 由消息区的内置 Markdown 组件原生渲染
+// （代码高亮、表格、列表），这里原样返回源码即可。
 // 旧的 glamour → 剥填充 → TranslateANSI → tview 标签管线整体删除。
 func (t *Tui) RenderMarkdown(in string) (string, error) {
 	return in, nil
@@ -293,18 +252,20 @@ func (t *Tui) ListenUserInput() chan string {
 //
 // 末尾的 select{} 是故意的（沿用 tview 版的收尾契约）：调用方（引擎 init 序列）
 // 打完致命错误后并没有 return，一旦返回，引擎 goroutine 会带着未初始化的状态
-// 继续跑。现在的链路是：globalKeys 看到 exiting 标志 → app.Stop() → Run() 返回
-// → Close() 复原终端 → main() 返回 → 进程退出。
+// 继续跑。现在的链路是：exiting 置位 → 主循环下一帧剥掉输入框并启用"任意键退出"
+// → app.Stop() → Run() 返回 → Close() 复原终端 → main() 返回 → 进程退出。
+//
+// Open() 幂等：错误可能发生在 Run() 启动之前（启动期配置错误），
+// 这里先确保终端初始化并渲染出第一帧。
 func (t *Tui) showMsgAndExit(msg string, waitForKey bool) {
 	t.PrintToMsgView(msg, false)
-	if waitForKey {
-		t.exiting.Store(true)
-		return
+	t.exiting.Store(true)
+	t.markDirty()
+	_ = t.app.Open()
+	if !waitForKey {
+		time.Sleep(exitFlushDelay)
+		t.app.Stop()
 	}
-	// 渲染是帧驱动的，没有 tview 的手动 Draw 可用：
-	// 睡过 4 个 tick 保证退出消息先物化上屏，再停事件循环。
-	time.Sleep(4 * tickInterval)
-	t.app.Stop()
 	select {}
 }
 

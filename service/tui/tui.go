@@ -2,489 +2,309 @@ package tui
 
 import (
 	"strings"
-
-	"HyperBot/utils/pretty"
-	"charm.land/glamour/v2"
-	"fmt"
-	"github.com/gdamore/tcell/v2"
-	"github.com/rivo/tview"
 	"sync"
 	"sync/atomic"
 	"time"
-)
 
-// 定义颜色，配色统一来源于 pretty.TuiXxx 常量，确保界面风格统一且美观
-var (
-	bg          tcell.Color = tcell.GetColor(pretty.TuiBg)          // 整体背景色
-	borderColor tcell.Color = tcell.GetColor(pretty.TuiBorderColor) // 边框颜色
-	inputAreaBg tcell.Color = tcell.GetColor(pretty.TuiInputAreaBg) // 输入区背景色
+	"HyperBot/utils/pretty"
+	gotui "github.com/grindlemire/go-tui"
 )
 
 const (
-	// drawInterval 重绘节流间隔。tview 只在 QueueUpdateDraw、按键/鼠标/resize 事件时重绘，
-	// 纯流式输出期间这些都不发生，所以由 drawLoop 按固定帧率驱动刷新。
-	drawInterval = 30 * time.Millisecond
-	// spinnerTicks 指示器每推进一帧占用多少个 drawInterval tick。3 × 30ms = 90ms/帧，
-	// 10 帧约 0.9s 转一圈。
+	// tickInterval staging → 元素的物化心跳。沿用 tview 版 drawLoop 的 30ms：
+	// 流式输出期间框架自身没有重绘事件源，节流全靠这个 tick。
+	tickInterval = 30 * time.Millisecond
+	// spinnerTicks 每 3 个 tick（90ms）推进一帧 spinner，10 帧约 0.9s 一圈。
 	spinnerTicks = 3
-)
-
-type Tui struct {
-	app       *tview.Application
-	appLayout *layout
-	inputChan chan string
-
-	// dirty 标记"内容已写入 widget 但尚未上屏"，由 drawLoop 消费。
-	// 写入走 QueueUpdate（只改 widget、不重绘）而不是 QueueUpdateDraw：后者每次调用都
-	// 阻塞等待一次完整全屏重绘，而 TextView.Draw 内部的 parseAhead 会把整个文本缓冲区
-	// 拷贝一遍（t.text.String()），流式输出下就是每 token O(n)、整体 O(n²)。
-	dirty    atomic.Bool
-	drawOnce sync.Once
-
-	// running 由引擎 goroutine 通过 SetAgentRunning 写、drawLoop 读。
-	// 指示器的实际外观切换全在 drawLoop 单线程里做，所以只有这一个字段需要跨 goroutine。
-	running atomic.Bool
-
-	// glamour renderer 构建时要解析一遍 style JSON，按宽度缓存复用
-	renderMu sync.Mutex
-	renderer *glamour.TermRenderer
-	renderW  int
-}
-
-type layout struct {
-	pages        *tview.Pages
-	mainFlex     *tview.Flex // ResizeItem 要在父 Flex 上调，所以得存着
-	agentMessage *tview.TextView
-	todoBar      *todoBar
-	noticeBar    *noticeBar
-	indicator    *tview.TextView
-	inputArea    *tview.TextArea
-	helpTable    *helptable
-}
-type helptable struct {
-	h               *tview.Table
-	helpPageVisible bool
-	// helpItems 由引擎 goroutine 写（AddHelpItems / ResetHelpItems），
-	// 由 UI goroutine 读（toggleHelpPage → refreshhelpTable），必须加锁
-	mu        sync.Mutex
-	helpItems []helpItem
-}
-type helpItem struct {
-	cmd  string
-	desc string
-}
-
-// ── 输入区左侧的运行指示器 ─────────────────────────────
-//
-// 做成独立 widget 而不是 TextArea 的 label：TextArea.SetLabel 是无锁写字段
-// （textarea.go:792），由 UI 线程在 Draw 中读取，跨 goroutine 调用是数据竞争，
-// 每帧都得包一层 QueueUpdate；而 TextView.SetText 自带锁，drawLoop 可以直接调。
-
-const indicatorWidth = 2
-
-var (
-	// 空闲态。indicator 开了 SetDynamicColors，所以可以带 tview 颜色标签。
-	// 用 TuiSubText 而不是 tview 默认的 label 颜色——后者是 ColorYellow。
-	idleIndicator = pretty.TColoredText(pretty.TuiSubText, "> ")
-	// 盲文 10 帧，每个都是 1 cell 宽（已实测），加一个空格正好 indicatorWidth 列
-	spinnerFrames = []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
-)
-
-// spinnerIndicator 渲染运行态的第 frame 帧。frame 由 drawLoop 单调递增传入，此处取模回绕。
-func spinnerIndicator(frame int) string {
-	return pretty.TColoredText(pretty.TColorLightMagenta,
-		string(spinnerFrames[frame%len(spinnerFrames)])+" ")
-}
-
-// ── 输入框上方的两个 bar ─────────────────────────────
-//
-// TodoBar：纵向清单栏，每个任务一行，有清单时占 N 行、无清单时塌成 0 行。
-// NoticeBar：固定 1 行，承载瞬时通知与常驻键位提示，永不塌陷（hint 常驻）。
-
-const (
-	// noticeTTL 临时通知的停留时长。到期后 NoticeBar 自动回落到兜底提示。
+	// noticeTTL 临时通知停留时长，到期回落兜底提示。
 	noticeTTL = 4 * time.Second
-	// minMessageRows 消息区无论如何至少保留的行数。矮终端下用它钳制 TodoBar 高度：
-	// Flex 的 distSize = height - 所有 fixedSize 之和且不做钳制，Box.SetRect 也原样
-	// 存负高度，而 pos += size 用原始值 → 不钳制会让 AgentMessage 拿到负高度、
-	// pos 倒退、下方三个 item 全部画错行并在屏幕底部留残影。
+	// indicatorWidth 输入行左侧指示器宽度。
+	indicatorWidth = 2
+	// minMessageRows 矮终端下消息区至少保留的行数（钳制清单栏高度）。
 	minMessageRows = 3
+	// 两个行池的大小：todo 每任务一行、帮助每条目一行。
+	todoLinePool = 24
+	helpRowPool  = 32
 )
 
-// NoticeBar 的常驻兜底提示。全小写英文，沿用被删除的 InputHint 的 [gray::d] 暗灰样式。
-// esc to interrupt 只在运行态出现——ESC 中断仅在 agent 运行期间有效，平时显示它是噪音。
+var spinnerFrames = []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+
+// NoticeBar 常驻兜底提示（保留 tview 标签形式，由 tagbridge 解析上色）。
 const (
 	hintIdle    = `[gray::d]ctrl+k for help[-:-:-]`
 	hintRunning = `[gray::d]esc to interrupt · ctrl+k for help[-:-:-]`
 )
 
-// noticeBar 输入框上方的单行通知栏。notice 与 hint 二选一，一次只显示一种。
-type noticeBar struct {
-	view *tview.TextView
+// segKind 消息段类型。PrintToMsgView 的连续调用会合并进最近的 segRaw 段
+// （对应 tview 版"同一个 TextView 缓冲"的语义），ReplaceTail 把尾段原位转成 markdown。
+type segKind int
 
-	// 槽位由引擎 goroutine 写（setNotice），由 drawLoop 读写（render 里清理过期
-	// 通知），是真·多写入方，必须加锁。
-	// 注意与 indicator 的区别：indicator 只有 drawLoop 一个写入方，所以不需要锁。
+const (
+	segRaw      segKind = iota // 流式原文（纯文本，随 delta 增量增长）
+	segMarkdown                // 渲染完成的 markdown（go-tui 内置渲染）
+	segRich                    // tview 标签文本（工具块/用户回显/摘要/退出消息）
+)
+
+type msgSeg struct {
+	id   int
+	kind segKind
+	text string        // raw：累计原文；markdown：源码；rich：标签文本
+	el   *gotui.Element // raw/rich 的保留元素
+	md   *gotui.Markdown
+}
+
+type helpItem struct{ cmd, desc string }
+
+type Tui struct {
+	app *gotui.App
+	ui  *agentUI
+	inputChan chan string
+
+	// ── staging：引擎 goroutine 写（全部走 mu，永不阻塞），
+	// tick 在主循环物化到元素。这是 tview 版"mutex 字段 + drawLoop"的直译，
+	// 也是对 go-tui QueueUpdate"队列满则丢弃"语义的规避：消息内容绝不能丢。──
 	mu          sync.Mutex
-	notice      string    // 临时通知（已带颜色标签，调用方负责）
-	noticeUntil time.Time // 过期时间
+	segs        []*msgSeg
+	buf         string // 平面文本缓冲，复刻 TextView.GetText 的 LastIndex 语义
+	msgVersion  uint64
+	todoText    string
+	noticeMsg   string
+	noticeUntil time.Time
+	helpItems   []helpItem
+	helpVersion int
+	bannerLines []string
+	bannerSet   bool
+	escFn       func()
+
+	// ── tick 私有：仅主循环读写，无锁 ──
+	appliedVersion     uint64
+	lastTodo           string
+	lastNotice         string
+	appliedHelpVersion int
+	bannerDone         bool
+	lastRun            bool
+	spinTickN          int
+	segID              int
+
+	running atomic.Bool
+	exiting atomic.Bool
 }
 
-func (b *noticeBar) setNotice(msg string, ttl time.Duration) {
-	b.mu.Lock()
-	b.notice = msg
-	b.noticeUntil = time.Now().Add(ttl)
-	b.mu.Unlock()
-}
-
-// render 未过期的 notice 优先，否则回落到 hint（按 running 二选一）。
-// running 由调用方（drawLoop）传入，它本来就已经读过这个原子标志。
-func (b *noticeBar) render(running bool) string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	if b.notice != "" {
-		if time.Now().Before(b.noticeUntil) {
-			return b.notice
-		}
-		b.notice = "" // 过期即清，避免每帧反复比对一个死字符串
+// GetTuiService 构造 TUI 服务。引擎把它当 requirements.TuiService 用，
+// boot.go 在独立 goroutine 里跑引擎、主 goroutine 跑 Run()。
+func GetTuiService() *Tui {
+	t := &Tui{inputChan: make(chan string)}
+	t.ui = newAgentUI(t)
+	app, err := gotui.NewApp(
+		gotui.WithRootComponent(t.ui),
+		gotui.WithMouse(),
+		gotui.WithGlobalKeyHandler(t.globalKeys),
+	)
+	if err != nil {
+		panic("tui: 创建 go-tui App 失败: " + err.Error())
 	}
-	if running {
-		return hintRunning
+	t.app = app
+	t.ResetHelpItems()
+	return t
+}
+
+// globalKeys 全局按键拦截：exiting 时任意键退出；Ctrl+K 切帮助页；
+// Esc 转发引擎注册的中断回调（弹层打开时让位给 closeOnEscape）。
+func (t *Tui) globalKeys(ke gotui.KeyEvent) bool {
+	if t.exiting.Load() {
+		t.app.Stop()
+		return true
 	}
-	return hintIdle
-}
-
-// todoBar 输入框上方的纵向清单栏（每个任务一行）。有清单时占 N 行，无清单时塌成 0 行。
-type todoBar struct {
-	view *tview.TextView
-
-	// text 是引擎 goroutine 推来的原始多行纯文本（每个任务一行，未转义）。转义、
-	// 着色、SetText、ResizeItem 全在 drawLoop 里做，保持"widget 写入单线程"。
-	// 引擎写、drawLoop 读，是真·多写入方，必须加锁。
-	mu   sync.Mutex
-	text string
-}
-
-func (b *todoBar) store(text string) {
-	b.mu.Lock()
-	b.text = text
-	b.mu.Unlock()
-}
-
-func (b *todoBar) current() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.text
-}
-
-// SetTodoText 更新 TodoBar 的清单文本，传空串则整栏塌成 0 行。
-// 当前收到的是多行文本（functionTools.TodoStatusBar 的输出，每个任务一行）。
-// ⚠️ text 是**来自框架/LLM 的纯文本**（以 "[TODO] " 开头，且条目正文由 LLM 撰写），
-// 转义与着色由 drawLoop 负责——与 ShowNotice 的契约相反（那个收的是受信 markup，
-// 转义会破坏颜色标签）。
-// 由 agent 包的 BeforeModel callback 在每次 LLM hop 推送，可从任意 goroutine 调用。
-func (t *Tui) SetTodoText(text string) {
-	t.appLayout.todoBar.store(text)
-	t.markDirty()
-}
-
-// drawState 是 drawLoop 的私有状态。只被 drawLoop 这一个 goroutine 读写，
-// 不是共享状态，因此无需同步（刻意不做成 Tui 的字段，避免误导后人以为要加锁）。
-type drawState struct {
-	showingRunning bool   // indicator 当前显示的是否为运行态
-	spinTick       int    // spinner 帧推进计数
-	shownTodo      string // TodoBar 上一帧的原始文本
-	shownNotice    string // NoticeBar 上一帧的渲染结果
-}
-
-// startDrawLoop 启动固定帧率的重绘循环，只启动一次。
-// 它是"重绘节流 + 动画时钟"的多重身份：除了按 dirty 标志节流重绘，还独占驱动
-// 运行指示器动画与两个 bar 的内容刷新。所有 widget 写入因此都是单线程的，
-// 配合 TextView.SetText 自带锁，既不需要额外同步也不需要为每件事单起 ticker。
-func (t *Tui) startDrawLoop() {
-	t.drawOnce.Do(func() {
-		go func() {
-			ticker := time.NewTicker(drawInterval)
-			defer ticker.Stop()
-
-			st := &drawState{}
-			for range ticker.C {
-				running := t.running.Load()
-				t.tickIndicator(running, st)
-				t.tickTodoBar(st)
-				t.tickNoticeBar(running, st)
-				// 没有新内容就不重绘，空闲时不产生任何 CPU 开销
-				if t.dirty.CompareAndSwap(true, false) {
-					t.app.Draw()
-				}
-			}
-		}()
-	})
-}
-
-// tickIndicator 推进运行指示器。
-// 用 if/else-if 而非 switch —— 项目风格要求，不要改回 switch。
-func (t *Tui) tickIndicator(running bool, st *drawState) {
-	if running != st.showingRunning { // 状态翻转：立刻换外观，帧计数归零
-		st.showingRunning = running
-		st.spinTick = 0
-		if running {
-			t.setIndicator(spinnerIndicator(0))
-		} else {
-			t.setIndicator(idleIndicator)
+	if ke.Key == gotui.KeyRune && ke.Rune == 'k' && ke.Mod == gotui.ModCtrl {
+		t.ui.helpOpen.Update(func(b bool) bool { return !b })
+		// helpOpen 未走 AppBinder 绑定，不会自动标脏，这里显式刷一帧
+		t.app.MarkDirty()
+		return true
+	}
+	if ke.Key == gotui.KeyEscape {
+		if t.ui.helpOpen.Get() {
+			return false // 弹层打开时交给 modal 的 closeOnEscape
 		}
-	} else if running { // 持续运行：每 spinnerTicks 个 tick 推进一帧
-		st.spinTick++
-		if st.spinTick%spinnerTicks == 0 {
-			t.setIndicator(spinnerIndicator(st.spinTick / spinnerTicks))
+		t.mu.Lock()
+		f := t.escFn
+		t.mu.Unlock()
+		if f != nil {
+			f()
+			return true
 		}
 	}
+	return false
 }
 
-// tickNoticeBar 刷新通知栏。TTL 到期、通知到达、running 翻转三件事全走这一条路径，
-// 因此不需要任何事件驱动的机制。
-func (t *Tui) tickNoticeBar(running bool, st *drawState) {
-	nb := t.appLayout.noticeBar
-	if s := nb.render(running); s != st.shownNotice {
-		st.shownNotice = s
-		nb.view.SetText(s) // TextView.SetText 自带锁，无需 QueueUpdate
-		t.dirty.Store(true)
+// submitInput textarea 的提交回调（主循环执行）。
+// default 分支与 tview 版语义一致：引擎未在监听（自动 turn 期间）时保留文本，
+// 只有投递成功才清空输入框。
+func (t *Tui) submitInput(text string) {
+	select {
+	case t.inputChan <- text:
+		t.ui.textarea.Clear()
+	default:
 	}
 }
 
-// tickTodoBar 刷新清单栏的内容与高度（0 到 N 行，每个任务一行）。
-//
-// 高度钳制的原因：Flex 的 distSize = height - 所有 fixedSize 之和且不做钳制，
-// Box.SetRect 也原样存负高度，而 pos += size 用原始值。终端高度不足时 distSize
-// 变负 → AgentMessage 拿到负高度 → pos 倒退 → 下方三个 item 全部画错行、
-// 屏幕底部留未绘制残影。行数超过 max 时压到 max（顶部行可见，其余被挡住）；
-// max 不足 1 时塌成 0 行。
-//
-// 多行后必须 ScrollToBeginning()：SetText 只调 resetIndex()，不清
-// lineOffset/trackEnd，而 NewTextView() 默认 scrollable=true，滚轮下滚会把
-// trackEnd 置真、导致视图永久卡在底部。SetScrollable(false) 不是解法
-// （它会顺手把 trackEnd 设成 true，直接底部锚定）。
-func (t *Tui) tickTodoBar(st *drawState) {
-	tb := t.appLayout.todoBar
-	text := tb.current()
-	if text == st.shownTodo {
+func (t *Tui) tick() { t.ui.tickAndFlush() }
+
+// ── TuiService 接口实现 ─────────────────────────────
+// 所有方法的线程契约与 tview 版一致：引擎侧任意 goroutine 可调、不阻塞；
+// 真正的 UI 变更统一在 tick（主循环）落地。
+
+func (t *Tui) PrintToMsgView(content string, clear bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if clear {
+		t.resetMsgsLocked()
+	}
+	if content == "" {
 		return
 	}
-	st.shownTodo = text
-
-	rendered := ""
-	n := 0
-	if text != "" {
-		rendered = renderTodoLines(text)
-		n = strings.Count(text, "\n") + 1
+	t.buf += content
+	// 连续的流式 delta 合并进同一个 raw 段：tick 里只需 SetText 一次，
+	// 元素数量不随 token 数膨胀
+	if n := len(t.segs); n > 0 && t.segs[n-1].kind == segRaw {
+		t.segs[n-1].text += content
+	} else {
+		t.segID++
+		t.segs = append(t.segs, &msgSeg{id: t.segID, kind: segRaw, text: content})
 	}
-
-	// ResizeItem 无锁写 FixedSize/Proportion、GetInnerRect 无锁读布局字段，两者都
-	// 由 UI 线程在 Draw 中使用，所以必须一起放进 QueueUpdate（那里就是 UI 线程）。
-	t.app.QueueUpdate(func() {
-		_, _, _, total := t.appLayout.mainFlex.GetInnerRect()
-		// NoticeBar 与 InputRow 各占 1 行，消息区至少留 minMessageRows 行
-		if max := total - 2 - minMessageRows; n > max {
-			n = max
-		}
-		if n < 0 {
-			n = 0
-		}
-		tb.view.SetText(rendered)
-		tb.view.ScrollToBeginning()
-		// proportion 必须是 0：给 1 会让 TodoBar 与 AgentMessage 平分剩余空间
-		t.appLayout.mainFlex.ResizeItem(tb.view, n, 0)
-	})
-	t.dirty.Store(true)
+	t.msgVersion++
 }
 
-// renderTodoLines 把 TodoBar 的多行纯文本转义并逐行上色：
-// [TODO] 头行与 (N done) 计数行暗灰、◐ 进行中青色、☐ 待办正文色。
-// 必须逐行先 tview.Escape 再包颜色标签："[TODO]" 会被 tview 当成前景色名整个吞掉
-// （实测 "[TODO] x" 的 TaggedStringWidth 是 2 而非 8），条目正文由 LLM 撰写、
-// 可能含 ASCII 方括号。Escape 与着色都不改变行数，高度计算不受影响。
-func renderTodoLines(text string) string {
-	colorOf := func(line string) string {
-		switch {
-		case strings.HasPrefix(line, "◐ "):
-			return pretty.TColorCyan
-		case strings.HasPrefix(line, "☐ "):
-			return pretty.TuiMainText
-		default: // [TODO] 头行、计数行
-			return pretty.TuiSubText
+// resetMsgsLocked 清空平面缓冲与段列表。目前引擎没有 clear=true 的调用方，
+// 但元素层的 AddChild 没有逆操作，旧元素只能置空文本（占零行高）。
+func (t *Tui) resetMsgsLocked() {
+	t.buf = ""
+	for _, s := range t.segs {
+		if s.el != nil {
+			s.el.SetText("")
 		}
 	}
-	lines := strings.Split(text, "\n")
-	for i, line := range lines {
-		lines[i] = pretty.TColoredText(colorOf(line), tview.Escape(line))
-	}
-	return strings.Join(lines, "\n")
+	t.segs = nil
+	t.msgVersion++
 }
 
-// ShowNotice 在 NoticeBar 显示一条临时通知，noticeTTL 后自动回落到兜底提示。
-// ⚠️ msg 必须是**已带 tview 颜色标签的受信 markup**（用 pretty.TBarXxx 系列生成），
-// 本方法不做转义——转义会破坏颜色标签。与 SetTodoText 的契约相反。
-// 只取 mutex 写字段、不走 QueueUpdate，因此在 app.Run() 启动前调用也不会阻塞。
-// 这比被它替换掉的 ShowSuccessInMsgView 更好：后者经 PrintToMsgView → QueueUpdate，
-// 会在事件循环启动前阻塞住 init 序列。
+// ReplaceTailInMsgView 把消息区末尾的 raw 文本替换成渲染版，返回是否替换成功。
+// 平面缓冲上的判断与 tview 版逐字节等价（LastIndex + 尾部对齐）；
+// 元素层额外要求尾部正好是最后一个 raw 段——连续 delta 已合并进单段，
+// 正常流式路径必然满足，极端交错场景宁可放弃替换也不改历史。
+func (t *Tui) ReplaceTailInMsgView(raw string, replacement string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if raw == "" {
+		return false
+	}
+	i := strings.LastIndex(t.buf, raw)
+	if i < 0 || i+len(raw) != len(t.buf) {
+		return false
+	}
+	n := len(t.segs)
+	if n == 0 || t.segs[n-1].kind != segRaw || !strings.HasSuffix(t.segs[n-1].text, raw) {
+		return false
+	}
+	t.buf = t.buf[:i] + replacement
+	last := t.segs[n-1]
+	last.text = strings.TrimSuffix(last.text, raw)
+	t.segID++
+	t.segs = append(t.segs, &msgSeg{id: t.segID, kind: segMarkdown, text: replacement})
+	t.msgVersion++
+	return true
+}
+
+// SetTodoText 更新清单栏文本，空串整栏塌成 0 行。
+// 收到的是框架/LLM 的多行纯文本——go-tui 没有标签语法，无需转义。
+func (t *Tui) SetTodoText(text string) {
+	t.mu.Lock()
+	t.todoText = text
+	t.mu.Unlock()
+}
+
+// ShowNotice 显示一条临时通知，noticeTTL 后回落兜底提示。
+// msg 是 pretty.TBarXxx 生成的受信 tview 标签 markup，tagbridge 负责解析上色。
 func (t *Tui) ShowNotice(msg string) {
-	t.appLayout.noticeBar.setNotice(msg, noticeTTL)
-	t.markDirty()
+	t.mu.Lock()
+	t.noticeMsg = msg
+	t.noticeUntil = time.Now().Add(noticeTTL)
+	t.mu.Unlock()
 }
 
-// setIndicator 更新指示器文本并请求重绘。只允许 drawLoop 调用。
-// TextView.SetText 自带锁，可以直接从本 goroutine 调，不需要 QueueUpdate。
-func (t *Tui) setIndicator(s string) {
-	t.appLayout.indicator.SetText(s)
-	t.dirty.Store(true)
-}
-
-// SetAgentRunning 标记 agent 是否正在运行。只写一个原子标志，可从任意 goroutine 调用、
-// 不阻塞；指示器的实际切换由 drawLoop 在下一帧完成（最多 drawInterval 延迟）。
+// SetAgentRunning 标记 agent 运行态。只写原子标志，指示器切换由 tick 完成。
 func (t *Tui) SetAgentRunning(running bool) {
 	t.running.Store(running)
 }
 
-// markDirty 标记需要重绘。必须在 widget 写入完成之后调用：QueueUpdate 是阻塞的，
-// 返回时内容已经落地，这样 drawLoop 的下一帧才画得到它。反过来（先标记后写入）
-// 会出现"这一帧把标记消费掉了、内容却还没写进去"，导致最后一批文本永不上屏。
-func (t *Tui) markDirty() {
-	t.startDrawLoop()
-	t.dirty.Store(true)
+// ShowStartupBanner 物化启动横幅。布局交给 flexbox：
+// 信息列 grow + truncate，窄终端自动压缩，无需原版的宽度度量与堆叠降级。
+func (t *Tui) ShowStartupBanner(infoLines []string) {
+	t.mu.Lock()
+	t.bannerLines = infoLines
+	t.bannerSet = true
+	t.mu.Unlock()
 }
 
-func (t *Tui) PrintToMsgView(content string, clear bool) {
-	t.app.QueueUpdate(func() {
-		if clear {
-			t.appLayout.agentMessage.Clear()
+func (t *Tui) AddHelpItems(items []map[string]string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, i := range items {
+		for k, v := range i {
+			t.helpItems = append(t.helpItems, helpItem{cmd: k, desc: v})
 		}
-		fmt.Fprint(t.appLayout.agentMessage, content)
-	})
-	// 这里不调 ScrollToEnd()。它会把 TextView 的 trackEnd 强行置回 true，于是用户在
-	// 流式输出期间往上翻滚查看历史时，下一个 token 就把视图弹回底部。trackEnd 本身就是
-	// "是否在底部、是否该跟随"的标记，tview 自己维护（滚轮上翻置 false、翻回底部置 true），
-	// 初始值在 GetTuiService 里开一次即可。
-	t.markDirty()
+	}
+	t.helpVersion++
 }
 
-// ReplaceTailInMsgView 把消息区末尾的 raw 文本替换成渲染版，返回是否替换成功。
-//
-// 只在 raw 正好位于 buffer 末尾时才替换。中途有别的写入者插进来时（工具块、
-// session/summarizer.go 的摘要钩子、TerminalError 消息），宁可放弃替换、保持 raw，
-// 也绝不改动前面的历史——替换失败最多退化成"没有 markdown 渲染"，改错位置则是毁掉整屏。
-//
-// 读取和 SetText 必须在同一个 QueueUpdate 里：GetText 在 tview v0.42.0 不加锁，
-// 分两次调用的话中间可能插进一次写入，把那个 delta 吃掉。
-func (t *Tui) ReplaceTailInMsgView(raw string, replacement string) bool {
-	replaced := false
-	t.app.QueueUpdate(func() {
-		// LastIndex(buf, "") 返回 len(buf) 而不是 -1，不挡会在末尾凭空追加一份正文
-		if raw == "" {
-			return
-		}
-		buf := t.appLayout.agentMessage.GetText(false)
-		// 用 LastIndex 而不是 Replace：短回复（如"好的。"）可能在前面出现过，
-		// 比如用户自己的输入经 pretty.TUserInput 回显进同一个 buffer
-		i := strings.LastIndex(buf, raw)
-		if i < 0 || i+len(raw) != len(buf) {
-			return
-		}
-		// SetText 只调 resetIndex()，不动 lineOffset / trackEnd，所以滚动位置保得住
-		t.appLayout.agentMessage.SetText(buf[:i] + replacement)
-		replaced = true
-	})
-	// replaced 在闭包里写、外面读是安全的：QueueUpdate 阻塞到执行完才返回，
-	// 与 banner.go 里 contentWidth 的写法一致
-	t.markDirty()
-	return replaced
-}
-
-func (t *Tui) ListenUserInput() chan string {
-	t.app.QueueUpdateDraw(func() {
-		t.app.SetFocus(t.appLayout.inputArea)
-
-		//注册一个输入捕获器，每次用户在输入框敲击键盘时都会触发
-		t.appLayout.inputArea.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-			// Ctrl+K 切换帮助页
-			if event.Key() == tcell.KeyCtrlK {
-				t.toggleHelpPage()
-				return nil
-			}
-
-			// Enter 提交输入
-			// ModNone = 0，无任何修饰键（Ctrl/Shift/Alt 均未按下），即裸按 Enter。
-			// Shift+Enter 落到函数末尾的 return event，由 TextArea 插入换行（手动多行输入）。
-			// bracketed paste 保证粘贴里的 \n 走 PasteEvent 通道，不会产生 KeyEnter 事件
-			if event.Key() == tcell.KeyEnter && event.Modifiers() == tcell.ModNone {
-
-				//获取输入文本
-				text := t.appLayout.inputArea.GetText()
-				// 发送输入文本到 inputChan。default 分支：对端（引擎循环）未在监听时
-				// （如自动 turn 期间）不投递，避免 unbuffered send 阻塞 tview 事件循环
-				// 导致 UI 卡死。注意：只有投递成功才清空输入框，default 分支保留文本，
-				// 用户输入不丢失。
-				select {
-				case t.inputChan <- text:
-					t.appLayout.inputArea.SetText("", false)
-				default:
-				}
-				return nil //Enter事件不捕获
-			}
-
-			//传递事件给 TextArea 默认处理（插入字符、换行等）
-			return event
-		})
-	})
-	return t.inputChan
-
+func (t *Tui) ResetHelpItems() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.helpItems = []helpItem{
+		{"/new", "开始新对话"},
+		{"/exit", "退出程序"},
+	}
+	t.helpVersion++
 }
 
 func (t *Tui) SetAppFuncTriggerWithEsc(f func()) {
-	(*t).app.QueueUpdateDraw(func() {
-		(*t).app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-			if event.Key() == tcell.KeyEscape {
-				f() // 执行回调
-				return nil
-			}
-			return event // 其他按键正常传递
-		})
-	})
+	t.mu.Lock()
+	t.escFn = f
+	t.mu.Unlock()
 }
 
 func (t *Tui) ClearAppFuncTrigger() {
-	(*t).app.QueueUpdateDraw(func() {
-		(*t).app.SetInputCapture(nil)
-	})
+	t.mu.Lock()
+	t.escFn = nil
+	t.mu.Unlock()
+}
+
+// RenderMarkdown go-tui 分支：markdown 由消息区的内置 markdown 元素原生渲染
+// （glow 风格主题、代码高亮、表格网格），这里原样返回源码即可。
+// 旧的 glamour → 剥填充 → TranslateANSI → tview 标签管线整体删除。
+func (t *Tui) RenderMarkdown(in string) (string, error) {
+	return in, nil
+}
+
+func (t *Tui) ListenUserInput() chan string {
+	return t.inputChan
 }
 
 // showMsgAndExit 打印一条消息并结束程序。waitForKey=true 时等用户按任意键再退出。
 //
-// 末尾的 select{} 是故意的，不要改成"由回调 close(chan) 然后返回"：
-//   - 调用方（引擎 init 序列）打完致命错误后并没有 return，一旦这里返回，引擎 goroutine
-//     会带着未初始化的状态（如 nil memory service）继续往下跑，最后在别处 panic。
-//   - 也不能在下面的回调里直接 os.Exit：screen.Fini() 是在 app.Run() 的返回路径上调的，
-//     从回调硬退出会跳过它，终端会留在 alt-screen + raw mode，退出后用户的 shell 是坏的。
-//
-// 现在的收尾链路是：app.Stop() → tui.Run() 返回 → tview 复原终端 → main() 返回 → 进程退出。
+// 末尾的 select{} 是故意的（沿用 tview 版的收尾契约）：调用方（引擎 init 序列）
+// 打完致命错误后并没有 return，一旦返回，引擎 goroutine 会带着未初始化的状态
+// 继续跑。现在的链路是：globalKeys 看到 exiting 标志 → app.Stop() → Run() 返回
+// → Close() 复原终端 → main() 返回 → 进程退出。
 func (t *Tui) showMsgAndExit(msg string, waitForKey bool) {
 	t.PrintToMsgView(msg, false)
-	// 强制刷一帧：PrintToMsgView 现在只写入不重绘，不显式 Draw 的话退出信息
-	// 可能还没上屏 app 就 Stop 了。
-	t.app.Draw()
-	t.app.QueueUpdate(func() {
-		if !waitForKey {
-			t.app.Stop()
-			return
-		}
-		//只要有按键就退出程序
-		t.app.SetFocus(t.appLayout.agentMessage)
-		t.appLayout.agentMessage.SetInputCapture(
-			func(event *tcell.EventKey) *tcell.EventKey {
-				t.app.Stop()
-				return nil
-			})
-	})
+	if waitForKey {
+		t.exiting.Store(true)
+		return
+	}
+	// 渲染是帧驱动的，没有 tview 的手动 Draw 可用：
+	// 睡过 4 个 tick 保证退出消息先物化上屏，再停事件循环。
+	time.Sleep(4 * tickInterval)
+	t.app.Stop()
 	select {}
 }
 
@@ -500,175 +320,10 @@ func (t *Tui) ShowMsgAndExitNoTrigger(msg string) {
 	t.showMsgAndExit(msg, false)
 }
 
-func (t *Tui) AddHelpItems(items []map[string]string) {
-	ht := t.appLayout.helpTable
-	ht.mu.Lock()
-	defer ht.mu.Unlock()
-	for _, i := range items {
-		for k, v := range i {
-			ht.helpItems = append(ht.helpItems, helpItem{cmd: k, desc: v})
-		}
-	}
-}
-
-func (t *Tui) ResetHelpItems() {
-	t.defaultHelpItems()
-}
-
-// RenderMarkdown 用 glamour 渲染 markdown。
-func (t *Tui) RenderMarkdown(in string) (string, error) {
-	r, err := t.glamourRenderer()
-	if err != nil {
-		return "", err
-	}
-	return r.Render(in)
-}
-
-// glamourRenderer 返回按当前消息区宽度缓存的 renderer，宽度变化时才重建。
-func (t *Tui) glamourRenderer() (*glamour.TermRenderer, error) {
-	// 宽度读取与竞争规避见 banner.go 里 contentWidth 的注释
-	w := t.contentWidth()
-	if w < 40 {
-		w = 80
-	}
-
-	t.renderMu.Lock()
-	defer t.renderMu.Unlock()
-	if t.renderer != nil && t.renderW == w {
-		return t.renderer, nil
-	}
-	r, err := glamour.NewTermRenderer(
-		glamour.WithStandardStyle("dark"),
-		glamour.WithWordWrap(w),
-		glamour.WithStylesFromJSONBytes([]byte(`{
-			"document": {
-				"margin": 0
-			}
-		}`)),
-	)
-	if err != nil {
-		return nil, err
-	}
-	t.renderer, t.renderW = r, w
-	return r, nil
-}
-
+// Run 阻塞运行事件循环。Close 幂等，Run 内部异常退出也能复原终端。
 func (t *Tui) Run() {
-	err := (*t).app.Run()
-	if err != nil {
+	defer t.app.Close()
+	if err := t.app.Run(); err != nil {
 		panic("Error running application: " + err.Error())
 	}
-}
-func GetTuiService() *Tui {
-	//设置Agent消息显示区
-	AgentMessage := tview.NewTextView().
-		SetDynamicColors(true). // 启用颜色
-		SetScrollable(true).    // 可滚动
-		SetWrap(true)
-
-	AgentMessage.SetBackgroundColor(bg) // 设置背景颜色
-	// 打开"跟随底部"。SetScrollable(true) 不会设置 trackEnd（只有传 false 才会），
-	// 所以必须显式开一次，否则视图会永远停在顶部、完全不跟随新输出。
-	// 之后用户在底部就继续跟随、往上翻就不打扰，全部由 tview 自己维护。
-	AgentMessage.ScrollToEnd()
-
-	// 输入区左侧的运行指示器：空闲显示 ">"，agent 运行中显示盲文 spinner，由 drawLoop 驱动。
-	// 背景必须是 inputAreaBg：这个位置原本在 TextArea 内部、底色就是 inputAreaBg，
-	// 不设的话会继承 InputRow 的 bg，左边出现一块 2 格的色差。
-	Indicator := tview.NewTextView().
-		SetDynamicColors(true).
-		SetWrap(false).
-		SetText(idleIndicator)
-	Indicator.SetBackgroundColor(inputAreaBg)
-
-	//设置底部输入区（不再有 label，提示符由 Indicator 承担）
-	InputArea := tview.NewTextArea().SetWrap(true)
-	InputArea.SetBackgroundColor(inputAreaBg)
-	InputArea.SetTextStyle(tcell.StyleDefault.
-		Background(inputAreaBg).                        // 输入区背景色
-		Foreground(tcell.GetColor(pretty.TuiMainText))) // 文字颜色
-
-	// 消息区与通知栏之间的清单栏：纵向，每个任务一行，有清单时占 N 行、无清单时塌成 0 行。
-	// 背景用 bg（不是 inputAreaBg）：它是参考信息，视觉上应融入消息区，
-	// 与下方"控制区"（NoticeBar + InputRow）区分开。
-	// 高度由 drawLoop 通过 mainFlex.ResizeItem 动态设置，初始 0 行。
-	// 不要对它调 SetScrollable(false)——那会把 trackEnd 置真（见 tickTodoBar 注释）。
-	TodoBar := tview.NewTextView().
-		SetDynamicColors(true).
-		SetWrap(false)
-	TodoBar.SetBackgroundColor(bg)
-
-	// 输入框上方的通知栏：瞬时通知 + 常驻键位提示，固定 1 行、永不塌陷。
-	// 不设背景色，继承 MainFlex 的 bg——让它融入消息区而不是和 InputRow 连成一块。
-	// 内容全部带颜色标签，所以不需要 SetTextColor。
-	// 内容靠右：与原来 InputHint 在 InputRow 右侧的位置一致，视线落点不变。
-	// 注意通知与兜底提示共用这一个 widget，所以两者都靠右。
-	NoticeBar := tview.NewTextView().
-		SetDynamicColors(true).
-		SetWrap(false).
-		SetTextAlign(tview.AlignRight).
-		SetText(hintIdle)
-
-	InputRow := tview.NewFlex().SetDirection(tview.FlexColumn)
-	InputRow.SetBackgroundColor(bg)
-	InputRow.AddItem(Indicator, indicatorWidth, 0, false) // 左侧运行指示器
-	InputRow.AddItem(InputArea, 0, 1, true)
-
-	//设置整体布局
-	MainFlex := tview.NewFlex().SetDirection(tview.FlexRow)
-	MainFlex.SetBackgroundColor(bg)
-	MainFlex.AddItem(AgentMessage, 0, 1, false) // Agent消息区占剩余空间
-	MainFlex.AddItem(TodoBar, 0, 0, false)      // 清单栏，初始 0 行，由 ResizeItem 动态调整
-	MainFlex.AddItem(NoticeBar, 1, 0, false)    // 通知栏，固定 1 行、永不塌陷
-	MainFlex.AddItem(InputRow, 1, 0, true)      // 底部的输入区
-
-	HelpTable := tview.NewTable()
-	HelpTable.SetBackgroundColor(bg)
-	HelpTable.SetBorder(true)
-	HelpTable.SetBorderColor(borderColor)
-	HelpTable.SetTitle(" 斜杠指令 — Ctrl+K / Esc 关闭 ")
-	HelpTable.SetTitleAlign(tview.AlignLeft)
-	HelpTable.SetSelectable(true, false) // 行可选，列不可选
-
-	HelpTable.SetSelectedStyle(tcell.StyleDefault.
-		Background(tcell.GetColor("#2A3A5C")).
-		Foreground(tcell.GetColor(pretty.TuiMainText)))
-
-	app := tview.NewApplication()
-	pages := tview.NewPages()
-	pages.AddPage("AgentPage", MainFlex, true, true)
-	app.SetRoot(pages, true) // true = 全屏模式
-	app.EnableMouse(true)    //允许接收鼠标事件
-	app.EnablePaste(true)    //启用 bracketed paste，避免长文本粘贴时逐字符处理导致 CPU 飙升和界面卡死
-
-	tui := &Tui{
-		app: app,
-		appLayout: &layout{
-			pages:        pages,
-			mainFlex:     MainFlex,
-			agentMessage: AgentMessage,
-			todoBar:      &todoBar{view: TodoBar},
-			noticeBar:    &noticeBar{view: NoticeBar},
-			indicator:    Indicator,
-			inputArea:    InputArea,
-			helpTable: &helptable{
-				h:               HelpTable,
-				helpItems:       []helpItem{},
-				helpPageVisible: false,
-			},
-		},
-		inputChan: make(chan string),
-	}
-
-	(*(*(*tui).appLayout).helpTable).h.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Key() == tcell.KeyEscape || event.Key() == tcell.KeyCtrlK {
-			tui.toggleHelpPage()
-			return nil
-		}
-		return event
-	})
-	tui.defaultHelpItems()
-	tui.refreshhelpTable()
-	return tui
-
 }

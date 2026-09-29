@@ -3,19 +3,11 @@ package messagerender
 import (
 	"HyperBot/service/engine/tools"
 	"HyperBot/utils/pretty"
-	"github.com/rivo/tview"
 	"github.com/tidwall/gjson"
-	"regexp"
 	"strings"
 	"sync"
 	"trpc.group/trpc-go/trpc-agent-go/model"
 )
-
-// glamourTailPad 匹配行尾的"空白 + ANSI 序列"混合填充。glamour 会把标题、表格、
-// 代码块的每一行都补满整行宽度，每个空格还裹一层 SGR：实测 153B 的 markdown 渲染后
-// 是 12.7KB，其中 92% 是这种填充。消息区 TextView 在进程生命周期内从不清空，且每帧
-// 全量重绘、每次替换都要扫一遍整个 buffer，所以必须剥掉。
-var glamourTailPad = regexp.MustCompile(`(?:\x1b\[[0-9;]*m|[ \t])+$`)
 
 type ResponseMessageStatus struct {
 	startReasoning bool
@@ -107,44 +99,19 @@ func (r *MessageRender) renderNonStreamEvent(Choice model.Choice) {
 		(*r).tui.PrintToMsgView(pretty.TReasoningContent(Choice.Message.ReasoningContent), false)
 		(*r).tui.PrintToMsgView("\n", false)
 	}
-	// 正文内容
+	// 正文内容：先流原文，再原位替换成 markdown 段——与流式路径共用同一条渲染管线
 	if strings.TrimSpace(Choice.Message.Content) != "" && Choice.Message.Role != "tool" {
-		(*r).tui.PrintToMsgView(r.renderBody(Choice.Message.Content), false)
+		(*r).tui.PrintToMsgView(Choice.Message.Content, false)
+		(*r).tui.ReplaceTailInMsgView(Choice.Message.Content, r.renderBody(Choice.Message.Content))
 	}
 }
 
-// renderBody 用 glamour 渲染 markdown，TranslateANSI 转为 tview 颜色标签。
-// 流式与非流式两条路径共用，保证两种模式的最终观感一致。
-//
-// 正文标记必须加在渲染结果上，不能加在 markdown 源码前面：`● ` 会让首行的块级结构失效
-// ——实测代码围栏和表格会整个塌成一行、列表首项不再被识别、标题降级成普通段落。
+// renderBody go-tui 分支：正文以 markdown 源码直达 TUI，由消息区内置的 markdown
+// 元素原生渲染（glow 风格主题、代码高亮、表格网格）。旧的 glamour → 剥行尾填充 →
+// TranslateANSI → tview 标签管线整体删除，Tui.RenderMarkdown 已是恒等返回，
+// 所以这里只需清理首尾空白。
 func (r *MessageRender) renderBody(content string) string {
-	out, err := (*r).tui.RenderMarkdown(content)
-	if err != nil {
-		out = content // 渲染失败退回原文，别把整条回复吞掉
-	}
-
-	// glamour 的输出恒以一个换行开头，不剥掉的话标记会独占一行、与正文脱开
-	out = strings.TrimRight(strings.TrimLeft(out, "\n\r"), "\n\r ")
-	lines := strings.Split(out, "\n")
-	for i, l := range lines {
-		l = glamourTailPad.ReplaceAllString(l, "")
-		// 剥填充会连带剥掉行尾闭合样式的 reset，不补回则颜色泄漏到后续行
-		// （实测不补会留下 2~5 个未闭合标签）
-		if l != "" && !strings.HasSuffix(l, "\x1b[m") {
-			l += "\x1b[m"
-		}
-		lines[i] = l
-	}
-	// 标记加在第一个有可见内容的行上：正文以代码块或表格开头时，
-	// 剥完填充后首行是空的，直接前置会让 ● 独占一行
-	for i, l := range lines {
-		if strings.TrimSpace(l) != "" {
-			lines[i] = pretty.TContentNoneStreamTag(l)
-			break
-		}
-	}
-	return tview.TranslateANSI(strings.Join(lines, "\n")) + "[-:-:-]"
+	return strings.TrimSpace(content)
 }
 
 func (r *MessageRender) gatherToolMessage(Choice model.Choice) {
@@ -190,7 +157,6 @@ func (r *MessageRender) addToolCallMsg(toolcall model.ToolCall) {
 
 // 将toolresult消息，按照id一一对应放进buffer中
 func (r *MessageRender) addToolResultMsg(ToolID string, content string) {
-
 	(*(*r).Buffer).mu.Lock()
 	defer (*(*r).Buffer).mu.Unlock()
 	for _, msg_p := range (*(*r).Buffer).toolMessages {

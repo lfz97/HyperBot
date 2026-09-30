@@ -116,7 +116,21 @@ func (w *inputViewport) height() int {
 	return max(w.lastH, 1)
 }
 
-func (w *inputViewport) KeyMap() gotui.KeyMap          { return w.ta.KeyMap() }
+func (w *inputViewport) KeyMap() gotui.KeyMap {
+	km := w.ta.KeyMap()
+	// 剥掉 ta 内建的 Esc=blur 绑定（编辑器惯例"Esc 离开输入框"）：
+	// 本应用输入框是唯一常驻焦点目标，blur 没有去处，只会让"Esc 中断"
+	// 多按一次（focus-gated 绑定独占优先，Esc#1 被它吃掉）。剥掉后
+	// Esc 直达根组件的中断绑定。
+	out := make(gotui.KeyMap, 0, len(km))
+	for _, b := range km {
+		if b.Pattern.FocusRequired && b.Pattern.Key == gotui.KeyEscape {
+			continue
+		}
+		out = append(out, b)
+	}
+	return out
+}
 func (w *inputViewport) IsFocused() bool               { return w.ta.IsFocused() }
 func (w *inputViewport) Watchers() []gotui.Watcher     { return w.ta.Watchers() }
 func (w *inputViewport) BindApp(app *gotui.App)        { w.ta.BindApp(app) }

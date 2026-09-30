@@ -91,6 +91,11 @@ func GetTuiService() *Tui {
 		gotui.WithMouse(),
 		// 30fps：流式输出期间每帧重建整棵树（含全量文本重排），60fps 没有必要
 		gotui.WithFrameRate(30),
+		// 光标完全由应用自管：输入框画虚拟光标（▌），框架默认每帧收尾的
+		// placeCursor 会反复发 HideCursor 序列，流式重绘期间这套每帧控制
+		// 序列会扰动终端画的 IME 预编辑文本（未上屏拼音），表现为输入区
+		// 文字一直闪。关掉框架光标管理即消除（启动隐藏/退出恢复仍由库管）。
+		gotui.WithManualCursor(),
 	)
 	if err != nil {
 		panic("tui: 创建 go-tui App 失败: " + err.Error())

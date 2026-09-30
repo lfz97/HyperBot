@@ -137,7 +137,12 @@ func (w *inputViewport) KeyMap() gotui.KeyMap {
 	return out
 }
 func (w *inputViewport) IsFocused() bool           { return w.ta.IsFocused() }
-func (w *inputViewport) Watchers() []gotui.Watcher { return w.ta.Watchers() }
+// Watchers 故意返回空：ta 内建的光标 blink 心跳（500ms 翻转 ▌/空格）
+// 每次都重写输入文本末尾的单元格——那正是终端画 IME 预编辑文本的位置，
+// 组合态下终端被迫反复拆除重画预编辑，表现为输入框文字一直闪。
+// 过滤后光标常亮、空闲期零输出（pty 抓帧已验证此因果）。
+// 注意 watcher 只在首帧收集启动一次，这里过滤即彻底关闭。
+func (w *inputViewport) Watchers() []gotui.Watcher { return nil }
 func (w *inputViewport) BindApp(app *gotui.App)    { w.ta.BindApp(app) }
 
 // offsetY 计算本帧滚动偏移：窗口规则让光标行保持可见（打字/粘贴贴底、

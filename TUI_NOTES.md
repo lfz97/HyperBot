@@ -59,12 +59,18 @@
    PropsUpdater 组件每帧执行 factory + `UpdateProps(fresh)`，source 变化即
    重渲染（`ensureParsed` 按 source 串比对）。staging 里的段文本直接喂
    source 即可；`State[string]` 在这里没有额外收益（已验证 Mount 路径后弃用）。
-6. **粘贴没有 bracketed paste 支持（v0.22.1 最新版也没有）**：终端粘贴的
-   `\r` 与手敲 Enter 在字节层不可区分，多行粘贴会在第一个换行处被提交。
-   解法是 app 层的 `pasteSafeInput` 包装组件（ui.go）：输入节奏启发式
-   （窗口 50ms 内 ≥4 击 = 粘贴流，人类打字/按键重复率远够不着）判定粘贴
-   时 Enter 改插换行。注意 pty 测试驱动一次性写入字符串 = 粘贴节奏，
-   测"真人打字"必须逐字符发送。
+6. **粘贴经 bracketed paste 过滤（paste.go，设计参照 pi agent）**：库没有
+   ?2004 支持，但 `NewAppWithReader` 公开构造器允许注入自定义 EventReader
+   ——用 os.Pipe 夹在中间：过滤协程独占真实 stdin（启用 ?2004h），普通
+   字节原样进管道，粘贴段剥标记、\r\n→\n、\t→4 空格、丢控制字符后进管道。
+   库把管道字节当正常输入解析（\n→Ctrl+J 插行），粘贴不可能产生
+   Enter/Tab/Esc 事件——无需输入节奏启发式。三个关键坑：
+   ① 管道读端的 *os.File 必须保活（库只存 fd 整数，os.File 被 GC 回收时
+   finalizer 会 close 该 fd，管道读端静默失效、症状时灵时不灵）；
+   ② 单独的 Esc 正是 "\x1b[200~" 的前缀，疑似截断标记的暂存必须带
+   超时（25ms）放行，否则 Esc 键被无限期扣住；
+   ③ 过滤协程必须在 NewAppWithReader 之后启动——构造期 kitty 协商同步
+   读一次真实 stdin。
 7. **TextArea 没有 scroll-to-cursor（库注释原话）**：内容（含折行）超过
    `maxHeight` 钳制行数后，光标行被直接裁掉——超长输入/粘贴后所有编辑
    都发生在不可见处，看起来"输入框死了"。所以**不要设 maxHeight**：输入框
@@ -107,7 +113,8 @@
 
 - [ ] 打字实时上屏；Enter 提交（inputChan 收到）；提交后输入框清空
 - [ ] **多行粘贴**：首行不被提交、整段留在输入框、Backspace/打字可见、
-      手动 Enter 整段提交（pty 驱动一次写入即粘贴节奏）
+      手动 Enter 整段提交（pty 驱动须发 `\x1b[200~内容\x1b[201~`
+      模拟真实终端；一次性裸写入 = 无 2004 支持的老终端退化路径）
 - [ ] Esc 失焦后打字自愈（重新聚焦并补上字符）
 - [ ] Esc×2 / Ctrl+C 触发 escFn（GOT-INTERRUPT 通知出现）
 - [ ] Ctrl+K 帮助 modal 开（backdrop+居中）；**Esc 关闭后输入立即可用**；

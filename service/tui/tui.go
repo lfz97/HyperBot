@@ -50,6 +50,7 @@ type helpItem struct{ cmd, desc string }
 type Tui struct {
 	app       *gotui.App
 	ui        *agentUI
+	input     *pasteFilter // 输入过滤器（bracketed paste），见 paste.go
 	inputChan chan string
 
 	// ── staging：引擎 goroutine 写（走 mu，永不阻塞），主循环渲染时读取。
@@ -78,7 +79,14 @@ type Tui struct {
 func GetTuiService() *Tui {
 	t := &Tui{inputChan: make(chan string)}
 	t.ui = newAgentUI(t)
-	app, err := gotui.NewApp(
+	// 输入经 pasteFilter（bracketed paste，构造期 kitty 协商结束后才启动
+	// 过滤协程，见 paste.go 的时序契约）
+	input, err := newPasteFilter()
+	if err != nil {
+		panic("tui: 创建 paste filter 失败: " + err.Error())
+	}
+	t.input = input
+	app, err := gotui.NewAppWithReader(input,
 		gotui.WithRootComponent(t.ui),
 		gotui.WithMouse(),
 		// 30fps：流式输出期间每帧重建整棵树（含全量文本重排），60fps 没有必要
@@ -88,6 +96,7 @@ func GetTuiService() *Tui {
 		panic("tui: 创建 go-tui App 失败: " + err.Error())
 	}
 	t.app = app
+	input.start()
 	t.ResetHelpItems()
 	return t
 }
@@ -318,6 +327,7 @@ func (t *Tui) ShowMsgAndExitNoTrigger(msg []pretty.Span) {
 
 // Run 阻塞运行事件循环。Close 幂等，Run 内部异常退出也能复原终端。
 func (t *Tui) Run() {
+	defer t.input.stop() // 关闭 bracketed paste（终端模式复原的一部分）
 	defer t.app.Close()
 	if err := t.app.Run(); err != nil {
 		panic("Error running application: " + err.Error())

@@ -19,13 +19,17 @@ import (
 
 // 样式统一来源于 pretty.TuiXxx 常量（Style 是值类型，链式调用返回副本）。
 var (
-	bgStyle   = gotui.NewStyle().Background(mustColor(pretty.TuiBg))
-	inputBg   = gotui.NewStyle().Background(mustColor(pretty.TuiInputAreaBg))
-	mainStyle = gotui.NewStyle().Foreground(mustColor(pretty.TuiMainText))
-	subStyle  = gotui.NewStyle().Foreground(mustColor(pretty.TuiSubText))
-	dimStyle  = gotui.NewStyle().Foreground(gotui.BrightBlack).Dim()
-	spinStyle = gotui.NewStyle().Foreground(mustColor(pretty.TColorLightMagenta))
-	cmdStyle  = gotui.NewStyle().Foreground(gotui.Cyan)
+	bgStyle    = gotui.NewStyle().Background(mustColor(pretty.TuiBg))
+	inputBg    = gotui.NewStyle().Background(mustColor(pretty.TuiInputAreaBg))
+	mainStyle  = gotui.NewStyle().Foreground(mustColor(pretty.TuiMainText))
+	subStyle   = gotui.NewStyle().Foreground(mustColor(pretty.TuiSubText))
+	dimStyle   = gotui.NewStyle().Foreground(gotui.BrightBlack).Dim()
+	spinStyle  = gotui.NewStyle().Foreground(mustColor(pretty.TColorLightMagenta))
+	cmdStyle   = gotui.NewStyle().Foreground(gotui.Cyan)
+	titleStyle = gotui.NewStyle().Foreground(mustColor(pretty.TuiMainText)).Bold()
+
+	// helpDivider 帮助面板标题下的分隔线（面板宽 64 - 左右 padding 2）。
+	helpDivider = strings.Repeat("─", 62)
 )
 
 // scrollJump 滚轮/方向键滚动的行数。
@@ -132,9 +136,9 @@ func (w *inputViewport) KeyMap() gotui.KeyMap {
 	}
 	return out
 }
-func (w *inputViewport) IsFocused() bool               { return w.ta.IsFocused() }
-func (w *inputViewport) Watchers() []gotui.Watcher     { return w.ta.Watchers() }
-func (w *inputViewport) BindApp(app *gotui.App)        { w.ta.BindApp(app) }
+func (w *inputViewport) IsFocused() bool           { return w.ta.IsFocused() }
+func (w *inputViewport) Watchers() []gotui.Watcher { return w.ta.Watchers() }
+func (w *inputViewport) BindApp(app *gotui.App)    { w.ta.BindApp(app) }
 
 // offsetY 计算本帧滚动偏移：窗口规则让光标行保持可见（打字/粘贴贴底、
 // ↑↓ 导航跟随）。行号用 approxCursorLine 的折行前近似（行宽不超折行宽

@@ -105,6 +105,9 @@
    贴底 palette）。没有锚定 popover。`backdrop="none"` 不压暗下层且透明
    区域照常透出主树；框外点击仍关闭（透明 overlay 参与命中检测）；
    trapFocus/Esc 关闭与 backdrop 取值无关。帮助面板即此方案。
+   另：`truncate` 需要元素有确定宽度才生效——`grow` 拉伸的列没有宽度
+   边界，截断不静默失效，CJK 长描述会穿出面板；列表列一律显式
+   width + truncate。
 
 ## 三、二阶段改了什么（防复犯清单的反面）
 

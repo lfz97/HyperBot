@@ -83,23 +83,24 @@ templ (a *agentUI) Render() {
 			// 帮助面板：原生 modal（焦点圈定/Esc 关闭）。贴底浮动（justify-end
 			// + pb-1 压住输入行区域，palette 风格），backdrop none 不压暗
 			// 对话；框外点击关闭（closeOnBackdrop 默认开，透明 overlay 仍
-			// 参与命中检测）。
+			// 参与命中检测）。无边框设计：标题行 + 分隔线 + 浮层底色代替
+			// 框线；desc 必须显式宽度 + truncate——grow 无确定宽度边界，
+			// 截断不生效，CJK 描述会穿出面板。
 			<modal
 				open={a.helpOpen}
 				class="flex-col justify-end items-center pb-1"
 				backdrop="none"
 				keyMap={a.helpModalKeyMap()}>
-				<div
-					class="flex-col"
-					width={60}
-					border={tui.BorderRounded}
-					borderTitle=" slash commands — esc / ctrl+k 关闭 "
-					padding={1}
-					background={inputBg}>
+				<div class="flex-col" width={64} padding={1} background={inputBg}>
+					<div class="flex justify-between" height={1}>
+						<span class="truncate" height={1} textStyle={titleStyle}>slash commands</span>
+						<span class="truncate" height={1} textStyle={dimStyle}>esc / ctrl+k 关闭</span>
+					</div>
+					<span class="truncate" width={62} height={1} textStyle={dimStyle}>{helpDivider}</span>
 					for _, it := range a.t.helpItemsSnapshot() {
-						<div class="flex">
-							<span class="truncate" width={16} textStyle={cmdStyle}>{it.cmd}</span>
-							<span class="truncate grow" textStyle={subStyle}>{it.desc}</span>
+						<div class="flex" height={1}>
+							<span class="truncate" width={16} height={1} textStyle={cmdStyle}>{it.cmd}</span>
+							<span class="truncate" width={46} height={1} textStyle={subStyle}>{it.desc}</span>
 						</div>
 					}
 				</div>

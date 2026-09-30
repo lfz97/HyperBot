@@ -10,13 +10,13 @@ import (
 
 // namedColors 把 pretty 用的命名色映射到 go-tui 调色板。
 var namedColors = map[string]gotui.Color{
-	"red":       gotui.Red,
-	"green":     gotui.Green,
-	"yellow":    gotui.Yellow,
-	"cyan":      gotui.Cyan,
-	"white":     gotui.White,
-	"gray":      gotui.BrightBlack,
-	"orange":    gotui.BrightYellow,
+	"red":        gotui.Red,
+	"green":      gotui.Green,
+	"yellow":     gotui.Yellow,
+	"cyan":       gotui.Cyan,
+	"white":      gotui.White,
+	"gray":       gotui.BrightBlack,
+	"orange":     gotui.BrightYellow,
 	"lightgreen": gotui.BrightGreen,
 }
 

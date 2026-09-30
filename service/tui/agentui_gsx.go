@@ -132,32 +132,61 @@ func (a *agentUI) Render(app *tui.App) *tui.Element {
 		})
 		__tui_11 := tui.New(
 			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
-			tui.WithWidth(60),
-			tui.WithBorder(tui.BorderRounded),
-			tui.WithBorderTitle(" slash commands — esc / ctrl+k 关闭 "),
+			tui.WithWidth(64),
 			tui.WithPadding(1),
 			tui.WithBackground(inputBg),
 		)
+		__tui_12 := tui.New(
+			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
+			tui.WithJustify(tui.JustifySpaceBetween),
+			tui.WithHeight(1),
+		)
+		__tui_13 := tui.New(
+			tui.WithText("slash commands"),
+			tui.WithTruncate(true),
+			tui.WithHeight(1),
+			tui.WithTextStyle(titleStyle),
+		)
+		__tui_12.AddChild(__tui_13)
+		__tui_14 := tui.New(
+			tui.WithText("esc / ctrl+k 关闭"),
+			tui.WithTruncate(true),
+			tui.WithHeight(1),
+			tui.WithTextStyle(dimStyle),
+		)
+		__tui_12.AddChild(__tui_14)
+		__tui_11.AddChild(__tui_12)
+		__tui_15 := tui.New(
+			tui.WithText(helpDivider),
+			tui.WithTruncate(true),
+			tui.WithWidth(62),
+			tui.WithHeight(1),
+			tui.WithTextStyle(dimStyle),
+		)
+		__tui_11.AddChild(__tui_15)
 		for __idx_0, it := range a.t.helpItemsSnapshot() {
 			_ = __idx_0
-			__tui_12 := tui.New(
+			__tui_16 := tui.New(
 				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
+				tui.WithHeight(1),
 			)
-			__tui_13 := tui.New(
+			__tui_17 := tui.New(
 				tui.WithText(it.cmd),
 				tui.WithTruncate(true),
 				tui.WithWidth(16),
+				tui.WithHeight(1),
 				tui.WithTextStyle(cmdStyle),
 			)
-			__tui_12.AddChild(__tui_13)
-			__tui_14 := tui.New(
+			__tui_16.AddChild(__tui_17)
+			__tui_18 := tui.New(
 				tui.WithText(it.desc),
 				tui.WithTruncate(true),
-				tui.WithFlexGrow(1),
+				tui.WithWidth(46),
+				tui.WithHeight(1),
 				tui.WithTextStyle(subStyle),
 			)
-			__tui_12.AddChild(__tui_14)
-			__tui_11.AddChild(__tui_12)
+			__tui_16.AddChild(__tui_18)
+			__tui_11.AddChild(__tui_16)
 		}
 		__tui_10.AddChild(__tui_11)
 		__tui_0.AddChild(__tui_10)

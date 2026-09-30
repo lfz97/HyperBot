@@ -38,11 +38,11 @@ const (
 )
 
 type msgSeg struct {
-	id    int
-	kind  segKind
-	spans []pretty.Span // segText：片段列表（连续写入追加）
-	text  string        // segMarkdown：markdown 源码
-	streaming bool      // segMarkdown：流式中（MarkdownDelta 可继续追加）
+	id        int
+	kind      segKind
+	spans     []pretty.Span // segText：片段列表（连续写入追加）
+	text      string        // segMarkdown：markdown 源码
+	streaming bool          // segMarkdown：流式中（MarkdownDelta 可继续追加）
 }
 
 type helpItem struct{ cmd, desc string }

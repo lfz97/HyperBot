@@ -25,6 +25,7 @@ var (
 	subStyle  = gotui.NewStyle().Foreground(mustColor(pretty.TuiSubText))
 	dimStyle  = gotui.NewStyle().Foreground(gotui.BrightBlack).Dim()
 	spinStyle = gotui.NewStyle().Foreground(mustColor(pretty.TColorLightMagenta))
+	cmdStyle  = gotui.NewStyle().Foreground(gotui.Cyan)
 )
 
 // scrollJump 滚轮/方向键滚动的行数。

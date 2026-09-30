@@ -80,23 +80,25 @@ templ (a *agentUI) Render() {
 				<span width={2} height={1} background={inputBg} textStyle={a.indicatorStyle()}>{a.indicatorText()}</span>
 				@a.inputView(app)
 			</div>
-			// 帮助面板：原生 modal（backdrop/Esc 关闭/焦点圈定），打开期间
-			// trapFocus 拦截父组件按键，ctrl+k 经 modal keyMap 关闭。
+			// 帮助面板：原生 modal（焦点圈定/Esc 关闭）。贴底浮动（justify-end
+			// + pb-1 压住输入行区域，palette 风格），backdrop none 不压暗
+			// 对话；框外点击关闭（closeOnBackdrop 默认开，透明 overlay 仍
+			// 参与命中检测）。
 			<modal
 				open={a.helpOpen}
-				class="justify-center items-center"
-				backdrop="dim"
+				class="flex-col justify-end items-center pb-1"
+				backdrop="none"
 				keyMap={a.helpModalKeyMap()}>
 				<div
 					class="flex-col"
 					width={60}
 					border={tui.BorderRounded}
-					borderTitle=" slash commands — ctrl+k 关闭 "
+					borderTitle=" slash commands — esc / ctrl+k 关闭 "
 					padding={1}
-					background={bgStyle}>
+					background={inputBg}>
 					for _, it := range a.t.helpItemsSnapshot() {
 						<div class="flex">
-							<span class="truncate" width={16} textStyle={mainStyle}>{it.cmd}</span>
+							<span class="truncate" width={16} textStyle={cmdStyle}>{it.cmd}</span>
 							<span class="truncate grow" textStyle={subStyle}>{it.desc}</span>
 						</div>
 					}

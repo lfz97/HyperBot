@@ -125,18 +125,18 @@ func (a *agentUI) Render(app *tui.App) *tui.Element {
 		__tui_10 := app.MountPersistent(a, 3, func() tui.Component {
 			return tui.NewModal(
 				tui.WithModalOpen(a.helpOpen),
-				tui.WithModalBackdrop("dim"),
+				tui.WithModalBackdrop("none"),
 				tui.WithModalKeyMap(a.helpModalKeyMap()),
-				tui.WithModalElementOptions(tui.WithJustify(tui.JustifyCenter), tui.WithAlign(tui.AlignCenter)),
+				tui.WithModalElementOptions(tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column), tui.WithJustify(tui.JustifyEnd), tui.WithAlign(tui.AlignCenter), tui.WithPaddingTRBL(0, 0, 1, 0)),
 			)
 		})
 		__tui_11 := tui.New(
 			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
 			tui.WithWidth(60),
 			tui.WithBorder(tui.BorderRounded),
-			tui.WithBorderTitle(" slash commands — ctrl+k 关闭 "),
+			tui.WithBorderTitle(" slash commands — esc / ctrl+k 关闭 "),
 			tui.WithPadding(1),
-			tui.WithBackground(bgStyle),
+			tui.WithBackground(inputBg),
 		)
 		for __idx_0, it := range a.t.helpItemsSnapshot() {
 			_ = __idx_0
@@ -147,7 +147,7 @@ func (a *agentUI) Render(app *tui.App) *tui.Element {
 				tui.WithText(it.cmd),
 				tui.WithTruncate(true),
 				tui.WithWidth(16),
-				tui.WithTextStyle(mainStyle),
+				tui.WithTextStyle(cmdStyle),
 			)
 			__tui_12.AddChild(__tui_13)
 			__tui_14 := tui.New(

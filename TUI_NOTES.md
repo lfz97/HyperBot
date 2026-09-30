@@ -100,6 +100,11 @@
 8. **staging mutex + MarkDirty 是线程契约**（引擎 goroutine 永不阻塞、UI 变更
    只在主循环落地），不是补丁，保留。`showMsgAndExit` 末尾的 `select{}`
    （引擎调用方永不返回）是引擎层契约，也保留。
+9. **"浮窗"只有 Modal 一种**：overlay 合成层全屏渲染、定位全靠 overlay
+   元素自己的 flex class（如 `flex-col justify-end items-center pb-1` =
+   贴底 palette）。没有锚定 popover。`backdrop="none"` 不压暗下层且透明
+   区域照常透出主树；框外点击仍关闭（透明 overlay 参与命中检测）；
+   trapFocus/Esc 关闭与 backdrop 取值无关。帮助面板即此方案。
 
 ## 三、二阶段改了什么（防复犯清单的反面）
 

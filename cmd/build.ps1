@@ -6,6 +6,13 @@ $LDFLAGS = "-s -w"
 
 Write-Host "构建 windows-x64..." -ForegroundColor Yellow
 
+# 先跑 .gsx 代码生成（幂等：模板没改时输出零差异），
+# 防止"改了模板忘跑 go generate、构建静默用旧视图"——生成器版本由 go.mod 钉住
+Push-Location service/tui
+go generate ./...
+if ($LASTEXITCODE -ne 0) { Pop-Location; exit 1 }
+Pop-Location
+
 # 确保输出目录存在
 if (-not (Test-Path $OutputDir)) {
     New-Item -ItemType Directory -Path $OutputDir | Out-Null

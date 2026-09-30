@@ -47,18 +47,21 @@ func (a *agentUI) inputView(app *gotui.App) gotui.Component {
 	return a.input
 }
 
-// inputViewport 输入框的滚动视口（设计参照 pi agent 的 editor viewport）。
+// inputViewport 输入框的展示窗口（opencode 同款策略：限高、不滚动）。
 //
-// 库的 TextArea 没有 scroll-to-cursor：内容超过钳制行数后光标行被直接
-// 裁掉（编辑发生在不可见处）。这个包装在 ta 的元素上叠一层滚动视口：
-// 高度钳到终端的 30%（≥5 行），滚动偏移按光标行跟随——光标永远可见，
-// 输入区永不撑爆布局。
+// 库的 TextArea 超过钳制行数后从顶部裁剪（光标行不可见、编辑发生在
+// 不可见处）。这个包装改成底部对齐的窗口：高度钳到 maxRows，偏移按
+// 光标行窗口规则跟随（打字/粘贴贴底、↑↓ 导航跟随）——光标永远可见，
+// 但不支持滚轮临时翻看（内容超出部分靠 ↑ 导航或直接提交）。
 //
-// 两个配套决定：
-//   - ta 用虚拟光标（绘制 ▌ 字形）：库对滚动元素内真实终端光标的定位
-//     有缺陷（captureCursor 不减滚动偏移），绘制的字形随内容滚动、天然正确；
-//   - 光标行号按"光标前的 \n 数"近似（行宽不超折行宽时精确，超长折行
-//     有有界误差），窗口规则三分支保持稳定不震荡。
+// 实现要点（踩坑记录见 TUI_NOTES.md）：
+//   - ta 用虚拟光标：库对滚动元素内真实光标的定位有缺陷
+//     （captureCursor 不减滚动偏移），绘制 ▌ 字形随内容滚动天然正确
+//   - 输入行高度必须显式设（滚动元素 intrinsic 恒 0，自动测高塌成 1 行）
+//   - ta 自带 flexGrow(1)（横向填充用）在视口列里会把它纵向撑到无限
+//     滚动布局的哨兵值，必须中和；宽度用 100% 拉满（否则 ta 按内容
+//     intrinsic 宽折行，文本只占左半边）
+//   - 光标行号按"光标前 \n 数"近似（行宽不超折行宽时精确）
 //
 // 分发表/焦点/看门狗经包装组件发现，逐项委托回 ta（mount 包装的标准做法，
 // 与旧 pasteSafeInput 同骨架，已验证）。
@@ -67,24 +70,19 @@ type inputViewport struct {
 	prevEl *gotui.Element // 上一帧渲染的元素（读布局后的滚动状态）
 	offset int            // 当前滚动偏移（以布局钳制后的值为准）
 	lastH  int            // 上一帧钳制后的视口高度（供模板设输入行高度）
-
-	// 滚轮临时查看别处时暂停光标跟随；滚回底部或任何编辑/移动光标
-	// 的动作（光标位置或文本长度变化）自动恢复——与消息区 follow 语义一致
-	followCursor  bool
-	lastPos       int // 上帧光标位置（字素索引）
-	lastTextLen   int // 上帧文本字节数
 }
 
-const inputViewportMinRows = 5
+// inputViewportMaxRows 视口行数上限（opencode 同款：10 行）。
+const inputViewportMaxRows = 10
 
 func newInputViewport(ta *gotui.TextArea) *inputViewport {
-	return &inputViewport{ta: ta, followCursor: true}
+	return &inputViewport{ta: ta}
 }
 
-// maxRows 视口最大行数：终端高的 30%，下限 5 行（pi 同款参数）。
+// maxRows 视口最大行数：上限 10，小终端钳到一半高。
 func (w *inputViewport) maxRows(app *gotui.App) int {
 	_, termH := app.Size()
-	return max(inputViewportMinRows, termH*3/10)
+	return min(inputViewportMaxRows, max(4, termH/2))
 }
 
 func (w *inputViewport) Render(app *gotui.App) *gotui.Element {
@@ -101,8 +99,9 @@ func (w *inputViewport) Render(app *gotui.App) *gotui.Element {
 	)
 	// 内容保持自然高度：ta 的 elementOpts 自带 flexGrow(1)（原为输入行里的
 	// 横向填充），在视口列里会把它纵向撑到无限滚动布局的哨兵值（100000），
-	// 必须中和；宽度由视口列的 cross 轴 stretch 填满，无需自身 grow
-	taEl.Apply(gotui.WithFlexGrow(0), gotui.WithFlexShrink(0))
+	// 必须中和；宽度必须显式拉满——auto 宽会按内容 intrinsic（最长行）收缩，
+	// 折行宽跟着变窄、文本只占左半边
+	taEl.Apply(gotui.WithFlexGrow(0), gotui.WithFlexShrink(0), gotui.WithWidthPercent(100))
 	vp.AddChild(taEl)
 	w.prevEl = vp
 	w.lastH = h
@@ -121,10 +120,10 @@ func (w *inputViewport) IsFocused() bool               { return w.ta.IsFocused()
 func (w *inputViewport) Watchers() []gotui.Watcher     { return w.ta.Watchers() }
 func (w *inputViewport) BindApp(app *gotui.App)        { w.ta.BindApp(app) }
 
-// offsetY 计算本帧滚动偏移：跟随光标时用窗口规则（光标行保持可见）。
-// 虚拟光标模式下没有 cursorSource 可读，行号用 approxCursorLine 的
-// 折行前近似（行宽不超折行宽时精确；超长折行有有界误差）。
-// 负值/超界由布局的 clampScrollOffset 兜底钳制。
+// offsetY 计算本帧滚动偏移：窗口规则让光标行保持可见（打字/粘贴贴底、
+// ↑↓ 导航跟随）。行号用 approxCursorLine 的折行前近似（行宽不超折行宽
+// 时精确；超长折行有有界误差）。负值/超界由布局的 clampScrollOffset
+// 兜底钳制。
 func (w *inputViewport) offsetY() int {
 	el := w.prevEl
 	if el == nil {
@@ -132,49 +131,15 @@ func (w *inputViewport) offsetY() int {
 	}
 	_, scrollY := el.ScrollOffset()
 	w.offset = scrollY // 以布局钳制后的值为准
-
-	// 光标位置或文本长度变化（打字/退格/方向键/粘贴）→ 恢复光标跟随
-	pos, textLen := w.ta.CursorPos(), len(w.ta.Text())
-	if pos != w.lastPos || textLen != w.lastTextLen {
-		w.lastPos, w.lastTextLen = pos, textLen
-		w.followCursor = true
-	}
-
-	if w.followCursor {
-		line := approxCursorLine(w.ta)
-		vh := el.ContentRect().Height
-		switch {
-		case line < scrollY:
-			w.offset = line // 光标升到窗口上方（↑ 导航），向上滚
-		case vh > 0 && line >= scrollY+vh:
-			w.offset = line - vh + 1 // 光标落到窗口下方，向下滚
-		}
+	line := approxCursorLine(w.ta)
+	vh := el.ContentRect().Height
+	switch {
+	case line < scrollY:
+		w.offset = line // 光标升到窗口上方（↑ 导航），向上滚
+	case vh > 0 && line >= scrollY+vh:
+		w.offset = line - vh + 1 // 光标落到窗口下方，向下滚
 	}
 	return w.offset
-}
-
-// hitRect 视口的屏幕矩形（上帧布局结果），供滚轮命中判断。
-func (w *inputViewport) hitRect() (gotui.Rect, bool) {
-	if w.prevEl == nil {
-		return gotui.Rect{}, false
-	}
-	return w.prevEl.Rect(), true
-}
-
-// wheelScroll 滚轮滚动输入视口：临时脱离光标跟随（查看别处内容），
-// 滚回底部或任何编辑动作都会恢复跟随。
-// 必须直接 ScrollTo 到元素上（改 scrollY 并置脏）：若只写 w.offset，
-// 下一帧 offsetY 会先从旧元素读回旧值把它覆盖，滚轮永远不生效。
-func (w *inputViewport) wheelScroll(delta int) {
-	el := w.prevEl
-	if el == nil {
-		return
-	}
-	_, sy := el.ScrollOffset()
-	_, maxY := el.MaxScroll()
-	ny := max(0, min(sy+delta, maxY))
-	el.ScrollTo(0, ny)
-	w.followCursor = ny >= maxY
 }
 
 // approxCursorLine 光标所在行号（按 \n 计，不含折行展开的近似）。
@@ -271,27 +236,19 @@ func (a *agentUI) helpModalKeyMap() gotui.KeyMap {
 	}
 }
 
-// HandleMouse 滚轮分发：光标位置在输入视口上则滚输入框（查看粘贴的
-// 长内容），其余位置滚消息区。原生路径（ElementAtPoint 命中可滚元素）
-// 在每帧重建的树里会被下一帧的 scrollOffset 覆盖，所以滚动状态由组件持有。
+// HandleMouse 滚轮滚动消息区（输入框不支持滚轮——限高窗口 + 光标跟随，
+// 见 inputViewport）。原生路径（ElementAtPoint 命中可滚元素）在每帧重建
+// 的树里会被下一帧的 scrollOffset 覆盖，所以滚动状态由组件持有。
 func (a *agentUI) HandleMouse(me gotui.MouseEvent) bool {
 	switch me.Button {
 	case gotui.MouseWheelUp:
-		return a.wheelBy(-scrollJump, me)
+		a.scrollBy(-scrollJump)
+		return true
 	case gotui.MouseWheelDown:
-		return a.wheelBy(scrollJump, me)
-	}
-	return false
-}
-
-// wheelBy 按滚轮事件的屏幕位置分派给输入视口或消息区。
-func (a *agentUI) wheelBy(delta int, me gotui.MouseEvent) bool {
-	if r, ok := a.input.hitRect(); ok && me.Y >= r.Y && me.Y < r.Y+r.Height {
-		a.input.wheelScroll(delta)
+		a.scrollBy(scrollJump)
 		return true
 	}
-	a.scrollBy(delta)
-	return true
+	return false
 }
 
 // tick spinner 心跳 + 通知 TTL 检查（主循环执行）。

@@ -1,5 +1,7 @@
 package tui
 
+//go:generate go run github.com/grindlemire/go-tui/cmd/tui generate agentui.gsx
+
 import (
 	"time"
 
@@ -32,10 +34,11 @@ const bigOffset = 1 << 28
 
 // inputView 返回输入框组件实例。必须以 @ 函数调用形式（@a.inputView(app)）
 // 渲染：函数调用走 app.Mount，元素被打上 component 标，分发表才能按聚焦
-// 状态门控 textarea 的 focus-gated 绑定。直接 @a.ta 只调 Render 不打标，
+// 状态门控输入框的 focus-gated 绑定。直接 @a.ta 只调 Render 不打标，
 // 聚合其 KeyMap 到根组件会被框架判为 dispatch table error。
+// 返回的是带粘贴防护的包装组件（见 pasteSafeInput）。
 func (a *agentUI) inputView(app *gotui.App) gotui.Component {
-	return a.ta
+	return a.input
 }
 
 // ── Component 接口（视图部分见 agentui_gsx.go）──────
@@ -291,4 +294,91 @@ func (v *textSegView) UpdateProps(fresh gotui.Component) {
 	}
 	v.spans = f.spans
 	v.el = richEl(v.spans)
+}
+
+// ── 输入框粘贴防护 ───────────────────────────────
+
+// pasteSafeInput 输入框的粘贴防护包装。
+//
+// go-tui v0.22.1 没有 bracketed paste（?2004）支持：终端粘贴多行文本时，
+// 其中的 \r 与用户手敲的 Enter 在字节层完全不可区分，都在第一个换行处
+// 触发提交、后续内容涌入清空后的输入框。这里用输入节奏区分：粘贴是
+// 整块到达（事件间隔微秒级），人类打字峰值约 20 键/秒、按键重复率约
+// 30Hz，都远够不着"窗口内 ≥4 击"的阈值——判定为粘贴流时 Enter 改为
+// 插入换行，整段粘贴完再手动 Enter 提交。
+//
+// 薪火相传的注意点：KeyMap 每帧被分发表重建调用，这里对 ta.KeyMap() 的
+// 副本做绑定替换（ta 每次也新建 KeyMap，不会互相污染）。
+type pasteSafeInput struct {
+	ta   *gotui.TextArea
+	hits []time.Time // 最近输入事件时间戳，仅主循环（dispatch）读写
+}
+
+const (
+	pasteWindow = 50 * time.Millisecond // 节奏判定窗口
+	pasteMinHit = 4                     // 窗口内达到该击数判定为粘贴流
+)
+
+func newPasteSafeInput(ta *gotui.TextArea) *pasteSafeInput {
+	return &pasteSafeInput{ta: ta}
+}
+
+// Render 直接用 ta 的元素树（焦点回调/光标源都在里面）。
+func (w *pasteSafeInput) Render(app *gotui.App) *gotui.Element {
+	return w.ta.Render(app)
+}
+
+// KeyMap 以 ta 的绑定表为底本，替换 Enter/AnyRune 两个 focus-gated 绑定。
+func (w *pasteSafeInput) KeyMap() gotui.KeyMap {
+	km := w.ta.KeyMap()
+	for i := range km {
+		b := &km[i]
+		if !b.Pattern.FocusRequired {
+			continue
+		}
+		switch {
+		case b.Pattern.Key == gotui.KeyEnter:
+			orig := b.Handler
+			b.Handler = func(ke gotui.KeyEvent) {
+				if w.pasting() {
+					w.ta.InsertText("\n")
+					return
+				}
+				orig(ke)
+			}
+		case b.Pattern.AnyRune:
+			orig := b.Handler
+			b.Handler = func(ke gotui.KeyEvent) {
+				w.mark()
+				orig(ke)
+			}
+		}
+	}
+	return km
+}
+
+// 分发表/焦点/看门狗都经包装组件发现，逐项委托回 ta。
+func (w *pasteSafeInput) IsFocused() bool           { return w.ta.IsFocused() }
+func (w *pasteSafeInput) Watchers() []gotui.Watcher { return w.ta.Watchers() }
+func (w *pasteSafeInput) BindApp(app *gotui.App)    { w.ta.BindApp(app) }
+
+// mark 记录一次输入事件，裁掉窗口外的旧记录。
+func (w *pasteSafeInput) mark() {
+	now := time.Now()
+	cutoff := now.Add(-pasteWindow)
+	i := 0
+	for i < len(w.hits) && w.hits[i].Before(cutoff) {
+		i++
+	}
+	w.hits = append(w.hits[i:], now)
+}
+
+// pasting 判断当前 Enter 是否落在粘贴流里（含当前 Enter 自身计 1 击）。
+func (w *pasteSafeInput) pasting() bool {
+	cutoff := time.Now().Add(-pasteWindow)
+	n := 1
+	for i := len(w.hits) - 1; i >= 0 && w.hits[i].After(cutoff); i-- {
+		n++
+	}
+	return n >= pasteMinHit
 }

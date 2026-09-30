@@ -10,7 +10,7 @@ import (
 type agentUI struct {
 	t *Tui
 
-	ta *tui.TextArea // 输入框组件实例（跨帧同一实例，经 inputView mount 渲染）
+	ta *tui.TextArea // 输入框组件实例（跨帧同一实例；经 input 包装组件 mount 渲染）
 
 	// ── 以下字段仅主循环读写 ──
 	follow   bool             // 贴底跟随：新内容到达时自动滚到底
@@ -18,13 +18,17 @@ type agentUI struct {
 	spinN    int              // spinner 帧计数
 	msgsRef  *tui.Ref         // 消息区滚动容器（滚动计算的参照）
 	helpOpen *tui.State[bool] // 帮助面板（原生 modal）开关
+	input    *pasteSafeInput  // 输入框的粘贴防护包装（见 ui.go）
 }
 
 func newAgentUI(t *Tui) *agentUI {
 	a := &agentUI{t: t, follow: true, msgsRef: tui.NewRef(), helpOpen: tui.NewState(false)}
 	a.ta = tui.NewTextArea(
 		tui.WithTextAreaAutoFocus(true),
-		tui.WithTextAreaMaxHeight(3),
+		// 不设 maxHeight：库的 TextArea 没有 scroll-to-cursor，
+		// 内容超过钳制行数后光标行被裁掉、编辑全部发生在不可见处
+		// （粘贴/超长输入"看起来死了"）。放开后输入框随内容生长，
+		// 光标永远可见——与 tview 时代行为一致。
 		tui.WithTextAreaTextStyle(mainStyle),
 		tui.WithTextAreaElementOptions(
 			tui.WithFlexGrow(1),
@@ -32,6 +36,7 @@ func newAgentUI(t *Tui) *agentUI {
 		),
 		tui.WithTextAreaOnSubmit(t.submitInput),
 	)
+	a.input = newPasteSafeInput(a.ta)
 	return a
 }
 
@@ -170,6 +175,7 @@ func (a *agentUI) updatePropsFields(fresh tui.Component) {
 	a.follow = f.follow
 	a.scrollY = f.scrollY
 	a.spinN = f.spinN
+	a.input = f.input
 }
 
 func (a *agentUI) UpdateProps(fresh tui.Component) {

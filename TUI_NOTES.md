@@ -59,6 +59,19 @@
    PropsUpdater 组件每帧执行 factory + `UpdateProps(fresh)`，source 变化即
    重渲染（`ensureParsed` 按 source 串比对）。staging 里的段文本直接喂
    source 即可；`State[string]` 在这里没有额外收益（已验证 Mount 路径后弃用）。
+6. **粘贴没有 bracketed paste 支持（v0.22.1 最新版也没有）**：终端粘贴的
+   `\r` 与手敲 Enter 在字节层不可区分，多行粘贴会在第一个换行处被提交。
+   解法是 app 层的 `pasteSafeInput` 包装组件（ui.go）：输入节奏启发式
+   （窗口 50ms 内 ≥4 击 = 粘贴流，人类打字/按键重复率远够不着）判定粘贴
+   时 Enter 改插换行。注意 pty 测试驱动一次性写入字符串 = 粘贴节奏，
+   测"真人打字"必须逐字符发送。
+7. **TextArea 没有 scroll-to-cursor（库注释原话）**：内容（含折行）超过
+   `maxHeight` 钳制行数后，光标行被直接裁掉——超长输入/粘贴后所有编辑
+   都发生在不可见处，看起来"输入框死了"。所以**不要设 maxHeight**：输入框
+   随内容生长（tview 时代行为），光标永远可见。
+8. **`//go:generate` 指令容易在整文件重写时弄丢**：丢了之后 `go generate`
+   和 build.sh 的生成防护都会静默空转。改 ui.go 时检查指令还在
+   `package tui` 之后。
 6. **RichText 原生处理换行**：`WithRichText(spans...)` + `WithWrap(true)`，
    span 内的 `\n` 自然分行、行内多样式按词折行（`wrapSpans`）——不需要手工
    切行再横向拼装。span 的零值 Style 字段在渲染时继承元素基样式。
@@ -93,6 +106,8 @@
    发送并断言屏幕内容（断言"看屏幕"而非"看字节流"，流式 diff 输出不可靠）。
 
 - [ ] 打字实时上屏；Enter 提交（inputChan 收到）；提交后输入框清空
+- [ ] **多行粘贴**：首行不被提交、整段留在输入框、Backspace/打字可见、
+      手动 Enter 整段提交（pty 驱动一次写入即粘贴节奏）
 - [ ] Esc 失焦后打字自愈（重新聚焦并补上字符）
 - [ ] Esc×2 / Ctrl+C 触发 escFn（GOT-INTERRUPT 通知出现）
 - [ ] Ctrl+K 帮助 modal 开（backdrop+居中）；**Esc 关闭后输入立即可用**；

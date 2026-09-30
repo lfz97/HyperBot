@@ -50,6 +50,7 @@ func (a *agentUI) Render(app *tui.App) *tui.Element {
 		tui.WithFlexGrow(1), tui.WithFlexShrink(1),
 		tui.WithMinHeight(0),
 		tui.WithScrollable(tui.ScrollVertical),
+		tui.WithScrollbarHidden(true),
 		tui.WithBackground(bgStyle),
 		tui.WithScrollOffset(0, a.offsetY()),
 	)

@@ -49,7 +49,7 @@ templ (a *agentUI) Render() {
 		// 消息区：可滚动、占满剩余空间。退出态仍保留（退出消息必须可见）。
 		<div
 			ref={a.msgsRef}
-			class="flex-col flex-1 min-h-0 overflow-y-scroll"
+			class="flex-col flex-1 min-h-0 overflow-y-scroll scrollbar-hidden"
 			background={bgStyle}
 			scrollOffset={0, a.offsetY()}>
 			if a.t.bannerSetSnapshot() {

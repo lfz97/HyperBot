@@ -3,7 +3,9 @@ package tui
 //go:generate go run github.com/grindlemire/go-tui/cmd/tui generate agentui.gsx
 
 import (
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"HyperBot/utils/pretty"
 	gotui "github.com/grindlemire/go-tui"
@@ -32,12 +34,123 @@ const scrollJump = 3
 // 布局时 clampScrollOffset 会把它钳到真正的底部。
 const bigOffset = 1 << 28
 
+func (a *agentUI) inputHeight() int {
+	return a.input.height()
+}
+
 // inputView 返回输入框组件实例。必须以 @ 函数调用形式（@a.inputView(app)）
 // 渲染：函数调用走 app.Mount，元素被打上 component 标，分发表才能按聚焦
 // 状态门控输入框的 focus-gated 绑定。直接 @a.ta 只调 Render 不打标，
 // 聚合其 KeyMap 到根组件会被框架判为 dispatch table error。
+// 返回的是带滚动视口的包装组件（见 inputViewport）。
 func (a *agentUI) inputView(app *gotui.App) gotui.Component {
-	return a.ta
+	return a.input
+}
+
+// inputViewport 输入框的滚动视口（设计参照 pi agent 的 editor viewport）。
+//
+// 库的 TextArea 没有 scroll-to-cursor：内容超过钳制行数后光标行被直接
+// 裁掉（编辑发生在不可见处）。这个包装在 ta 的元素上叠一层滚动视口：
+// 高度钳到终端的 30%（≥5 行），滚动偏移按光标行跟随——光标永远可见，
+// 输入区永不撑爆布局。
+//
+// 两个配套决定：
+//   - ta 用虚拟光标（绘制 ▌ 字形）：库对滚动元素内真实终端光标的定位
+//     有缺陷（captureCursor 不减滚动偏移），绘制的字形随内容滚动、天然正确；
+//   - 光标行号按"光标前的 \n 数"近似（行宽不超折行宽时精确，超长折行
+//     有有界误差），窗口规则三分支保持稳定不震荡。
+//
+// 分发表/焦点/看门狗经包装组件发现，逐项委托回 ta（mount 包装的标准做法，
+// 与旧 pasteSafeInput 同骨架，已验证）。
+type inputViewport struct {
+	ta     *gotui.TextArea
+	prevEl *gotui.Element // 上一帧渲染的元素（读 ReportCursor/ContentRect）
+	offset int            // 当前滚动偏移（以布局钳制后的值为准）
+	lastH  int            // 上一帧钳制后的视口高度（供模板设输入行高度）
+}
+
+const inputViewportMinRows = 5
+
+func newInputViewport(ta *gotui.TextArea) *inputViewport {
+	return &inputViewport{ta: ta}
+}
+
+// maxRows 视口最大行数：终端高的 30%，下限 5 行（pi 同款参数）。
+func (w *inputViewport) maxRows(app *gotui.App) int {
+	_, termH := app.Size()
+	return max(inputViewportMinRows, termH*3/10)
+}
+
+func (w *inputViewport) Render(app *gotui.App) *gotui.Element {
+	taEl := w.ta.Render(app) // 自然高度 = 内容行数（含幻影光标行）
+	// ta 每渲染行一个子元素（含幻影光标行），据此钳视口高度
+	h := min(len(taEl.Children()), w.maxRows(app))
+	vp := gotui.New(
+		gotui.WithDirection(gotui.Column),
+		gotui.WithFlexGrow(1),
+		gotui.WithScrollable(gotui.ScrollVertical),
+		gotui.WithHeight(h),
+		gotui.WithScrollOffset(0, w.offsetY()),
+		gotui.WithBackground(inputBg),
+	)
+	// 内容保持自然高度：ta 的 elementOpts 自带 flexGrow(1)（原为输入行里的
+	// 横向填充），在视口列里会把它纵向撑到无限滚动布局的哨兵值（100000），
+	// 必须中和；宽度由视口列的 cross 轴 stretch 填满，无需自身 grow
+	taEl.Apply(gotui.WithFlexGrow(0), gotui.WithFlexShrink(0))
+	vp.AddChild(taEl)
+	w.prevEl = vp
+	w.lastH = h
+	return vp
+}
+
+// height 上一帧的视口高度。滚动元素对父级的 intrinsic 测量恒报 0
+// （库规则），输入行按内容自动测高会塌成 1 行、消息区吃掉全部剩余
+// 空间——所以行高必须显式设，取本值（滞后一帧，收敛）。
+func (w *inputViewport) height() int {
+	return max(w.lastH, 1)
+}
+
+func (w *inputViewport) KeyMap() gotui.KeyMap          { return w.ta.KeyMap() }
+func (w *inputViewport) IsFocused() bool               { return w.ta.IsFocused() }
+func (w *inputViewport) Watchers() []gotui.Watcher     { return w.ta.Watchers() }
+func (w *inputViewport) BindApp(app *gotui.App)        { w.ta.BindApp(app) }
+
+// offsetY 计算本帧滚动偏移：让光标行保持在视口内（窗口规则）。
+// 虚拟光标模式下没有 cursorSource 可读，行号用 approxCursorLine 的
+// 折行前近似（行宽不超折行宽时精确；超长折行有有界误差）。
+// 负值/超界由布局的 clampScrollOffset 兜底钳制。
+func (w *inputViewport) offsetY() int {
+	el := w.prevEl
+	if el == nil {
+		return 0
+	}
+	_, scrollY := el.ScrollOffset()
+	w.offset = scrollY // 以布局钳制后的值为准
+	line := approxCursorLine(w.ta)
+	vh := el.ContentRect().Height
+	switch {
+	case line < scrollY:
+		w.offset = line // 光标升到窗口上方（↑ 导航），向上滚
+	case vh > 0 && line >= scrollY+vh:
+		w.offset = line - vh + 1 // 光标落到窗口下方，向下滚
+	}
+	return w.offset
+}
+
+// approxCursorLine 光标所在行号（按 \n 计，不含折行展开的近似）。
+// CursorPos 是字素索引，与 rune 序在无组合字符时一致。
+func approxCursorLine(ta *gotui.TextArea) int {
+	text := ta.Text()
+	pos := ta.CursorPos()
+	off, n := 0, 0
+	for _, r := range text {
+		if n >= pos {
+			break
+		}
+		n++
+		off += utf8.RuneLen(r)
+	}
+	return strings.Count(text[:off], "\n")
 }
 
 // ── Component 接口（视图部分见 agentui_gsx.go）──────

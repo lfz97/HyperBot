@@ -14,7 +14,7 @@ import (
 type agentUI struct {
 	t *Tui
 
-	ta *tui.TextArea // 输入框组件实例（跨帧同一实例，经 inputView mount 渲染）
+	ta *tui.TextArea // 输入框组件实例（跨帧同一实例；经 inputViewport 包装渲染）
 
 	// ── 以下字段仅主循环读写 ──
 	follow   bool       // 贴底跟随：新内容到达时自动滚到底
@@ -22,16 +22,17 @@ type agentUI struct {
 	spinN    int        // spinner 帧计数
 	msgsRef  *tui.Ref   // 消息区滚动容器（滚动计算的参照）
 	helpOpen *tui.State[bool] // 帮助面板（原生 modal）开关
+	input    *inputViewport   // 输入框的滚动视口包装（见 ui.go）
 }
 
 func newAgentUI(t *Tui) *agentUI {
 	a := &agentUI{t: t, follow: true, msgsRef: tui.NewRef(), helpOpen: tui.NewState(false)}
 	a.ta = tui.NewTextArea(
 		tui.WithTextAreaAutoFocus(true),
-		// 不设 maxHeight：库的 TextArea 没有 scroll-to-cursor，
-		// 内容超过钳制行数后光标行被裁掉、编辑全部发生在不可见处
-		// （粘贴/超长输入"看起来死了"）。放开后输入框随内容生长，
-		// 光标永远可见——与 tview 时代行为一致。
+		// 虚拟光标（绘制 ▌ 字形而非驱动真实终端光标）：输入框放进滚动
+		// 视口后，库对滚动元素内真实光标的定位有缺陷（captureCursor 不减
+		// 滚动偏移，位置错/被裁），而绘制的字形随内容滚动、位置天然正确。
+		tui.WithTextAreaVirtualCursor(),
 		tui.WithTextAreaTextStyle(mainStyle),
 		tui.WithTextAreaElementOptions(
 			tui.WithFlexGrow(1),
@@ -39,6 +40,7 @@ func newAgentUI(t *Tui) *agentUI {
 		),
 		tui.WithTextAreaOnSubmit(t.submitInput),
 	)
+	a.input = newInputViewport(a.ta)
 	return a
 }
 
@@ -47,7 +49,7 @@ templ (a *agentUI) Render() {
 		// 消息区：可滚动、占满剩余空间。退出态仍保留（退出消息必须可见）。
 		<div
 			ref={a.msgsRef}
-			class="flex-col grow overflow-y-scroll"
+			class="flex-col flex-1 min-h-0 overflow-y-scroll"
 			background={bgStyle}
 			scrollOffset={0, a.offsetY()}>
 			if a.t.bannerSetSnapshot() {
@@ -72,7 +74,9 @@ templ (a *agentUI) Render() {
 				}
 			}
 			<span class="w-full text-right" height={1} textStyle={a.noticeStyle()}>{a.noticeText()}</span>
-			<div class="flex items-end">
+			// 行高显式设为视口高度：滚动元素的 intrinsic 测量恒为 0，
+			// 按内容自动测高会塌成 1 行（详见 ui.go inputViewport 注释）
+			<div class="flex items-end shrink-0" height={a.inputHeight()}>
 				<span width={2} height={1} background={inputBg} textStyle={a.indicatorStyle()}>{a.indicatorText()}</span>
 				@a.inputView(app)
 			</div>

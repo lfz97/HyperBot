@@ -71,13 +71,25 @@
    超时（25ms）放行，否则 Esc 键被无限期扣住；
    ③ 过滤协程必须在 NewAppWithReader 之后启动——构造期 kitty 协商同步
    读一次真实 stdin。
-7. **TextArea 没有 scroll-to-cursor（库注释原话）**：内容（含折行）超过
-   `maxHeight` 钳制行数后，光标行被直接裁掉——超长输入/粘贴后所有编辑
-   都发生在不可见处，看起来"输入框死了"。所以**不要设 maxHeight**：输入框
-   随内容生长（tview 时代行为），光标永远可见。
+7. **TextArea 没有 scroll-to-cursor（库注释原话）**：内容超过钳制行数后
+   光标行被裁掉。解法是 inputViewport 包装（ui.go，pi 同款 viewport）：
+   外层滚动容器 + ta 自然高度 + 视口高度钳到终端 30%（≥5 行），偏移按
+   光标行窗口规则跟随。实现时踩出四个连环坑（皆 pty+文件插桩实测）：
+   ① 滚动元素 intrinsic 恒为 0（库规则）→ 输入行按内容自动测高塌成
+   1 行、消息区吃光空间 → 输入行高度必须显式设（取视口上一帧钳制值）；
+   ② ta 的 elementOpts 自带 flexGrow(1)（横向填充用）在视口列里会把它
+   纵向撑到无限滚动布局的哨兵值 100000 → 视口内必须 WithFlexGrow(0)；
+   ③ 滚动元素内真实终端光标的定位有缺陷（captureCursor 不减滚动偏移）
+   → ta 必须用虚拟光标（绘制 ▌ 字形，随内容滚动天然正确）；
+   ④ 光标行号无公开 API，按"光标前 \n 数"近似（行宽不超折行宽时精确）。
+   另外根列里消息区要用 flex-1（grow+shrink）+ min-h-0，否则内容高度
+   会挤占输入行。
 8. **`//go:generate` 指令容易在整文件重写时弄丢**：丢了之后 `go generate`
    和 build.sh 的生成防护都会静默空转。改 ui.go 时检查指令还在
    `package tui` 之后。
+9. **WSL/drvfs 上 go run 会跑旧二进制**：/mnt/d（Windows 盘）的 mtime
+   精度不足，快速连续编辑后构建缓存判定"没变"。症状是"改了没效果"。
+   测试循环必须 `go build -o bin` 再跑二进制，不要用 go run。
 6. **RichText 原生处理换行**：`WithRichText(spans...)` + `WithWrap(true)`，
    span 内的 `\n` 自然分行、行内多样式按词折行（`wrapSpans`）——不需要手工
    切行再横向拼装。span 的零值 Style 字段在渲染时继承元素基样式。

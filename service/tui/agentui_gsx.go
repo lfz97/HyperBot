@@ -10,7 +10,7 @@ import (
 type agentUI struct {
 	t *Tui
 
-	ta *tui.TextArea // 输入框组件实例（跨帧同一实例，经 inputView mount 渲染）
+	ta *tui.TextArea // 输入框组件实例（跨帧同一实例；经 inputViewport 包装渲染）
 
 	// ── 以下字段仅主循环读写 ──
 	follow   bool             // 贴底跟随：新内容到达时自动滚到底
@@ -18,16 +18,17 @@ type agentUI struct {
 	spinN    int              // spinner 帧计数
 	msgsRef  *tui.Ref         // 消息区滚动容器（滚动计算的参照）
 	helpOpen *tui.State[bool] // 帮助面板（原生 modal）开关
+	input    *inputViewport   // 输入框的滚动视口包装（见 ui.go）
 }
 
 func newAgentUI(t *Tui) *agentUI {
 	a := &agentUI{t: t, follow: true, msgsRef: tui.NewRef(), helpOpen: tui.NewState(false)}
 	a.ta = tui.NewTextArea(
 		tui.WithTextAreaAutoFocus(true),
-		// 不设 maxHeight：库的 TextArea 没有 scroll-to-cursor，
-		// 内容超过钳制行数后光标行被裁掉、编辑全部发生在不可见处
-		// （粘贴/超长输入"看起来死了"）。放开后输入框随内容生长，
-		// 光标永远可见——与 tview 时代行为一致。
+		// 虚拟光标（绘制 ▌ 字形而非驱动真实终端光标）：输入框放进滚动
+		// 视口后，库对滚动元素内真实光标的定位有缺陷（captureCursor 不减
+		// 滚动偏移，位置错/被裁），而绘制的字形随内容滚动、位置天然正确。
+		tui.WithTextAreaVirtualCursor(),
 		tui.WithTextAreaTextStyle(mainStyle),
 		tui.WithTextAreaElementOptions(
 			tui.WithFlexGrow(1),
@@ -35,6 +36,7 @@ func newAgentUI(t *Tui) *agentUI {
 		),
 		tui.WithTextAreaOnSubmit(t.submitInput),
 	)
+	a.input = newInputViewport(a.ta)
 	return a
 }
 
@@ -45,7 +47,8 @@ func (a *agentUI) Render(app *tui.App) *tui.Element {
 	)
 	__tui_1 := tui.New(
 		tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
-		tui.WithFlexGrow(1),
+		tui.WithFlexGrow(1), tui.WithFlexShrink(1),
+		tui.WithMinHeight(0),
 		tui.WithScrollable(tui.ScrollVertical),
 		tui.WithBackground(bgStyle),
 		tui.WithScrollOffset(0, a.offsetY()),
@@ -102,6 +105,8 @@ func (a *agentUI) Render(app *tui.App) *tui.Element {
 		__tui_7 := tui.New(
 			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
 			tui.WithAlign(tui.AlignEnd),
+			tui.WithFlexShrink(0),
+			tui.WithHeight(a.inputHeight()),
 		)
 		__tui_8 := tui.New(
 			tui.WithText(a.indicatorText()),
@@ -173,6 +178,7 @@ func (a *agentUI) updatePropsFields(fresh tui.Component) {
 	a.follow = f.follow
 	a.scrollY = f.scrollY
 	a.spinN = f.spinN
+	a.input = f.input
 }
 
 func (a *agentUI) UpdateProps(fresh tui.Component) {

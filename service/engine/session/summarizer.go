@@ -36,10 +36,10 @@ func initSummarizerPrompts() {
 }
 
 // msgPrinter 本包对 TUI 的全部需求：摘要生成后往消息区打一行提示。
-// 在消费方按需声明小接口，而不是依赖 requirements.TuiService 的 13 个方法——
+// 在消费方按需声明小接口，而不是依赖 requirements.TuiService 的全部方法——
 // 否则 TUI 门面上任何签名变动都会牵连到跟它无关的 session 包。
 type msgPrinter interface {
-	PrintToMsgView(content string, clear bool)
+	PrintToMsgView(content []pretty.Span, clear bool)
 }
 
 func NewSummarizer(m config.Model, tui msgPrinter) summary.SessionSummarizer {

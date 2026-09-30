@@ -21,25 +21,28 @@ const (
 
 var spinnerFrames = []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
 
-// NoticeBar 常驻兜底提示（tview 标签形式，由 tagbridge 解析上色）。
+// NoticeBar 常驻兜底提示（纯文本 + 样式由 noticeStyle 计算）。
 const (
-	hintIdle    = `[gray::d]ctrl+k for help[-:-:-]`
-	hintRunning = `[gray::d]ctrl+c/esc to interrupt · ctrl+k for help[-:-:-]`
+	hintIdle    = "ctrl+k for help"
+	hintRunning = "ctrl+c/esc to interrupt · ctrl+k for help"
 )
 
 // segKind 消息段类型。连续的 PrintToMsgView 调用会合并进最近的 segText 段
-// （对应 tview 版"同一个 TextView 缓冲"的语义），ReplaceTail 把尾段转成 markdown。
+// （流式 delta 不膨胀段数量），assistant 正文由 MarkdownDelta 流进独立的
+// markdown 段、原生渲染。
 type segKind int
 
 const (
-	segText     segKind = iota // 受信 tview 标签文本（流式原文/工具块/用户回显/退出消息），tagbridge 解析
-	segMarkdown                // 渲染完成的 markdown 源码（go-tui 内置 Markdown 组件渲染）
+	segText     segKind = iota // pretty.Span 片段文本（工具块/用户回显/错误/退出消息）
+	segMarkdown                // markdown 源码（内置 Markdown 组件渲染，流式追加）
 )
 
 type msgSeg struct {
-	id   int
-	kind segKind
-	text string
+	id    int
+	kind  segKind
+	spans []pretty.Span // segText：片段列表（连续写入追加）
+	text  string        // segMarkdown：markdown 源码
+	streaming bool      // segMarkdown：流式中（MarkdownDelta 可继续追加）
 }
 
 type helpItem struct{ cmd, desc string }
@@ -56,9 +59,8 @@ type Tui struct {
 	// 重渲染），有状态 widget（TextArea/Markdown）通过 app.Mount 跨帧复用。
 	mu          sync.Mutex
 	segs        []*msgSeg
-	buf         string // 平面文本缓冲，复刻 TextView.GetText 的 LastIndex 语义
 	todoText    string
-	noticeMsg   string
+	noticeMsg   pretty.Span
 	noticeUntil time.Time
 	helpItems   []helpItem
 	bannerLines []string
@@ -155,66 +157,61 @@ func (t *Tui) helpItemsSnapshot() []helpItem {
 }
 
 // ── TuiService 接口实现 ─────────────────────────────
-// 线程契约与 tview 版一致：引擎侧任意 goroutine 可调、不阻塞；
+// 线程契约：引擎侧任意 goroutine 可调、不阻塞；
 // UI 变更统一在主循环的 Render 里落地。
 
-func (t *Tui) PrintToMsgView(content string, clear bool) {
+func (t *Tui) PrintToMsgView(content []pretty.Span, clear bool) {
 	t.mu.Lock()
 	if clear {
 		t.resetMsgsLocked()
 	}
-	if content != "" {
-		t.buf += content
-		// 连续文本合并进同一个 segText 段：流式 delta 不膨胀段数量，
-		// ReplaceTail 的"尾段后缀"判断也依赖这一合并语义
+	if len(content) > 0 {
+		// 连续片段合并进同一个 segText 段：流式 delta 不膨胀段数量
 		if n := len(t.segs); n > 0 && t.segs[n-1].kind == segText {
-			t.segs[n-1].text += content
+			t.segs[n-1].spans = append(t.segs[n-1].spans, content...)
 		} else {
 			t.segID++
-			t.segs = append(t.segs, &msgSeg{id: t.segID, kind: segText, text: content})
+			t.segs = append(t.segs, &msgSeg{id: t.segID, kind: segText, spans: content})
 		}
 	}
 	t.mu.Unlock()
 	t.markDirty()
 }
 
-// resetMsgsLocked 清空平面缓冲与段列表。元素树由 Render 每帧重建，
-// 这里只动数据。
+// resetMsgsLocked 清空段列表。元素树由 Render 每帧重建，这里只动数据。
 func (t *Tui) resetMsgsLocked() {
-	t.buf = ""
 	t.segs = nil
 }
 
-// ReplaceTailInMsgView 把消息区末尾的文本段替换成 markdown 段，返回是否替换成功。
-// 平面缓冲上的判断与 tview 版逐字节等价（LastIndex + 尾部对齐）；
-// 元素层要求尾部正好是最后一个 segText 段——连续 delta 已合并进单段，
-// 正常流式路径必然满足，极端交错场景宁可放弃替换也不改历史。
-func (t *Tui) ReplaceTailInMsgView(raw string, replacement string) bool {
+// MarkdownDelta 追加一段 assistant 正文：流进"最近一个流式中的 markdown 段"
+// （没有则新开一段）。每条 assistant 消息一段，组件原生渲染——无需
+// "流原文 + 结尾替换"两段式（ReplaceTailInMsgView 已删除）。
+func (t *Tui) MarkdownDelta(content string) {
+	if content == "" {
+		return
+	}
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	if raw == "" {
-		return false
-	}
-	i := strings.LastIndex(t.buf, raw)
-	if i < 0 || i+len(raw) != len(t.buf) {
-		return false
-	}
-	n := len(t.segs)
-	if n == 0 || t.segs[n-1].kind != segText || !strings.HasSuffix(t.segs[n-1].text, raw) {
-		return false
-	}
-	t.buf = t.buf[:i] + replacement
-	last := t.segs[n-1]
-	last.text = strings.TrimSuffix(last.text, raw)
-	if last.text == "" {
-		// 尾段被完整替换：原位变成 markdown 段，mount key 不变
-		last.kind = segMarkdown
-		last.text = replacement
+	if n := len(t.segs); n > 0 && t.segs[n-1].kind == segMarkdown && t.segs[n-1].streaming {
+		t.segs[n-1].text += content
 	} else {
 		t.segID++
-		t.segs = append(t.segs, &msgSeg{id: t.segID, kind: segMarkdown, text: replacement})
+		t.segs = append(t.segs, &msgSeg{id: t.segID, kind: segMarkdown, text: content, streaming: true})
 	}
-	return true
+	t.mu.Unlock()
+	t.markDirty()
+}
+
+// MarkdownDone 定稿最近的流式 markdown 段（去首尾空白、关闭流式标记）。
+// 前提是 Message.Content 与所有 Delta.Content 的拼接字节相同（两 provider
+// 实测如此），流式内容已在屏，收尾无需再回填。
+func (t *Tui) MarkdownDone() {
+	t.mu.Lock()
+	if n := len(t.segs); n > 0 && t.segs[n-1].streaming {
+		t.segs[n-1].text = strings.TrimSpace(t.segs[n-1].text)
+		t.segs[n-1].streaming = false
+	}
+	t.mu.Unlock()
+	t.markDirty()
 }
 
 // SetTodoText 更新清单栏文本，空串整栏隐藏。
@@ -227,8 +224,8 @@ func (t *Tui) SetTodoText(text string) {
 }
 
 // ShowNotice 显示一条临时通知，noticeTTL 后回落兜底提示。
-// msg 是 pretty.TBarXxx 生成的受信 tview 标签 markup，tagbridge 负责解析上色。
-func (t *Tui) ShowNotice(msg string) {
+// msg 是 pretty.TBarXxx 生成的单色片段。
+func (t *Tui) ShowNotice(msg pretty.Span) {
 	t.mu.Lock()
 	t.noticeMsg = msg
 	t.noticeUntil = time.Now().Add(noticeTTL)
@@ -282,13 +279,6 @@ func (t *Tui) ClearAppFuncTrigger() {
 	t.mu.Unlock()
 }
 
-// RenderMarkdown markdown 由消息区的内置 Markdown 组件原生渲染
-// （代码高亮、表格、列表），这里原样返回源码即可。
-// 旧的 glamour → 剥填充 → TranslateANSI → tview 标签管线整体删除。
-func (t *Tui) RenderMarkdown(in string) (string, error) {
-	return in, nil
-}
-
 func (t *Tui) ListenUserInput() chan string {
 	return t.inputChan
 }
@@ -302,7 +292,7 @@ func (t *Tui) ListenUserInput() chan string {
 //
 // Open() 幂等：错误可能发生在 Run() 启动之前（启动期配置错误），
 // 这里先确保终端初始化并渲染出第一帧。
-func (t *Tui) showMsgAndExit(msg string, waitForKey bool) {
+func (t *Tui) showMsgAndExit(msg []pretty.Span, waitForKey bool) {
 	t.PrintToMsgView(msg, false)
 	t.exiting.Store(true)
 	t.markDirty()
@@ -314,7 +304,7 @@ func (t *Tui) showMsgAndExit(msg string, waitForKey bool) {
 	select {}
 }
 
-func (t *Tui) ShowErrorInMsgViewAndExit(errmsg string) {
+func (t *Tui) ShowErrorInMsgViewAndExit(errmsg []pretty.Span) {
 	t.showMsgAndExit(errmsg, true)
 }
 
@@ -322,7 +312,7 @@ func (t *Tui) ShowSuccessInMsgViewAndExit(sussessmsg string) {
 	t.showMsgAndExit(pretty.TSuccess(sussessmsg), true)
 }
 
-func (t *Tui) ShowMsgAndExitNoTrigger(msg string) {
+func (t *Tui) ShowMsgAndExitNoTrigger(msg []pretty.Span) {
 	t.showMsgAndExit(msg, false)
 }
 

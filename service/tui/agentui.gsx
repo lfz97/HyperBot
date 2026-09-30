@@ -14,18 +14,18 @@ import (
 type agentUI struct {
 	t *Tui
 
-	ta *tui.TextArea // 输入框组件实例（跨帧同一实例，@a.ta 直接渲染）
+	ta *tui.TextArea // 输入框组件实例（跨帧同一实例，经 inputView mount 渲染）
 
 	// ── 以下字段仅主循环读写 ──
 	follow   bool       // 贴底跟随：新内容到达时自动滚到底
 	scrollY  int        // 非跟随态的滚动偏移
 	spinN    int        // spinner 帧计数
 	msgsRef  *tui.Ref   // 消息区滚动容器（滚动计算的参照）
-	helpOpen bool       // 帮助面板开关（二阶段换原生 modal）
+	helpOpen *tui.State[bool] // 帮助面板（原生 modal）开关
 }
 
 func newAgentUI(t *Tui) *agentUI {
-	a := &agentUI{t: t, follow: true, msgsRef: tui.NewRef()}
+	a := &agentUI{t: t, follow: true, msgsRef: tui.NewRef(), helpOpen: tui.NewState(false)}
 	a.ta = tui.NewTextArea(
 		tui.WithTextAreaAutoFocus(true),
 		tui.WithTextAreaMaxHeight(3),
@@ -56,7 +56,7 @@ templ (a *agentUI) Render() {
 				if s.kind == segMarkdown {
 					<markdown source={s.text} key={s.id} />
 				} else {
-					@newTextSegView(s.text)
+					@newTextSegView(s.spans)
 				}
 			}
 		</div>
@@ -68,7 +68,18 @@ templ (a *agentUI) Render() {
 					<span class="truncate" textStyle={todoLineStyle(line)}>{line}</span>
 				}
 			}
-			if a.helpOpen {
+			<span class="w-full text-right" height={1} textStyle={a.noticeStyle()}>{a.noticeText()}</span>
+			<div class="flex items-end">
+				<span width={2} height={1} background={inputBg} textStyle={a.indicatorStyle()}>{a.indicatorText()}</span>
+				@a.inputView(app)
+			</div>
+			// 帮助面板：原生 modal（backdrop/Esc 关闭/焦点圈定），打开期间
+			// trapFocus 拦截父组件按键，ctrl+k 经 modal keyMap 关闭。
+			<modal
+				open={a.helpOpen}
+				class="justify-center items-center"
+				backdrop="dim"
+				keyMap={a.helpModalKeyMap()}>
 				<div
 					class="flex-col"
 					width={60}
@@ -83,12 +94,7 @@ templ (a *agentUI) Render() {
 						</div>
 					}
 				</div>
-			}
-			<span class="w-full text-right" height={1} textStyle={a.noticeStyle()}>{a.noticeText()}</span>
-			<div class="flex items-end">
-				<span width={2} height={1} background={inputBg} textStyle={a.indicatorStyle()}>{a.indicatorText()}</span>
-				@a.inputView(app)
-			</div>
+			</modal>
 		}
 	</div>
 }

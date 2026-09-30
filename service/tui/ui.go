@@ -1,7 +1,5 @@
 package tui
 
-//go:generate go run github.com/grindlemire/go-tui/cmd/tui generate agentui.gsx
-
 import (
 	"time"
 
@@ -56,11 +54,13 @@ func (a *agentUI) KeyMap() gotui.KeyMap {
 			gotui.OnStop(gotui.AnyKey, func(ke gotui.KeyEvent) { ke.App().Stop() }),
 		}
 	}
-	return gotui.KeyMap{
-		gotui.OnStop(gotui.Rune('k').Ctrl(), func(ke gotui.KeyEvent) {
-			a.helpOpen = !a.helpOpen
-			a.t.app.MarkDirty()
-		}),
+	km := gotui.KeyMap{}
+	// modal 打开期间 ctrl+k 由 modal 自己的 keyMap 处理（trapFocus 会拦截
+	// 父组件绑定；且此处的 OnStop 会与 modal 的绑定冲突、炸掉分发表）
+	if !a.helpOpen.Get() {
+		km = append(km, gotui.OnStop(gotui.Rune('k').Ctrl(), func(ke gotui.KeyEvent) { a.toggleHelp() }))
+	}
+	return append(km,
 		// Esc：textarea 聚焦时它的 blur 绑定先吃掉第一次（focus-gated 优先），
 		// 失焦后的 Esc 到这里触发中断
 		gotui.OnStop(gotui.KeyEscape, func(ke gotui.KeyEvent) { a.interrupt() }),
@@ -99,6 +99,20 @@ func (a *agentUI) KeyMap() gotui.KeyMap {
 				a.ta.InsertText(string(ke.Rune))
 			}
 		}),
+	)
+}
+
+// toggleHelp 开关帮助面板（modal 的 open state）。
+func (a *agentUI) toggleHelp() {
+	a.helpOpen.Set(!a.helpOpen.Get())
+}
+
+// helpModalKeyMap modal 打开期间的补充绑定：ctrl+k 关闭。必须用
+// OnPreemptStop：trapFocus 的 AnyKey catch-all 也是 preempt 且先于普通
+// 轮分发，非 preempt 的自定义绑定永远轮不到（Esc 关闭由 modal 内建）。
+func (a *agentUI) helpModalKeyMap() gotui.KeyMap {
+	return gotui.KeyMap{
+		gotui.OnPreemptStop(gotui.Rune('k').Ctrl(), func(ke gotui.KeyEvent) { a.toggleHelp() }),
 	}
 }
 
@@ -124,7 +138,7 @@ func (a *agentUI) tick() {
 		return
 	}
 	a.t.mu.Lock()
-	expired := a.t.noticeMsg != "" && !time.Now().Before(a.t.noticeUntil)
+	expired := a.t.noticeMsg.Text != "" && !time.Now().Before(a.t.noticeUntil)
 	a.t.mu.Unlock()
 	if expired {
 		a.t.app.MarkDirty()
@@ -218,38 +232,28 @@ func (a *agentUI) indicatorStyle() gotui.Style {
 	return subStyle
 }
 
-// noticeText/noticeStyle 通知栏：临时通知优先，其次运行提示，兜底空闲提示。
-// 通知是单行受信 markup：文本取纯文本、样式取首个 run。
-func (a *agentUI) noticeText() string {
+// noticeSpan 通知栏当前应显示的内容：临时通知 > 运行提示 > 空闲提示。
+func (a *agentUI) noticeSpan() pretty.Span {
 	t := a.t
 	t.mu.Lock()
 	notice := t.noticeMsg
 	until := t.noticeUntil
 	t.mu.Unlock()
-
-	text := hintIdle
-	if notice != "" && time.Now().Before(until) {
-		text = notice
-	} else if t.running.Load() {
-		text = hintRunning
+	if notice.Text != "" && time.Now().Before(until) {
+		return notice
 	}
-	return plainText(text, dimStyle)
+	if t.running.Load() {
+		return pretty.Span{Text: hintRunning, Fg: pretty.TColorGray, Dim: true}
+	}
+	return pretty.Span{Text: hintIdle, Fg: pretty.TColorGray, Dim: true}
+}
+
+func (a *agentUI) noticeText() string {
+	return a.noticeSpan().Text
 }
 
 func (a *agentUI) noticeStyle() gotui.Style {
-	t := a.t
-	t.mu.Lock()
-	notice := t.noticeMsg
-	until := t.noticeUntil
-	t.mu.Unlock()
-
-	text := hintIdle
-	if notice != "" && time.Now().Before(until) {
-		text = notice
-	} else if t.running.Load() {
-		text = hintRunning
-	}
-	return firstRunStyle(text, dimStyle)
+	return spanStyle(a.noticeSpan(), dimStyle)
 }
 
 // todoLineStyle 按行首标记上色：◐ 进行中青色、☐ 待办正文色、其余暗灰。
@@ -270,12 +274,12 @@ func todoLineStyle(line string) gotui.Style {
 // （*tui.Element 只实现 Render）会让流式追加的文本冻结在首帧。
 // 包一层、在 UpdateProps 里重建元素树即可恢复逐帧刷新。
 type textSegView struct {
-	text string
-	el   *gotui.Element
+	spans []pretty.Span
+	el    *gotui.Element
 }
 
-func newTextSegView(text string) *textSegView {
-	return &textSegView{text: text, el: buildRichEl(text, mainStyle)}
+func newTextSegView(spans []pretty.Span) *textSegView {
+	return &textSegView{spans: spans, el: richEl(spans)}
 }
 
 func (v *textSegView) Render(app *gotui.App) *gotui.Element { return v.el }
@@ -285,8 +289,6 @@ func (v *textSegView) UpdateProps(fresh gotui.Component) {
 	if !ok {
 		return
 	}
-	if f.text != v.text {
-		v.text = f.text
-		v.el = buildRichEl(v.text, mainStyle)
-	}
+	v.spans = f.spans
+	v.el = richEl(v.spans)
 }

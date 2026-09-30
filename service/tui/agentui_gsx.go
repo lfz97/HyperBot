@@ -10,18 +10,18 @@ import (
 type agentUI struct {
 	t *Tui
 
-	ta *tui.TextArea // 输入框组件实例（跨帧同一实例，@a.ta 直接渲染）
+	ta *tui.TextArea // 输入框组件实例（跨帧同一实例，经 inputView mount 渲染）
 
 	// ── 以下字段仅主循环读写 ──
-	follow   bool     // 贴底跟随：新内容到达时自动滚到底
-	scrollY  int      // 非跟随态的滚动偏移
-	spinN    int      // spinner 帧计数
-	msgsRef  *tui.Ref // 消息区滚动容器（滚动计算的参照）
-	helpOpen bool     // 帮助面板开关（二阶段换原生 modal）
+	follow   bool             // 贴底跟随：新内容到达时自动滚到底
+	scrollY  int              // 非跟随态的滚动偏移
+	spinN    int              // spinner 帧计数
+	msgsRef  *tui.Ref         // 消息区滚动容器（滚动计算的参照）
+	helpOpen *tui.State[bool] // 帮助面板（原生 modal）开关
 }
 
 func newAgentUI(t *Tui) *agentUI {
-	a := &agentUI{t: t, follow: true, msgsRef: tui.NewRef()}
+	a := &agentUI{t: t, follow: true, msgsRef: tui.NewRef(), helpOpen: tui.NewState(false)}
 	a.ta = tui.NewTextArea(
 		tui.WithTextAreaAutoFocus(true),
 		tui.WithTextAreaMaxHeight(3),
@@ -70,7 +70,7 @@ func (a *agentUI) Render(app *tui.App) *tui.Element {
 			__tui_1.AddChild(__tui_3)
 		} else {
 			__tui_4 := app.Mount(a, tui.MountKey(1, __idx_0), func() tui.Component {
-				return newTextSegView(s.text)
+				return newTextSegView(s.spans)
 			})
 			__tui_1.AddChild(__tui_4)
 		}
@@ -88,63 +88,70 @@ func (a *agentUI) Render(app *tui.App) *tui.Element {
 				__tui_0.AddChild(__tui_5)
 			}
 		}
-		if a.helpOpen {
-			__tui_6 := tui.New(
-				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
-				tui.WithWidth(60),
-				tui.WithBorder(tui.BorderRounded),
-				tui.WithBorderTitle(" slash commands — ctrl+k 关闭 "),
-				tui.WithPadding(1),
-				tui.WithBackground(bgStyle),
-			)
-			for __idx_0, it := range a.t.helpItemsSnapshot() {
-				_ = __idx_0
-				__tui_7 := tui.New(
-					tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
-				)
-				__tui_8 := tui.New(
-					tui.WithText(it.cmd),
-					tui.WithTruncate(true),
-					tui.WithWidth(16),
-					tui.WithTextStyle(mainStyle),
-				)
-				__tui_7.AddChild(__tui_8)
-				__tui_9 := tui.New(
-					tui.WithText(it.desc),
-					tui.WithTruncate(true),
-					tui.WithFlexGrow(1),
-					tui.WithTextStyle(subStyle),
-				)
-				__tui_7.AddChild(__tui_9)
-				__tui_6.AddChild(__tui_7)
-			}
-			__tui_0.AddChild(__tui_6)
-		}
-		__tui_10 := tui.New(
+		__tui_6 := tui.New(
 			tui.WithText(a.noticeText()),
 			tui.WithWidthPercent(100.00),
 			tui.WithTextAlign(tui.TextAlignRight),
 			tui.WithHeight(1),
 			tui.WithTextStyle(a.noticeStyle()),
 		)
-		__tui_0.AddChild(__tui_10)
-		__tui_11 := tui.New(
+		__tui_0.AddChild(__tui_6)
+		__tui_7 := tui.New(
 			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
 			tui.WithAlign(tui.AlignEnd),
 		)
-		__tui_12 := tui.New(
+		__tui_8 := tui.New(
 			tui.WithText(a.indicatorText()),
 			tui.WithWidth(2),
 			tui.WithHeight(1),
 			tui.WithBackground(inputBg),
 			tui.WithTextStyle(a.indicatorStyle()),
 		)
-		__tui_11.AddChild(__tui_12)
-		__tui_13 := app.Mount(a, 2, func() tui.Component {
+		__tui_7.AddChild(__tui_8)
+		__tui_9 := app.Mount(a, 2, func() tui.Component {
 			return a.inputView(app)
 		})
-		__tui_11.AddChild(__tui_13)
-		__tui_0.AddChild(__tui_11)
+		__tui_7.AddChild(__tui_9)
+		__tui_0.AddChild(__tui_7)
+		__tui_10 := app.MountPersistent(a, 3, func() tui.Component {
+			return tui.NewModal(
+				tui.WithModalOpen(a.helpOpen),
+				tui.WithModalBackdrop("dim"),
+				tui.WithModalKeyMap(a.helpModalKeyMap()),
+				tui.WithModalElementOptions(tui.WithJustify(tui.JustifyCenter), tui.WithAlign(tui.AlignCenter)),
+			)
+		})
+		__tui_11 := tui.New(
+			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
+			tui.WithWidth(60),
+			tui.WithBorder(tui.BorderRounded),
+			tui.WithBorderTitle(" slash commands — ctrl+k 关闭 "),
+			tui.WithPadding(1),
+			tui.WithBackground(bgStyle),
+		)
+		for __idx_0, it := range a.t.helpItemsSnapshot() {
+			_ = __idx_0
+			__tui_12 := tui.New(
+				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
+			)
+			__tui_13 := tui.New(
+				tui.WithText(it.cmd),
+				tui.WithTruncate(true),
+				tui.WithWidth(16),
+				tui.WithTextStyle(mainStyle),
+			)
+			__tui_12.AddChild(__tui_13)
+			__tui_14 := tui.New(
+				tui.WithText(it.desc),
+				tui.WithTruncate(true),
+				tui.WithFlexGrow(1),
+				tui.WithTextStyle(subStyle),
+			)
+			__tui_12.AddChild(__tui_14)
+			__tui_11.AddChild(__tui_12)
+		}
+		__tui_10.AddChild(__tui_11)
+		__tui_0.AddChild(__tui_10)
 	}
 
 	return __tui_0
@@ -163,7 +170,6 @@ func (a *agentUI) updatePropsFields(fresh tui.Component) {
 	a.follow = f.follow
 	a.scrollY = f.scrollY
 	a.spinN = f.spinN
-	a.helpOpen = f.helpOpen
 }
 
 func (a *agentUI) UpdateProps(fresh tui.Component) {
@@ -178,6 +184,9 @@ var _ tui.PropsUpdater = (*agentUI)(nil)
 func (a *agentUI) bindAppFields(app *tui.App) {
 	if a.ta != nil {
 		a.ta.BindApp(app)
+	}
+	if a.helpOpen != nil {
+		a.helpOpen.BindApp(app)
 	}
 }
 

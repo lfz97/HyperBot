@@ -22,9 +22,9 @@ type MessageRender struct {
 }
 
 type tuiService interface {
-	PrintToMsgView(content string, clear bool)
-	ReplaceTailInMsgView(raw string, replacement string) bool
-	RenderMarkdown(in string) (string, error)
+	PrintToMsgView(content []pretty.Span, clear bool)
+	MarkdownDelta(content string)
+	MarkdownDone()
 }
 
 func NewMessageRender(tui tuiService, ShowReasoning bool, Stream bool) *MessageRender {
@@ -60,7 +60,7 @@ func (r *MessageRender) renderStreamEvent(Choice model.Choice, isPartial bool) {
 	if Choice.Delta.ReasoningContent != "" {
 		if !(*(*r).Status).startReasoning {
 			if (*(*r).Status).ShowReasoning {
-				(*r).tui.PrintToMsgView("\n", false)
+				(*r).tui.PrintToMsgView(pretty.Plain("\n"), false)
 			}
 			(*(*r).Status).startReasoning = true
 		}
@@ -71,47 +71,41 @@ func (r *MessageRender) renderStreamEvent(Choice model.Choice, isPartial bool) {
 	} else if (*(*r).Status).startReasoning {
 		(*(*r).Status).startReasoning = false
 		if (*(*r).Status).ShowReasoning {
-			(*r).tui.PrintToMsgView("\n", false)
+			(*r).tui.PrintToMsgView(pretty.Plain("\n"), false)
 		}
 	}
 	if Choice.Delta.Content != "" && Choice.Delta.Role != "tool" {
-		// 正文内容（工具响应片段不作为正文渲染，由下方统一处理工具信息部分处理）
-		(*r).tui.PrintToMsgView(Choice.Delta.Content, false)
+		// 正文内容（工具响应片段不作为正文渲染，由下方统一处理工具信息部分处理）：
+		// 直接流进 markdown 段，组件原生渲染
+		(*r).tui.MarkdownDelta(Choice.Delta.Content)
 	}
 
-	// 合并响应：本 hop 的正文已完整，把刚流出去的 raw 替换成渲染版。两个 provider 实测
-	// 都是每 hop 恰好一个这样的响应，且 Message.Content 与所有 Delta.Content 的拼接字节相同。
+	// 合并响应：本 hop 的正文已完整，把流式段定稿（去首尾空白）。
+	// 两个 provider 实测 Message.Content 与所有 Delta.Content 的拼接字节相同，
+	// 流式内容已在屏，收尾无需回填——旧的"流原文 + ReplaceTail 尾部替换"
+	// 两段式已删除。
 	//
-	// 判据只能用 IsPartial：同样在带工具调用的 hop 上，openai 给 Done=false 而 anthropic 给
-	// Done=true（Done 的框架语义是"flow 是否该停"），IsFinalResponse() 则因带工具调用恒为 false。
-	// Role=="tool" 也要挡：工具结果事件的 Message.Content 非空且 Role 是 tool。
+	// 判据只能用 IsPartial：同样在带工具调用的 hop 上，openai 给 Done=false 而
+	// anthropic 给 Done=true（Done 的框架语义是"flow 是否该停"），IsFinalResponse()
+	// 则因带工具调用恒为 false。Role=="tool" 也要挡：工具结果事件的
+	// Message.Content 非空且 Role 是 tool。
 	if !isPartial && strings.TrimSpace(Choice.Message.Content) != "" && Choice.Message.Role != "tool" {
-		// 替换失败说明 raw 已不在 buffer 末尾（中途被别的写入者插过），保持 raw 即可。
-		// 绝不能退化成追加，否则正文会重复显示一遍。
-		(*r).tui.ReplaceTailInMsgView(Choice.Message.Content, r.renderBody(Choice.Message.Content))
+		(*r).tui.MarkdownDone()
 	}
 }
 
 func (r *MessageRender) renderNonStreamEvent(Choice model.Choice) {
 	// 思考信息 - 根据配置决定是否显示
 	if Choice.Message.ReasoningContent != "" && (*(*r).Status).ShowReasoning {
-		(*r).tui.PrintToMsgView("\n", false)
+		(*r).tui.PrintToMsgView(pretty.Plain("\n"), false)
 		(*r).tui.PrintToMsgView(pretty.TReasoningContent(Choice.Message.ReasoningContent), false)
-		(*r).tui.PrintToMsgView("\n", false)
+		(*r).tui.PrintToMsgView(pretty.Plain("\n"), false)
 	}
-	// 正文内容：先流原文，再原位替换成 markdown 段——与流式路径共用同一条渲染管线
+	// 正文内容：整段流进 markdown 段并定稿——与流式路径共用同一条渲染管线
 	if strings.TrimSpace(Choice.Message.Content) != "" && Choice.Message.Role != "tool" {
-		(*r).tui.PrintToMsgView(Choice.Message.Content, false)
-		(*r).tui.ReplaceTailInMsgView(Choice.Message.Content, r.renderBody(Choice.Message.Content))
+		(*r).tui.MarkdownDelta(Choice.Message.Content)
+		(*r).tui.MarkdownDone()
 	}
-}
-
-// renderBody go-tui 分支：正文以 markdown 源码直达 TUI，由消息区内置的 markdown
-// 元素原生渲染（glow 风格主题、代码高亮、表格网格）。旧的 glamour → 剥行尾填充 →
-// TranslateANSI → tview 标签管线整体删除，Tui.RenderMarkdown 已是恒等返回，
-// 所以这里只需清理首尾空白。
-func (r *MessageRender) renderBody(content string) string {
-	return strings.TrimSpace(content)
 }
 
 func (r *MessageRender) gatherToolMessage(Choice model.Choice) {

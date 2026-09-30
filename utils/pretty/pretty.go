@@ -45,7 +45,6 @@ const (
 	TColorGray    = "gray"
 	TColorBlack   = "black"
 	TColorOrange  = "orange"
-	TColorSkyBlue = "#4FC3F7"
 
 	// 浅色版本
 	TColorLightRed     = "lightred"
@@ -55,27 +54,12 @@ const (
 	TColorLightMagenta = "#B39DDB"
 	TColorLightCyan    = "lightcyan"
 	TColorLightWhite   = "lightwhite"
-	TColorLightGray    = "lightgray"
 
 	//特殊版本
 	TColorClaudeCodeOrange = "#f7b786" // Claude Code 橙色
 
-)
-
-// ── TView 背景色预设（适合 tview 动态颜色标签 [foreground:background:attr]）──
-const (
-	TBgSilver      = "#C0C0C0" // 银灰 — 最常用浅灰底
-	TBgLightGray   = "#D3D3D3" // 浅灰
-	TBgDarkGray    = "#696969" // 暗灰
-	TBgGainsboro   = "#DCDCDC" // 极浅灰
-	TBgMistyRose   = "#FFE4E1" // 浅粉
-	TBgLavender    = "#E6E6FA" // 淡紫
-	TBgLightCyan   = "#E0FFFF" // 浅青
-	TBgLightYellow = "#FFFFE0" // 浅黄（便利贴感）
-	TBgHoneydew    = "#F0FFF0" // 蜜瓜绿
-	TBgAliceBlue   = "#F0F8FF" // 爱丽丝蓝
-	TBgSeashell    = "#FFF5EE" // 贝壳白
-	TBgLinen       = "#FAF0E6" // 亚麻色
+	// 背景色（Span.Bg 用）
+	TBgDarkGray = "#696969" // 暗灰（用户输入回显的底色）
 )
 
 // ========== TUI 界面配色（GitHub 深色模式 + 深空蓝调）==========
@@ -371,7 +355,7 @@ func Debug(text string) {
 	fmt.Printf("%s[DEBUG]%s %s%s\n", ColorGray, ColorReset, text, ColorReset)
 }
 
-// DebugF 格式化调试信息
+// DebugF 输出格式化调试信息
 func DebugF(format string, args ...interface{}) {
 	fmt.Printf("%s[DEBUG]%s %s%s\n", ColorGray, ColorReset, fmt.Sprintf(format, args...), ColorReset)
 }
@@ -453,170 +437,127 @@ func ErrorFWithExit(format string, args ...interface{}) {
 	os.Exit(1)
 }
 
-// ========== TUI 美化输出 (返回 tview 颜色标签字符串) ==========
+// ========== TUI 结构化片段 ==========
 //
 // 设计规范:
 //   颜色语义: green=成功/正向  red=错误  yellow=警告/推理  cyan=用户/信息  magenta=工具
 //   符号规范: 系统消息（下面「状态消息」与「生命周期」两节）**不带任何符号**，语义完全
 //             由颜色承载。符号只用于对话内容的视觉标记，当前实际在用的是：
-//             ▶用户输入  ●工具行/非流式正文前缀  ↪工具结果  ⮡工具调用  »«推理区块
-//   布局规范: 状态消息前空行分隔，推理/工具用边框包裹
+//             ▶用户输入  ●工具行  ↪工具结果  »«推理区块
+//   布局规范: 状态消息前后空行分隔（写在 Text 里）
+//
+// 渲染契约: 颜色用字符串常量（TColorXxx / #hex），由 TUI 层映射成具体终端
+// 样式——pretty 不依赖任何 TUI 框架，纯数据。Tview 标签格式的函数已随
+// tview 迁移 go-tui 一并删除。
+
+// Span 一段同色同属性的文本。Fg/Bg 为空表示继承显示区的默认样式。
+type Span struct {
+	Text string
+	Fg   string // 前景色：TColorXxx 常量或 #hex
+	Bg   string // 背景色
+	Bold bool
+	Dim  bool
+}
+
+// Plain 默认样式的纯文本片段（消息区主色）。
+func Plain(text string) []Span { return []Span{{Text: text}} }
 
 const thinLine = "────────────────────────────────────────"
 
 // ── 状态消息 ─────────────────────────────────
 //
 // 本节与下面的「生命周期」节都属于"系统消息"：不带任何装饰符号，语义完全由颜色承载
-// （红=错误、黄=警告/中断、绿=成功、青=信息）。原来的 ✗ ✓ ⚠ ◈ 前缀已移除，
-// 同时去掉了 ::b —— 原来只有符号是粗体、正文是常规字重，符号没了就不需要粗体。
-// 新增本节的 helper 必须遵守此规则。
+// （红=错误、黄=警告/中断、绿=成功、青=信息）。新增本节的 helper 必须遵守此规则。
 //
 // 不在此列、符号必须保留的是对话内容的视觉标记：TUserInput 的 ▶、
-// 工具区块的 ● ↪ ⮡、推理区块的 » «、正文区块的 ●。
+// 工具区块的 ● ↪、推理区块的 » «。
 
 // TError TUI 错误信息
-func TError(text string) string {
-	return fmt.Sprintf("\n[red]%s[-:-:-]\n", text)
+func TError(text string) []Span {
+	return []Span{{Text: "\n" + text + "\n", Fg: TColorRed}}
 }
 
 // TErrorF TUI 格式化错误信息
-func TErrorF(format string, args ...interface{}) string {
+func TErrorF(format string, args ...interface{}) []Span {
 	return TError(fmt.Sprintf(format, args...))
 }
 
 // TSuccess TUI 成功信息
-func TSuccess(text string) string {
-	return fmt.Sprintf("\n[green]%s[-:-:-]\n", text)
+func TSuccess(text string) []Span {
+	return []Span{{Text: "\n" + text + "\n", Fg: TColorGreen}}
 }
 
 // TSuccessF TUI 格式化成功信息
-func TSuccessF(format string, args ...interface{}) string {
+func TSuccessF(format string, args ...interface{}) []Span {
 	return TSuccess(fmt.Sprintf(format, args...))
 }
 
 // TWarning TUI 警告信息
-func TWarning(text string) string {
-	return fmt.Sprintf("\n[yellow]%s[-:-:-]\n", text)
+func TWarning(text string) []Span {
+	return []Span{{Text: "\n" + text + "\n", Fg: TColorYellow}}
 }
 
 // TWarningF TUI 格式化警告信息
-func TWarningF(format string, args ...interface{}) string {
+func TWarningF(format string, args ...interface{}) []Span {
 	return TWarning(fmt.Sprintf(format, args...))
 }
 
 // ── 生命周期 ─────────────────────────────────
 //
-// 同属"系统消息"，规则见上面「状态消息」节的注释：不带装饰符号，语义由颜色承载。
-
-// TWelcome TUI 欢迎/提示信息
-func TWelcome(text string) string {
-	return fmt.Sprintf("\n[green]%s[-:-:-]\n", text)
-}
-
-// TReady TUI 启动完成信息
-func TReady(name string) string {
-	return fmt.Sprintf("\n[green]%s 就绪[-:-:-]\n", name)
-}
+// 同属"系统消息"，规则见上面「状态消息」节的注释。
+// TNewConversation / TInterrupted / TCancelled（消息区版）无调用方，已删除；
+// bar 版同色同语义保留。
 
 // TExit TUI 退出/结束信息
-func TExit(text string) string {
-	return fmt.Sprintf("\n[green]%s[-:-:-]\n", text)
-}
-
-// TNewConversation TUI 新对话提示
-func TNewConversation() string {
-	return "\n[cyan]新对话已开始[-:-:-]\n"
-}
-
-// TInterrupted TUI 中断提示
-func TInterrupted() string {
-	return "\n[yellow]输入已打断[-:-:-]\n"
-}
-
-// TCancelled TUI 取消提示
-func TCancelled() string {
-	return "\n[yellow]会话已取消[-:-:-]\n"
+func TExit(text string) []Span {
+	return []Span{{Text: "\n" + text + "\n", Fg: TColorGreen}}
 }
 
 // ── bar 通知（单行、无首尾换行）─────────────────────────
-// 与消息区版本（TNewConversation / TCancelled / TSuccess）同色同文案，唯一差别是
-// 不带 \n —— bar 是 SetWrap(false) 的 TextView，换行会显示成空白或把内容顶出可视区。
-// 按"系统消息不带装饰符号"的规则，这里也不加任何符号前缀。
-//
-// 去符号之后 bar 版与消息区版的差别只剩首尾换行，因此不需要新的私有拼接函数，
-// 直接复用 TColoredText（其实现本就是 "[%s]%s[-:-:-]"）。
-//
-// 没有 TBarInterrupted：它唯一的潜在调用点（TInterrupted 的打印）已作为重复打印删除。
+// 与消息区版本同色同语义，唯一差别是不带 \n（bar 是单行右对齐元素）。
 
-// TBarNewConversation bar 版新对话提示（NoticeBar 文案统一小写英文）
-func TBarNewConversation() string { return TColoredText(TColorCyan, "new conversation started") }
+// TBarNewConversation bar 版新对话提示
+func TBarNewConversation() Span { return Span{Text: "new conversation started", Fg: TColorCyan} }
 
 // TBarCancelled bar 版取消提示
-func TBarCancelled() string { return TColoredText(TColorYellow, "session cancelled") }
+func TBarCancelled() Span { return Span{Text: "session cancelled", Fg: TColorYellow} }
 
 // TBarSuccess bar 版成功提示
-func TBarSuccess(text string) string { return TColoredText(TColorGreen, text) }
+func TBarSuccess(text string) Span { return Span{Text: text, Fg: TColorGreen} }
 
 // TBarWarning bar 版警告提示。用橙色与 TBarCancelled 的黄色区分开，
 // 供启动期非致命问题（如配置文件被隔离）使用。
-func TBarWarning(text string) string { return TColoredText(TColorOrange, text) }
+func TBarWarning(text string) Span { return Span{Text: text, Fg: TColorOrange} }
 
 // ── 对话内容 ─────────────────────────────────
 
 // TUserInput TUI 用户输入回显
-func TUserInput(text string) string {
-	return fmt.Sprintf("\n[white:%s:b]▶ %s[-:-:-]\n", TBgDarkGray, text)
+func TUserInput(text string) []Span {
+	return []Span{{Text: "\n▶ " + text + "\n", Fg: TColorWhite, Bg: TBgDarkGray, Bold: true}}
 }
 
 // ── 推理区块 ─────────────────────────────────
 
 // TReasoningStart TUI 推理开始
-func TReasoningStart() string {
-	return "\n[yellow::b]»[-:-:-]\n"
+func TReasoningStart() []Span {
+	return []Span{{Text: "\n»\n", Fg: TColorYellow, Bold: true}}
 }
 
 // TReasoningEnd TUI 推理结束
-func TReasoningEnd() string {
-	return "\n[yellow::b]«[-:-:-]\n"
+func TReasoningEnd() []Span {
+	return []Span{{Text: "\n«\n", Fg: TColorYellow, Bold: true}}
 }
 
 // TReasoningContent 推理正文（暗黄色）
-func TReasoningContent(text string) string {
-	return fmt.Sprintf("[yellow::d]%s[-:-:-]", text)
-}
-
-// ── 正文区块 ─────────────────────────────────
-func TContentNoneStreamTag(text string) string {
-	return fmt.Sprintf("● %s", text)
+func TReasoningContent(text string) []Span {
+	return []Span{{Text: text, Fg: TColorYellow, Dim: true}}
 }
 
 // ── 工具区块 ─────────────────────────────────
 
-// TToolCall TUI 工具调用（单行：工具名）
-func TToolCall(name string) string {
-	return fmt.Sprintf("\n[#C9966A]⮡ %s[-]", name)
-}
-
-// TToolArgs TUI 工具参数（跟在工具名后）
-func TToolArgs(args string) string {
-	displayArgs := args
-	if len(displayArgs) > 200 {
-		displayArgs = displayArgs[:200] + "..."
-	}
-	return fmt.Sprintf(" [#8B7355]%s[-]", displayArgs)
-}
-
-// TToolResult TUI 工具结果
-func TToolResult(text string) string {
-	displayText := text
-	if len(displayText) > 300 {
-		displayText = displayText[:300] + "..."
-	}
-	return fmt.Sprintf("\n[#8B7355]  %s[-]", displayText)
-}
-
 // compactLine 把多行文本压成单行：去掉 ANSI 转义与回车（命令输出常带 PTY 的 \r\n
-// 和程序自身的颜色码，直接进 tview 会串色或被当标签解析），换行转空格并合并多余空格。
+// 和程序自身的颜色码，直接上屏会串色），换行转空格并合并多余空格。
+// 这是数据清洗，与展示样式无关。
 func compactLine(s string) string {
 	s = ansi.Strip(s)
 	s = strings.ReplaceAll(s, "\r\n", "\n")
@@ -628,7 +569,7 @@ func compactLine(s string) string {
 
 // TToolCompact 紧凑单行工具渲染：绿点 + 橙色工具名 + 灰色参数/结果概要
 // 格式: ● name  args ↪ result（result 换行缩进显示）
-func TToolCompact(name string, args []byte, result string) string {
+func TToolCompact(name string, args []byte, result string) []Span {
 	// ── 参数压缩：去换行、合并空格、截断 80 rune；空/()/{} 不输出 ──
 	var compactArgs string
 	if len(args) > 0 {
@@ -664,35 +605,17 @@ func TToolCompact(name string, args []byte, result string) string {
 		tail = " \n    ↪ " + resultSummary
 	}
 
-	return fmt.Sprintf("\n[-:-:-]  [green]●[-] [%s]%s[-][gray::d]%s[-]",
-		TColorClaudeCodeOrange, name, tail,
-	)
+	return []Span{
+		{Text: "\n  "},
+		{Text: "●", Fg: TColorGreen},
+		{Text: " " + name, Fg: TColorClaudeCodeOrange},
+		{Text: tail, Fg: TColorGray, Dim: true},
+	}
 }
 
 // ── 通用 ─────────────────────────────────────
 
-// TDivider TUI 分隔线
-func TDivider() string {
-	return fmt.Sprintf("[gray::d]%s[-:-:-]\n", thinLine+"───────────")
-}
-
 // TColoredText TUI 彩色文本
-func TColoredText(color string, text string) string {
-	return fmt.Sprintf("[%s]%s[-:-:-]", color, text)
-}
-
-// ── 背景色工具 ────────────────────────────────
-
-// TBg 通用背景色包装：前景白色，指定底色，文字粗体
-//   - bgColor: 背景色 hex，如 TBgSilver
-//   - text: 内容（需自行转义 tview 特殊字符）
-func TBg(bgColor string, text string) string {
-	return fmt.Sprintf("[white:%s:b]%s[-:-:-]", bgColor, text)
-}
-
-// TBgDim 通用背景色包装：前景灰色(dim)，指定底色
-//
-//	用于次要信息块，视觉权重更低
-func TBgDim(bgColor string, text string) string {
-	return fmt.Sprintf("[gray:%s]%s[-:-:-]", bgColor, text)
+func TColoredText(color string, text string) []Span {
+	return []Span{{Text: text, Fg: color}}
 }

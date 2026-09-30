@@ -1,20 +1,22 @@
 package requirements
 
+import "HyperBot/utils/pretty"
+
 // 需要一个tui服务注入如下方法。用于tui和engine解耦
 type TuiService interface {
 	AddHelpItems(items []map[string]string)
 	ClearAppFuncTrigger()
-	PrintToMsgView(content string, clear bool)
-	ReplaceTailInMsgView(raw string, replacement string) bool
+	PrintToMsgView(content []pretty.Span, clear bool)
+	MarkdownDelta(content string)
+	MarkdownDone()
 	ListenUserInput() chan string
 	SetAgentRunning(running bool)
-	ShowNotice(msg string)
+	ShowNotice(msg pretty.Span)
 	ShowStartupBanner(infoLines []string)
 	SetTodoText(text string)
 	SetAppFuncTriggerWithEsc(f func())
-	ShowErrorInMsgViewAndExit(errmsg string)
-	ShowMsgAndExitNoTrigger(msg string)
+	ShowErrorInMsgViewAndExit(errmsg []pretty.Span)
+	ShowMsgAndExitNoTrigger(msg []pretty.Span)
 	ShowSuccessInMsgViewAndExit(sussessmsg string)
-	RenderMarkdown(in string) (string, error)
 	ResetHelpItems()
 }

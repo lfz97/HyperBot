@@ -242,19 +242,7 @@ func (a *agentUI) KeyMap() gotui.KeyMap {
 	)
 }
 
-// toggleHelp 开关帮助面板（modal 的 open state）。
-func (a *agentUI) toggleHelp() {
-	a.helpOpen.Set(!a.helpOpen.Get())
-}
-
-// helpModalKeyMap modal 打开期间的补充绑定：ctrl+k 关闭。必须用
-// OnPreemptStop：trapFocus 的 AnyKey catch-all 也是 preempt 且先于普通
-// 轮分发，非 preempt 的自定义绑定永远轮不到（Esc 关闭由 modal 内建）。
-func (a *agentUI) helpModalKeyMap() gotui.KeyMap {
-	return gotui.KeyMap{
-		gotui.OnPreemptStop(gotui.Rune('k').Ctrl(), func(ke gotui.KeyEvent) { a.toggleHelp() }),
-	}
-}
+// toggleHelp 与 helpModalKeyMap 移至 help.go（帮助面板交互逻辑收拢）。
 
 // HandleMouse 滚轮滚动消息区（输入框不支持滚轮——限高窗口 + 光标跟随，
 // 见 inputViewport）。原生路径（ElementAtPoint 命中可滚元素）在每帧重建

@@ -36,6 +36,7 @@ const (
 // ========== TUI 界面配色（GitHub 深色模式 + 深空蓝调）==========
 const (
 	TuiBg          = "#000000" // 整体背景色
+	TuiBorderColor = "#2A2F3A" // 边框/选中高亮色
 	TuiInputAreaBg = "#151821" // 输入区背景色
 	TuiMainText    = "#C9D1D9" // 主文本颜色
 	TuiSubText     = "#8B949E" // 次文本颜色

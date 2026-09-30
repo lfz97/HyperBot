@@ -20,6 +20,7 @@ type agentUI struct {
 	follow   bool       // 贴底跟随：新内容到达时自动滚到底
 	scrollY  int        // 非跟随态的滚动偏移
 	spinN    int        // spinner 帧计数
+	helpSel  int        // 帮助面板选中行（焦点即选中，由行 onFocus 同步）
 	msgsRef  *tui.Ref   // 消息区滚动容器（滚动计算的参照）
 	helpOpen *tui.State[bool] // 帮助面板（原生 modal）开关
 	input    *inputViewport   // 输入框的滚动视口包装（见 ui.go）
@@ -97,11 +98,8 @@ templ (a *agentUI) Render() {
 						<span class="truncate" height={1} textStyle={dimStyle}>esc / ctrl+k 关闭</span>
 					</div>
 					<span class="truncate" width={62} height={1} textStyle={dimStyle}>{helpDivider}</span>
-					for _, it := range a.t.helpItemsSnapshot() {
-						<div class="flex" height={1}>
-							<span class="truncate" width={16} height={1} textStyle={cmdStyle}>{it.cmd}</span>
-							<span class="truncate" width={46} height={1} textStyle={subStyle}>{it.desc}</span>
-						</div>
+					for i, it := range a.t.helpItemsSnapshot() {
+						@a.helpRow(i, it)
 					}
 				</div>
 			</modal>

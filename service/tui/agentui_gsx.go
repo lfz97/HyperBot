@@ -16,6 +16,7 @@ type agentUI struct {
 	follow   bool             // 贴底跟随：新内容到达时自动滚到底
 	scrollY  int              // 非跟随态的滚动偏移
 	spinN    int              // spinner 帧计数
+	helpSel  int              // 帮助面板选中行（焦点即选中，由行 onFocus 同步）
 	msgsRef  *tui.Ref         // 消息区滚动容器（滚动计算的参照）
 	helpOpen *tui.State[bool] // 帮助面板（原生 modal）开关
 	input    *inputViewport   // 输入框的滚动视口包装（见 ui.go）
@@ -164,28 +165,11 @@ func (a *agentUI) Render(app *tui.App) *tui.Element {
 			tui.WithTextStyle(dimStyle),
 		)
 		__tui_11.AddChild(__tui_15)
-		for __idx_0, it := range a.t.helpItemsSnapshot() {
-			_ = __idx_0
-			__tui_16 := tui.New(
-				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
-				tui.WithHeight(1),
-			)
-			__tui_17 := tui.New(
-				tui.WithText(it.cmd),
-				tui.WithTruncate(true),
-				tui.WithWidth(16),
-				tui.WithHeight(1),
-				tui.WithTextStyle(cmdStyle),
-			)
-			__tui_16.AddChild(__tui_17)
-			__tui_18 := tui.New(
-				tui.WithText(it.desc),
-				tui.WithTruncate(true),
-				tui.WithWidth(46),
-				tui.WithHeight(1),
-				tui.WithTextStyle(subStyle),
-			)
-			__tui_16.AddChild(__tui_18)
+		for i, it := range a.t.helpItemsSnapshot() {
+			_ = i
+			__tui_16 := app.Mount(a, tui.MountKey(4, i), func() tui.Component {
+				return a.helpRow(i, it)
+			})
 			__tui_11.AddChild(__tui_16)
 		}
 		__tui_10.AddChild(__tui_11)
@@ -208,6 +192,7 @@ func (a *agentUI) updatePropsFields(fresh tui.Component) {
 	a.follow = f.follow
 	a.scrollY = f.scrollY
 	a.spinN = f.spinN
+	a.helpSel = f.helpSel
 	a.input = f.input
 }
 

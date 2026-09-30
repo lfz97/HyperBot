@@ -196,8 +196,8 @@ func (a *agentUI) KeyMap() gotui.KeyMap {
 		km = append(km, gotui.OnStop(gotui.Rune('k').Ctrl(), func(ke gotui.KeyEvent) { a.toggleHelp() }))
 	}
 	return append(km,
-		// Esc：textarea 聚焦时它的 blur 绑定先吃掉第一次（focus-gated 优先），
-		// 失焦后的 Esc 到这里触发中断
+		// Esc：单击即中断（ta 内建的 Esc=blur 绑定已在 inputViewport.KeyMap
+		// 剥掉；帮助面板打开时 Esc 由 modal 内建处理，轮不到这里）
 		gotui.OnStop(gotui.KeyEscape, func(ke gotui.KeyEvent) { a.interrupt() }),
 		gotui.OnStop(gotui.KeyCtrlC, func(ke gotui.KeyEvent) {
 			t := a.t
@@ -393,11 +393,13 @@ func (a *agentUI) noticeStyle() gotui.Style {
 }
 
 // todoLineStyle 按行首标记上色：◐ 进行中青色、☐ 待办正文色、其余暗灰。
+// 标记后带空格（"◐ " 是 4 字节），必须用 HasPrefix——按字节切片 line[:2]
+// 会截在多字节 rune 中间、永远匹配不上（曾经的真实 bug）。
 func todoLineStyle(line string) gotui.Style {
-	if len(line) >= 2 && line[:2] == "◐ " {
+	if strings.HasPrefix(line, "◐ ") {
 		return gotui.NewStyle().Foreground(gotui.Cyan)
 	}
-	if len(line) >= 2 && line[:2] == "☐ " {
+	if strings.HasPrefix(line, "☐ ") {
 		return mainStyle
 	}
 	return subStyle
@@ -425,6 +427,7 @@ func (v *textSegView) UpdateProps(fresh gotui.Component) {
 	if !ok {
 		return
 	}
+	// factory 每帧已建好新元素树，直接采纳；不要再重建一遍
 	v.spans = f.spans
-	v.el = richEl(v.spans)
+	v.el = f.el
 }

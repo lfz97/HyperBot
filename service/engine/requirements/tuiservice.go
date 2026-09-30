@@ -17,6 +17,6 @@ type TuiService interface {
 	SetAppFuncTriggerWithEsc(f func())
 	ShowErrorInMsgViewAndExit(errmsg []pretty.Span)
 	ShowMsgAndExitNoTrigger(msg []pretty.Span)
-	ShowSuccessInMsgViewAndExit(sussessmsg string)
+	ShowSuccessInMsgViewAndExit(successMsg string)
 	ResetHelpItems()
 }

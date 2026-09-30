@@ -317,8 +317,8 @@ func (t *Tui) ShowErrorInMsgViewAndExit(errmsg []pretty.Span) {
 	t.showMsgAndExit(errmsg, true)
 }
 
-func (t *Tui) ShowSuccessInMsgViewAndExit(sussessmsg string) {
-	t.showMsgAndExit(pretty.TSuccess(sussessmsg), true)
+func (t *Tui) ShowSuccessInMsgViewAndExit(successMsg string) {
+	t.showMsgAndExit(pretty.TSuccess(successMsg), true)
 }
 
 func (t *Tui) ShowMsgAndExitNoTrigger(msg []pretty.Span) {

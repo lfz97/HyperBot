@@ -109,6 +109,51 @@ func (t *Tui) submitInput(text string) {
 	}
 }
 
+// ── snapshot 访问器（模板每帧调用，带锁读 staging）──
+
+// segsSnapshot 返回消息段的值拷贝：引擎侧会对尾段做 in-place 追加
+// （流式 delta 合并），直接共享指针会和主循环的读构成数据竞争。
+func (t *Tui) segsSnapshot() []*msgSeg {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := make([]*msgSeg, len(t.segs))
+	for i, s := range t.segs {
+		cp := *s
+		out[i] = &cp
+	}
+	return out
+}
+
+func (t *Tui) bannerSetSnapshot() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.bannerSet
+}
+
+func (t *Tui) bannerLinesSnapshot() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.bannerLines
+}
+
+func (t *Tui) todoTextSnapshot() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.todoText
+}
+
+func (t *Tui) todoLinesSnapshot() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return strings.Split(t.todoText, "\n")
+}
+
+func (t *Tui) helpItemsSnapshot() []helpItem {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]helpItem(nil), t.helpItems...)
+}
+
 // ── TuiService 接口实现 ─────────────────────────────
 // 线程契约与 tview 版一致：引擎侧任意 goroutine 可调、不阻塞；
 // UI 变更统一在主循环的 Render 里落地。

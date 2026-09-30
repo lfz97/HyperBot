@@ -93,6 +93,7 @@ func (w *inputViewport) Render(app *gotui.App) *gotui.Element {
 		gotui.WithDirection(gotui.Column),
 		gotui.WithFlexGrow(1),
 		gotui.WithScrollable(gotui.ScrollVertical),
+		gotui.WithScrollbarHidden(true), // 不支持滚轮：滚动条只误导，还白占一列
 		gotui.WithHeight(h),
 		gotui.WithScrollOffset(0, w.offsetY()),
 		gotui.WithBackground(inputBg),

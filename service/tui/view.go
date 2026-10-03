@@ -81,7 +81,7 @@ func renderSegs(segs []seg) string {
 		}
 		switch s.kind {
 		case segText:
-			b.WriteString(spansText(s.spans))
+			b.WriteString(spansRender(s.spans))
 		case segMarkdown:
 			b.WriteString(s.text)
 		}
@@ -89,11 +89,56 @@ func renderSegs(segs []seg) string {
 	return b.String()
 }
 
-// spansText 把 Span 列表拼成纯文本。
-func spansText(spans []pretty.Span) string {
+// prettyColors 把 pretty 包的颜色名常量映射成 ANSI 256 色号
+// （颜色契约见 utils/pretty：颜色用 TColorXxx 字符串或 #hex，TUI 层负责映射）。
+// #hex 不在表里、单独透传。未知名保持终端默认色。
+var prettyColors = map[string]string{
+	"red": "1", "green": "2", "yellow": "3", "cyan": "6",
+	"white": "7", "gray": "8", "orange": "208", "lightgreen": "10",
+}
+
+// colorOf 解析 pretty 颜色值，返回 lipgloss.Color() 可接受的颜色串；
+// 非空且可识别返回 ok=true，否则保持终端默认色。
+func colorOf(v string) (string, bool) {
+	if v == "" {
+		return "", false
+	}
+	if c, ok := prettyColors[v]; ok {
+		return c, true
+	}
+	if strings.HasPrefix(v, "#") {
+		return v, true
+	}
+	return "", false
+}
+
+// renderSpan 单个 Span → 带样式文本（lipgloss 渲染，colorprofile 按
+// 终端能力自动降级：真彩/256/16 色/单色）。
+func renderSpan(s pretty.Span) string {
+	if s.Fg == "" && s.Bg == "" && !s.Bold && !s.Dim {
+		return s.Text
+	}
+	st := lipgloss.NewStyle()
+	if c, ok := colorOf(s.Fg); ok {
+		st = st.Foreground(lipgloss.Color(c))
+	}
+	if c, ok := colorOf(s.Bg); ok {
+		st = st.Background(lipgloss.Color(c))
+	}
+	if s.Bold {
+		st = st.Bold(true)
+	}
+	if s.Dim {
+		st = st.Faint(true)
+	}
+	return st.Render(s.Text)
+}
+
+// spansRender 把 Span 列表渲染成带样式文本。
+func spansRender(spans []pretty.Span) string {
 	var b strings.Builder
 	for _, s := range spans {
-		b.WriteString(s.Text)
+		b.WriteString(renderSpan(s))
 	}
 	return b.String()
 }

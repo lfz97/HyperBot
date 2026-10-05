@@ -3,7 +3,7 @@ package tui
 import (
 	"testing"
 
-	"HyperBot/service/engine/runlog"
+	"HyperBot/service/engine"
 	"HyperBot/utils/pretty"
 )
 
@@ -40,33 +40,33 @@ func TestMergeTail(t *testing.T) {
 
 func TestRenderFatalStyles(t *testing.T) {
 	cases := []struct {
-		style runlog.FatalStyle
+		style engine.FatalStyle
 		in    string
 		want  string
 	}{
-		{runlog.FatalSuccess, "已创建默认配置", pretty.TSuccess("已创建默认配置")},
-		{runlog.FatalExit, "对话已结束", pretty.TExit("对话已结束")},
-		{runlog.FatalError, "加载配置文件错误", pretty.TErrorF("%s", "加载配置文件错误")},
-		{runlog.FatalPlain, "原样输出", "原样输出"},
+		{engine.FatalSuccess, "已创建默认配置", pretty.TSuccess("已创建默认配置")},
+		{engine.FatalExit, "对话已结束", pretty.TExit("对话已结束")},
+		{engine.FatalError, "加载配置文件错误", pretty.TErrorF("%s", "加载配置文件错误")},
+		{engine.FatalPlain, "原样输出", "原样输出"},
 	}
 	for _, c := range cases {
-		if got := renderFatal(&runlog.Fatal{Text: c.in, Style: c.style}); got != c.want {
+		if got := renderFatal(&engine.Fatal{Text: c.in, Style: c.style}); got != c.want {
 			t.Fatalf("style %d: got %q want %q", c.style, got, c.want)
 		}
 	}
 }
 
 func TestRenderNoticeKinds(t *testing.T) {
-	if got := renderNotice(runlog.NoticeNewConversation, ""); got != pretty.TBarNewConversation() {
+	if got := renderNotice(engine.NoticeNewConversation, ""); got != pretty.TBarNewConversation() {
 		t.Fatalf("新对话通知不符：%q", got)
 	}
-	if got := renderNotice(runlog.NoticeCancelled, ""); got != pretty.TBarCancelled() {
+	if got := renderNotice(engine.NoticeCancelled, ""); got != pretty.TBarCancelled() {
 		t.Fatalf("取消通知不符：%q", got)
 	}
-	if got := renderNotice(runlog.NoticeSuccess, "done"); got != pretty.TBarSuccess("done") {
+	if got := renderNotice(engine.NoticeSuccess, "done"); got != pretty.TBarSuccess("done") {
 		t.Fatalf("成功通知不符：%q", got)
 	}
-	if got := renderNotice(runlog.NoticeWarning, "warn"); got != pretty.TBarWarning("warn") {
+	if got := renderNotice(engine.NoticeWarning, "warn"); got != pretty.TBarWarning("warn") {
 		t.Fatalf("警告通知不符：%q", got)
 	}
 }

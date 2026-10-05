@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"HyperBot/service/engine/runlog"
 	"context"
 	"fmt"
 	"net/url"
@@ -19,14 +18,20 @@ const (
 	errorSleepGap = 3 * time.Second
 )
 
-func GetEngineService(name string, st *runlog.Store) *Engine {
-	e := &Engine{
-		st: st,
+// GetEngineService 创建引擎实例（轻量：只装配字段，不触盘、不阻塞）。
+// 初始化由调用方在 goroutine 里调 Init()——初始化失败会 parkWithFatal 永久驻留，
+// 若在 TUI 启动前同步执行会卡死整个进程（终态都无从渲染）。
+func GetEngineService(name string) *Engine {
+	return &Engine{
+		Agentname: name,
+		inputCh:   make(chan string),
 	}
-	(*e).Agentname = name
+}
+
+// Init 完成 preCheckLoad 与 newRunner。
+func (e *Engine) Init() {
 	(*e).preCheckLoad()
 	(*e).newRunner()
-	return e
 }
 
 // parkWithFatal 置进程终态并永久驻留当前 goroutine。
@@ -36,8 +41,8 @@ func GetEngineService(name string, st *runlog.Store) *Engine {
 //  - 不能在 TUI 回调里 os.Exit——screen.Fini() 在 app.Run() 返回路径上调用，
 //    硬退出会把终端留在 alt-screen + raw mode。
 // pull 之后的分工：引擎置终态 + 驻留；渲染、等待按键、停循环由 TUI 完成。
-func (e *Engine) parkWithFatal(style runlog.FatalStyle, text string, waitKey bool) {
-	(*e).st.SetFatal(style, text, waitKey)
+func (e *Engine) parkWithFatal(style FatalStyle, text string, waitKey bool) {
+	e.setFatal(style, text, waitKey)
 	select {}
 }
 
@@ -60,7 +65,7 @@ func (e *Engine) AgentStart() {
 			}
 			// 置终态并永久驻留：TUI 观察到 Fatal 负责渲染、按键与停循环，
 			// main() 随 Run() 返回而退出——引擎不再知道终端的存在。
-			(*e).parkWithFatal(runlog.FatalExit, "对话已结束，感谢使用！后会有期！", false)
+			(*e).parkWithFatal(FatalExit, "对话已结束，感谢使用！后会有期！", false)
 
 		} else if (*EndTurn_p).Code == New { //用户开始新对话，重置 SessionID 与错误计数，更新MsgContext为新对话的初始状态
 			// /new 在 agentRunIteratively 的输入分支里是提前 return 的，跑不到
@@ -85,13 +90,13 @@ func (e *Engine) AgentStart() {
 				//    新对话/中断时归零；耗尽因此只可能由零输出失败触发。
 				// ③ 整个复用 *EndTurn_p，不新造 literal —— 新建会静默丢掉 Reason 与
 				//    PartialOutput（TerminalError 时后者是真实累积到的部分输出）。
-				(*e).st.Append(runlog.KindErrorLine, fmt.Sprintf("连续 %d 次失败，已停止自动重试。请检查网络/配置后重新输入。", errorMaxTimes))
+				(*e).appendRecord(KindErrorLine, fmt.Sprintf("连续 %d 次失败，已停止自动重试。请检查网络/配置后重新输入。", errorMaxTimes))
 				MsgContext = *EndTurn_p
 				continue
 			}
 			// 必须在 Sleep 之前打：sleep 期间引擎 goroutine 阻塞、不监听 inputChan，
 			// 用户打字没有反应，需要知道程序在等什么。
-			(*e).st.Append(runlog.KindWarn, fmt.Sprintf("%d 秒后重试（第 %d/%d 次）...", errorSleepGap/time.Second, (*e).errorStreak, errorMaxTimes))
+			(*e).appendRecord(KindWarn, fmt.Sprintf("%d 秒后重试（第 %d/%d 次）...", errorSleepGap/time.Second, (*e).errorStreak, errorMaxTimes))
 			time.Sleep(errorSleepGap)
 			MsgContext = *EndTurn_p
 

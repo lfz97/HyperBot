@@ -4,7 +4,6 @@ import (
 	"strings"
 	"sync"
 
-	"HyperBot/service/engine/runlog"
 	"HyperBot/service/engine/tools"
 
 	"github.com/tidwall/gjson"
@@ -17,16 +16,26 @@ type ResponseMessageStatus struct {
 	ShowReasoning  bool
 }
 
-// MessageRender 把框架的 Response 事件翻译成领域记录写进 runlog.Store。
+// MessageRender 把框架的 Response 事件翻译成领域记录经 logSink 投进引擎的消息日志。
 // 它不再持有任何展示端引用：markdown 渲染、配色、版式全部是消费端（TUI）的事，
 // 本包只负责"发生了什么"——正文增量、定稿原文、思考内容、工具行。
+// logSink 本包对引擎的全部需求：把"发生了什么"投进引擎的消息日志。
+// 消费方按需声明小接口（*Engine 天然满足）——渲染包不感知引擎全貌，也不反向依赖。
+type logSink interface {
+	AppendNewline()
+	AppendReasoning(text string)
+	AppendContentDelta(text string)
+	AppendContentFinal(text string)
+	AppendTool(name string, in, out string)
+}
+
 type MessageRender struct {
-	log    *runlog.Store
+	log    logSink
 	Status *ResponseMessageStatus
 	Buffer *toolMsgBuffer
 }
 
-func NewMessageRender(log *runlog.Store, ShowReasoning bool, Stream bool) *MessageRender {
+func NewMessageRender(log logSink, ShowReasoning bool, Stream bool) *MessageRender {
 
 	return &MessageRender{
 		log: log,
@@ -59,23 +68,23 @@ func (r *MessageRender) renderStreamEvent(Choice model.Choice, isPartial bool) {
 	if Choice.Delta.ReasoningContent != "" {
 		if !(*(*r).Status).startReasoning {
 			if (*(*r).Status).ShowReasoning {
-				(*r).log.Append(runlog.KindNewline, "\n")
+				(*r).log.AppendNewline()
 			}
 			(*(*r).Status).startReasoning = true
 		}
 		if (*(*r).Status).ShowReasoning {
 			// 思考内容
-			(*r).log.Append(runlog.KindReasoning, Choice.Delta.ReasoningContent)
+			(*r).log.AppendReasoning(Choice.Delta.ReasoningContent)
 		}
 	} else if (*(*r).Status).startReasoning {
 		(*(*r).Status).startReasoning = false
 		if (*(*r).Status).ShowReasoning {
-			(*r).log.Append(runlog.KindNewline, "\n")
+			(*r).log.AppendNewline()
 		}
 	}
 	if Choice.Delta.Content != "" && Choice.Delta.Role != "tool" {
 		// 正文内容（工具响应片段不作为正文渲染，由下方统一处理工具信息部分处理）
-		(*r).log.Append(runlog.KindContentDelta, Choice.Delta.Content)
+		(*r).log.AppendContentDelta(Choice.Delta.Content)
 	}
 
 	// 合并响应：本 hop 的正文已完整，投一条定稿记录，消费端把刚流出去的 raw 尾部
@@ -87,20 +96,20 @@ func (r *MessageRender) renderStreamEvent(Choice model.Choice, isPartial bool) {
 	// Done=true（Done 的框架语义是"flow 是否该停"），IsFinalResponse() 则因带工具调用恒为 false。
 	// Role=="tool" 也要挡：工具结果事件的 Message.Content 非空且 Role 是 tool。
 	if !isPartial && strings.TrimSpace(Choice.Message.Content) != "" && Choice.Message.Role != "tool" {
-		(*r).log.Append(runlog.KindContentFinal, Choice.Message.Content)
+		(*r).log.AppendContentFinal(Choice.Message.Content)
 	}
 }
 
 func (r *MessageRender) renderNonStreamEvent(Choice model.Choice) {
 	// 思考信息 - 根据配置决定是否显示
 	if Choice.Message.ReasoningContent != "" && (*(*r).Status).ShowReasoning {
-		(*r).log.Append(runlog.KindNewline, "\n")
-		(*r).log.Append(runlog.KindReasoning, Choice.Message.ReasoningContent)
-		(*r).log.Append(runlog.KindNewline, "\n")
+		(*r).log.AppendNewline()
+		(*r).log.AppendReasoning(Choice.Message.ReasoningContent)
+		(*r).log.AppendNewline()
 	}
 	// 正文内容（非流式没有先流出的 raw，消费端会直接追加渲染版）
 	if strings.TrimSpace(Choice.Message.Content) != "" && Choice.Message.Role != "tool" {
-		(*r).log.Append(runlog.KindContentFinal, Choice.Message.Content)
+		(*r).log.AppendContentFinal(Choice.Message.Content)
 	}
 }
 

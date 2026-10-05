@@ -35,7 +35,7 @@ func initSummarizerPrompts() {
 }
 
 // summarySink 本包对展示端的全部需求：摘要生成后投一条摘要记录。
-// 在消费方按需声明小接口（engine 侧 runlog.Store 天然满足）——
+// 在消费方按需声明小接口（*Engine 天然满足）——
 // session 包不感知展示端是谁，也不依赖任何 TUI 类型。
 type summarySink interface {
 	AppendSummary(text string)

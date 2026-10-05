@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"HyperBot/service/engine/runlog"
+	"HyperBot/service/engine"
 	"HyperBot/utils/pretty"
 	"charm.land/glamour/v2"
 	"github.com/gdamore/tcell/v2"
@@ -25,7 +25,7 @@ var (
 const (
 	// drawInterval 重绘节流间隔。tview 只在 QueueUpdateDraw、按键/鼠标/resize 事件时重绘，
 	// 纯流式输出期间这些都不发生，所以由 drawLoop 按固定帧率驱动刷新。
-	// pull 架构下它同时是引擎状态的上屏延迟上界：引擎只写 runlog.Store，
+	// pull 架构下它同时是引擎状态的上屏延迟上界：引擎只写状态，
 	// 本循环每帧比对版本号/快照、把增量渲染出来，帧率即流畅度。
 	drawInterval = 30 * time.Millisecond
 	// spinnerTicks 指示器每推进一帧占用多少个 drawInterval tick。3 × 30ms = 90ms/帧，
@@ -34,17 +34,17 @@ const (
 )
 
 // EngineView 是 TUI 对引擎的全部依赖（消费方定义的接口）。
-// 引擎侧的 *runlog.Store 天然满足它；TUI 不 import engine 包，
+// 引擎侧的 *Engine 天然满足它（TUI 仅引用 engine 包的类型），
 // 引擎也不 import 本包——引擎对表现层的依赖为零，控制权全部在 TUI：
 // 状态由 TUI 按帧拉取，输入/取消由 TUI 主动调用。
 type EngineView interface {
 	Version() uint64
-	Records(afterSeq int64) []runlog.MsgRecord
-	RunState() runlog.RunState
+	Records(afterSeq int64) []engine.MsgRecord
+	RunState() engine.RunState
 	TodoText() string
-	Notice() (runlog.NoticeKind, string, time.Time)
+	Notice() (engine.NoticeKind, string, time.Time)
 	StartupInfo() ([]string, bool)
-	SkillHelpItems() []runlog.HelpItem
+	SkillHelpItems() []engine.HelpItem
 	SubmitInput(line string) bool
 	Cancel()
 }
@@ -117,7 +117,7 @@ func spinnerIndicator(frame int) string {
 // TodoBar：纵向清单栏，每个任务一行，有清单时占 N 行、无清单时塌成 0 行。
 // NoticeBar：固定 1 行，承载瞬时通知与常驻键位提示，永不塌陷（hint 常驻）。
 // pull 之后两者都不再持有跨 goroutine 状态：清单文本与通知槽位都在引擎的
-// runlog.Store 里，drawLoop 每帧拉取，widget 写入保持单线程（drawLoop）。
+// engine.Store 里，drawLoop 每帧拉取，widget 写入保持单线程（drawLoop）。
 
 const (
 	// noticeTTL 临时通知的停留时长。到期后 NoticeBar 自动回落到兜底提示。
@@ -225,28 +225,28 @@ func (t *Tui) tickMsgLog(st *drawState) {
 // renderRecord 把一条领域记录翻译成带色文本并写入消息区。
 // 这是"引擎只说发生了什么、TUI 决定怎么画"的落点：所有 pretty.* 配色都活在本侧，
 // 引擎日志里只有语义原文。每种 Kind 的渲染与旧版引擎侧 PrintToMsgView 的拼串逐字节对齐。
-func (t *Tui) renderRecord(rec runlog.MsgRecord, st *drawState) {
+func (t *Tui) renderRecord(rec engine.MsgRecord, st *drawState) {
 	switch rec.Kind {
-	case runlog.KindNewline:
+	case engine.KindNewline:
 		t.appendMsg("\n")
-	case runlog.KindUser:
+	case engine.KindUser:
 		t.appendMsg(pretty.TUserInput(rec.Text))
-	case runlog.KindSlashEcho:
+	case engine.KindSlashEcho:
 		t.appendMsg(pretty.TColoredText(pretty.TColorLightGreen, "\n"+rec.Text+"\n"))
-	case runlog.KindReasoning:
+	case engine.KindReasoning:
 		t.appendMsg(pretty.TReasoningContent(rec.Text))
-	case runlog.KindContentDelta:
+	case engine.KindContentDelta:
 		st.streamRaw += rec.Text
 		t.appendMsg(rec.Text)
-	case runlog.KindContentFinal:
+	case engine.KindContentFinal:
 		t.appendFinal(rec.Text, st)
-	case runlog.KindTool:
+	case engine.KindTool:
 		t.appendMsg(pretty.TToolCompact(rec.Tool.Name, []byte(rec.Tool.In), rec.Tool.Out))
-	case runlog.KindWarn:
+	case engine.KindWarn:
 		t.appendMsg(pretty.TWarningF("%s", rec.Text))
-	case runlog.KindErrorLine:
+	case engine.KindErrorLine:
 		t.appendMsg(pretty.TErrorF("%s", rec.Text))
-	case runlog.KindSummary:
+	case engine.KindSummary:
 		t.appendMsg(pretty.TColoredText(pretty.TColorGreen, "\n->已生成摘要：\n"+rec.Text+"\n"))
 	default:
 		t.appendMsg(rec.Text)
@@ -256,9 +256,9 @@ func (t *Tui) renderRecord(rec runlog.MsgRecord, st *drawState) {
 	// 之前的原文不再连续。Newline 与 Reasoning 刻意不清空——它们出现在思考块
 	// 边界上，若插在正文中间，尾替换会像旧版一样自然失败、保住 raw。
 	switch rec.Kind {
-	case runlog.KindContentFinal,
-		runlog.KindUser, runlog.KindSlashEcho, runlog.KindTool,
-		runlog.KindWarn, runlog.KindErrorLine, runlog.KindSummary:
+	case engine.KindContentFinal,
+		engine.KindUser, engine.KindSlashEcho, engine.KindTool,
+		engine.KindWarn, engine.KindErrorLine, engine.KindSummary:
 		st.streamRaw = ""
 	}
 }
@@ -416,12 +416,12 @@ func (t *Tui) tickIndicator(running bool, st *drawState) {
 }
 
 // tickNoticeBar 刷新通知栏。TTL 到期、通知到达、running 翻转三件事全走这一条路径，
-// 因此不需要任何事件驱动的机制。通知槽位在引擎侧（runlog.Store），TTL 从 SetAt 起算。
+// 因此不需要任何事件驱动的机制。通知槽位在引擎侧（Engine 字段），TTL 从 SetAt 起算。
 func (t *Tui) tickNoticeBar(running bool, st *drawState) {
 	nb := t.appLayout.noticeBar
 	kind, text, setAt := t.engine.Notice()
 	s := hintIdle
-	if kind != runlog.NoticeNone && time.Since(setAt) < noticeTTL {
+	if kind != engine.NoticeNone && time.Since(setAt) < noticeTTL {
 		s = renderNotice(kind, text)
 	} else if running {
 		s = hintRunning
@@ -435,15 +435,15 @@ func (t *Tui) tickNoticeBar(running bool, st *drawState) {
 
 // renderNotice 把通知槽位翻译成带色文本。文案配色在这里（表达层），
 // 引擎只存 Kind 与原文；无文本的固定文案（新对话/取消）也由本侧拼装。
-func renderNotice(kind runlog.NoticeKind, text string) string {
+func renderNotice(kind engine.NoticeKind, text string) string {
 	switch kind {
-	case runlog.NoticeNewConversation:
+	case engine.NoticeNewConversation:
 		return pretty.TBarNewConversation()
-	case runlog.NoticeCancelled:
+	case engine.NoticeCancelled:
 		return pretty.TBarCancelled()
-	case runlog.NoticeSuccess:
+	case engine.NoticeSuccess:
 		return pretty.TBarSuccess(text)
-	case runlog.NoticeWarning:
+	case engine.NoticeWarning:
 		return pretty.TBarWarning(text)
 	default:
 		return pretty.TColoredText(pretty.TuiSubText, text)
@@ -524,7 +524,7 @@ func renderTodoLines(text string) string {
 // 之后的收尾链路是：app.Stop() → tui.Run() 返回 → tview 复原终端 → main() 返回 → 进程退出。
 // 不能在回调里直接 os.Exit：screen.Fini() 是在 app.Run() 的返回路径上调的，
 // 从回调硬退出会跳过它，终端会留在 alt-screen + raw mode，退出后用户的 shell 是坏的。
-func (t *Tui) tickFatal(fatal *runlog.Fatal, st *drawState) {
+func (t *Tui) tickFatal(fatal *engine.Fatal, st *drawState) {
 	if st.fatalHandled || fatal == nil {
 		return
 	}
@@ -550,13 +550,13 @@ func (t *Tui) tickFatal(fatal *runlog.Fatal, st *drawState) {
 
 // renderFatal 把终态消息按样式上色（原 ShowSuccessInMsgViewAndExit 里 TSuccess
 // 在 TUI 侧套色的契约推广到全部样式；引擎只存语义原文）。
-func renderFatal(f *runlog.Fatal) string {
+func renderFatal(f *engine.Fatal) string {
 	switch f.Style {
-	case runlog.FatalSuccess:
+	case engine.FatalSuccess:
 		return pretty.TSuccess(f.Text)
-	case runlog.FatalExit:
+	case engine.FatalExit:
 		return pretty.TExit(f.Text)
-	case runlog.FatalError:
+	case engine.FatalError:
 		return pretty.TErrorF("%s", f.Text)
 	default:
 		return f.Text
@@ -588,7 +588,7 @@ func (t *Tui) Run() {
 	}
 }
 
-// NewTui 组装界面与交互捕获。view 是引擎侧状态源（*runlog.Store）。
+// NewTui 组装界面与交互捕获。view 是引擎侧状态源（*Engine）。
 func NewTui(view EngineView) *Tui {
 	//设置Agent消息显示区
 	AgentMessage := tview.NewTextView().

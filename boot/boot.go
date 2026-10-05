@@ -2,18 +2,18 @@ package boot
 
 import (
 	"HyperBot/service/engine"
-	"HyperBot/service/engine/runlog"
 	"HyperBot/service/tui"
 )
 
 func Boot() {
-	// runlog.Store 是两端唯一交汇点：TUI 按帧拉取渲染，引擎只写状态、从不回调。
-	// 引擎 goroutine 何时就绪都不影响 TUI 先行启动——横幅、通知、错误终态
-	// 都是引擎写入状态后由 TUI 在后续帧里拉到的。
-	st := runlog.NewStore()
-	t := tui.NewTui(st)
+	// 引擎先做轻量构造（不触盘、不阻塞），把 *Engine 直接交给 TUI——
+	// 状态就是 Engine 的字段，UI 经引擎暴露的方法按帧拉取，无中间层。
+	// 重初始化（preCheckLoad/newRunner）放在 goroutine 里：失败会 parkWithFatal
+	// 永久驻留，若同步执行会卡死 TUI 启动（终态都无从渲染）。
+	e := engine.GetEngineService("HyperBot")
+	t := tui.NewTui(e)
 	go func() {
-		e := engine.GetEngineService("HyperBot", st)
+		e.Init()
 		e.AgentStart()
 	}()
 	t.Run()

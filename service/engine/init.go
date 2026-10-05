@@ -4,7 +4,6 @@ import (
 	"HyperBot/service/engine/agent"
 	"HyperBot/service/engine/config"
 	m "HyperBot/service/engine/memory"
-	"HyperBot/service/engine/runlog"
 	s "HyperBot/service/engine/session"
 	functionTools "HyperBot/service/engine/tools/functions"
 	"HyperBot/service/engine/tools/toolsets"
@@ -20,6 +19,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -74,7 +74,21 @@ type Engine struct {
 	// 只有"零输出的自动重试链"内部不归零——那正是要计数的时候。
 	errorStreak int
 
-	st *runlog.Store
+	// ── 对上层 UI 暴露的可观察状态（pull 契约，方法见 uistate.go）──
+	mu        sync.Mutex // 串行化引擎各 goroutine 的写入与 UI goroutine 的读取
+	records   []MsgRecord
+	seq       int64
+	version   uint64
+	runState  RunState
+	todoText  string
+	notice    notice
+	startup   []string
+	startupOK bool
+	skills    []HelpItem
+	inputCh   chan string
+
+	cancelMu sync.Mutex
+	cancelFn func()
 }
 type Agentrunner struct {
 	Runner    runner.Runner
@@ -155,7 +169,7 @@ func (e *Engine) newRunner() {
 				llmagent.WithContextCompactionOversizedToolResultMaxTokens(8192),               // Pass 2: 超大 tool result 首尾保留截断
 				llmagent.WithEnableOnDemandSession(true),                                       // 按需加载被压缩的原始数据（session_load）
 				llmagent.WithEnableParallelTools(true),                                         //启用并行工具调用，提升工具调用效率
-				agent.SetBeforeModelStatusCallback((*e).st),                                   //追加beforeModel状态栏
+				agent.SetBeforeModelStatusCallback(e),                                   //追加beforeModel状态栏
 			}
 			// APIType 校验只做一次。ConfigBaseAgent 内部也按同一字段选模型，但它对
 			// 未知类型是静默不设模型（agent 照样建得出来、跑起来才失败），所以这里
@@ -242,13 +256,13 @@ func (e *Engine) loadBuiltinToolsets() {
 		(*e).ConfigFolderPath,
 	)
 	if err != nil {
-		(*e).parkWithFatal(runlog.FatalError, fmt.Sprintf("初始化cron agent错误: %v", err), true)
+		(*e).parkWithFatal(FatalError, fmt.Sprintf("初始化cron agent错误: %v", err), true)
 		return
 	}
 	// 存档加载失败是非致命的：坏文件已被挪到 .fix<时间戳>，空集合可以正常启动
 	if loadErr := cronToolset.LoadError(); loadErr != nil {
 		stdlog.Printf("cron agent 存档加载失败: %v", loadErr)
-		(*e).st.SetNotice(runlog.NoticeWarning, "cron agent config broken, moved to .fix")
+		(*e).setNotice(NoticeWarning, "cron agent config broken, moved to .fix")
 	}
 	(*e).builtinToolsets = append((*e).builtinToolsets, cronToolset)
 }
@@ -269,7 +283,7 @@ func (e *Engine) loadBuiltinToolsAndToolsets() {
 func (e *Engine) loadSkills() {
 	(*e).SkillRepo, _ = skill.NewFSRepository((*e).SkillFolderPath)
 	summaries := (*e).SkillRepo.Summaries()
-	itms := []runlog.HelpItem{}
+	itms := []HelpItem{}
 	for _, s := range summaries {
 
 		des_rune := []rune(s.Description)
@@ -278,17 +292,17 @@ func (e *Engine) loadSkills() {
 		}
 		des := string(des_rune) + "......"
 
-		itms = append(itms, runlog.HelpItem{
+		itms = append(itms, HelpItem{
 			Cmd:  "/" + s.Name,
 			Desc: des,
 		})
 	}
-	(*e).st.SetSkillHelpItems(itms)
+	(*e).setSkillHelpItems(itms)
 }
 func (e *Engine) initSqliteMemoryService() {
 	service, err := m.NewSQLiteMemoryService(filepath.Join((*e).ConfigFolderPath, memoryDBFileName))
 	if err != nil {
-		(*e).parkWithFatal(runlog.FatalError, fmt.Sprintf("初始化sqlite记忆服务错误: %v", err), true)
+		(*e).parkWithFatal(FatalError, fmt.Sprintf("初始化sqlite记忆服务错误: %v", err), true)
 	}
 	(*e).SqliteMemoryService = service
 }
@@ -296,12 +310,12 @@ func (e *Engine) loadConfig() {
 	//加载配置文件
 	c, err := config.LoadConfig((*e).HyperBotConfigPath)
 	if err != nil {
-		(*e).parkWithFatal(runlog.FatalError, fmt.Sprintf("加载配置文件错误: %v,按任意键退出", err), true)
+		(*e).parkWithFatal(FatalError, fmt.Sprintf("加载配置文件错误: %v,按任意键退出", err), true)
 	}
 	(*e).Config_p = c
 }
 func (e *Engine) initInMemorySessionService() {
-	(*e).SessionService_p = s.NewMemorySessionService((*e).Config_p.Model, (*e).st)
+	(*e).SessionService_p = s.NewMemorySessionService((*e).Config_p.Model, e)
 }
 
 // 配置系统提示词，替换其中的占位符
@@ -405,11 +419,11 @@ func (e *Engine) checkSkillsFolder() {
 			//skills 文件夹不存在，创建一个默认的 skills 文件夹
 			err := os.MkdirAll((*e).SkillFolderPath, os.ModePerm)
 			if err != nil {
-				(*e).parkWithFatal(runlog.FatalError, fmt.Sprintf("创建默认skills文件夹错误：%v", err), true)
+				(*e).parkWithFatal(FatalError, fmt.Sprintf("创建默认skills文件夹错误：%v", err), true)
 			}
-			(*e).st.SetNotice(runlog.NoticeSuccess, "skills folder not found, created default")
+			(*e).setNotice(NoticeSuccess, "skills folder not found, created default")
 		} else {
-			(*e).parkWithFatal(runlog.FatalError, fmt.Sprintf("检查skills文件夹错误：%v", err), true)
+			(*e).parkWithFatal(FatalError, fmt.Sprintf("检查skills文件夹错误：%v", err), true)
 		}
 	}
 
@@ -417,7 +431,7 @@ func (e *Engine) checkSkillsFolder() {
 func (e *Engine) getcwd() {
 	exePath, err := os.Executable() // 获取当前可执行文件的路径
 	if err != nil {
-		(*e).parkWithFatal(runlog.FatalError, fmt.Sprintf("获取可执行文件目录错误: %v,按任意键退出", err), true)
+		(*e).parkWithFatal(FatalError, fmt.Sprintf("获取可执行文件目录错误: %v,按任意键退出", err), true)
 	}
 	(*e).CWD = filepath.Dir(exePath) // 获取当前可执行文件的目录路径（不包含程序名）
 }
@@ -430,11 +444,11 @@ func (e *Engine) checkConfigFolder() {
 			//config 文件夹不存在，创建一个默认的 config 文件夹
 			err := os.MkdirAll((*e).ConfigFolderPath, os.ModePerm)
 			if err != nil {
-				(*e).parkWithFatal(runlog.FatalError, fmt.Sprintf("创建默认config文件夹错误：%v", err), true)
+				(*e).parkWithFatal(FatalError, fmt.Sprintf("创建默认config文件夹错误：%v", err), true)
 			}
-			(*e).st.SetNotice(runlog.NoticeSuccess, "config folder not found, created default")
+			(*e).setNotice(NoticeSuccess, "config folder not found, created default")
 		} else {
-			(*e).parkWithFatal(runlog.FatalError, fmt.Sprintf("检查config文件夹错误：%v", err), true)
+			(*e).parkWithFatal(FatalError, fmt.Sprintf("检查config文件夹错误：%v", err), true)
 		}
 	}
 
@@ -450,18 +464,18 @@ func (e *Engine) checkConfig() {
 			// 文件不存在，创建一个默认的 config.yaml
 			fd, err := os.OpenFile((*e).HyperBotConfigPath, os.O_RDWR|os.O_CREATE, 0644)
 			if err != nil {
-				(*e).parkWithFatal(runlog.FatalError, fmt.Sprintf("创建默认配置文件错误：%v", err), true)
+				(*e).parkWithFatal(FatalError, fmt.Sprintf("创建默认配置文件错误：%v", err), true)
 			}
 			defer fd.Close()
 			//生成一个随机的用户ID，替换掉配置文件中的占位符
 			cfg := strings.ReplaceAll(config.Template, "{USERID}", uuid.New().String())
 			_, err = fd.WriteString(cfg)
 			if err != nil {
-				(*e).parkWithFatal(runlog.FatalError, fmt.Sprintf("写入默认配置文件错误：%v,按任意键退出", err), true)
+				(*e).parkWithFatal(FatalError, fmt.Sprintf("写入默认配置文件错误：%v,按任意键退出", err), true)
 			}
-			(*e).parkWithFatal(runlog.FatalSuccess, "检查到配置文件不存在，已创建默认配置文件。请根据实际情况修改配置文件后重新启动程序！", true)
+			(*e).parkWithFatal(FatalSuccess, "检查到配置文件不存在，已创建默认配置文件。请根据实际情况修改配置文件后重新启动程序！", true)
 		} else {
-			(*e).parkWithFatal(runlog.FatalError, fmt.Sprintf("检查配置文件错误：%v", err), true)
+			(*e).parkWithFatal(FatalError, fmt.Sprintf("检查配置文件错误：%v", err), true)
 		}
 	}
 

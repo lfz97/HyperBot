@@ -2,7 +2,6 @@ package engine
 
 import (
 	"HyperBot/service/engine/messagerender"
-	"HyperBot/service/engine/runlog"
 	"context"
 	"fmt"
 	"strings"
@@ -38,9 +37,9 @@ func (e *Engine) agentRunIteratively(Ctx context.Context, inputContext turnInfo)
 	//New（用户敲 /new）才推"新对话已开始"，刚启动时没有"上一轮对话"，推了是噪音。
 	//Error 与 Int 不在这里打印——各自已在 agentRunOnce 里打过，再打就是重复。
 	if inputContext.Code == Startup {
-		(*e).st.SetStartupInfo((*e).startupInfoLines())
+		(*e).setStartupInfo((*e).startupInfoLines())
 	} else if inputContext.Code == New {
-		(*e).st.SetNotice(runlog.NoticeNewConversation, "")
+		(*e).setNotice(NoticeNewConversation, "")
 	}
 
 	var userPrompt string
@@ -70,12 +69,12 @@ func (e *Engine) agentRunIteratively(Ctx context.Context, inputContext turnInfo)
 
 		} else {
 			select {
-			case userPrompt = <-(*e).st.InputChan(): //用户输入由 TUI 经 Store.SubmitInput 主动提交进来
+			case userPrompt = <-(*e).inputCh: //用户输入由 TUI 经 Engine.SubmitInput 主动提交进来
 			}
 			checkprompt := strings.ReplaceAll(userPrompt, "\n", "")
 			checkprompt = strings.ReplaceAll(checkprompt, " ", "")
 			if checkprompt == "/exit" {
-				(*e).st.Append(runlog.KindSlashEcho, checkprompt)
+				(*e).appendRecord(KindSlashEcho, checkprompt)
 				return &turnInfo{
 					Code:          Exit,
 					Reason:        "用户主动结束对话",
@@ -83,7 +82,7 @@ func (e *Engine) agentRunIteratively(Ctx context.Context, inputContext turnInfo)
 				}
 
 			} else if checkprompt == "/new" {
-				(*e).st.Append(runlog.KindSlashEcho, checkprompt)
+				(*e).appendRecord(KindSlashEcho, checkprompt)
 				return &turnInfo{
 					Code:   New,
 					Reason: "用户主动开始新对话",
@@ -93,7 +92,7 @@ func (e *Engine) agentRunIteratively(Ctx context.Context, inputContext turnInfo)
 				continue //如果用户输入为空，重新开始本轮循环，等待用户输入
 
 			} else {
-				(*e).st.Append(runlog.KindUser, userPrompt)
+				(*e).appendRecord(KindUser, userPrompt)
 				break //正常输入，继续执行后续逻辑
 			}
 
@@ -101,17 +100,17 @@ func (e *Engine) agentRunIteratively(Ctx context.Context, inputContext turnInfo)
 	}
 
 	// 注册应用级输入捕获器，监听ESC键以取消后续agent的输出。
-	(*e).st.SetActiveCancel(cancel)
+	(*e).setActiveCancel(cancel)
 	// 函数返回前注销取消函数，避免运行结束后 Esc 仍触发取消
-	defer (*e).st.SetActiveCancel(nil)
+	defer (*e).setActiveCancel(nil)
 
 	// AgentRunOnce返回的消息包含本次对话输入输出的所有消息。
 	// 运行指示器的开关紧贴这次调用：用 defer 复位是为了 panic 安全——agentRunOnce
 	// 内部跑的是框架代码，panic 时指示器会永远转下去。
 	// 不要挂到本函数开头那个 Ctx 上：那个 ctx 的生命周期包含前面等用户输入的阶段，
 	// 挂上去 spinner 会在用户还没打字时就转起来。
-	(*e).st.SetRunning(true)
-	defer (*e).st.SetRunning(false)
+	(*e).setRunning(true)
+	(*e).setRunning(false)
 	AgentError_p := e.agentRunOnce(Ctx, userPrompt)
 	if AgentError_p != nil { //如果运行过程中发生错误
 		return &turnInfo{
@@ -162,7 +161,7 @@ func (e *Engine) agentRunOnce(Ctx context.Context, userPrompt string) *AgentErro
 		// 在源头打印，与下面的 TerminalError 分支保持一致：每类错误只打一次。
 		// 改前这里不打，只靠 agentRunIteratively 循环顶部打一次，与 TerminalError
 		// 打两次的行为不一致。
-		(*e).st.Append(runlog.KindErrorLine, err.Error())
+		(*e).appendRecord(KindErrorLine, err.Error())
 		return &AgentError{
 			Error:         err,
 			ErrorType:     "RunError",
@@ -171,14 +170,14 @@ func (e *Engine) agentRunOnce(Ctx context.Context, userPrompt string) *AgentErro
 	}
 
 	partialOutput := ""
-	msgRender := messagerender.NewMessageRender((*e).st, (*(*e).Config_p).Model.ShowReasoning, (*(*e).AgentRunner_p).Stream)
+	msgRender := messagerender.NewMessageRender(e, (*(*e).Config_p).Model.ShowReasoning, (*(*e).AgentRunner_p).Stream)
 	for event := range eventChan {
 		//只有terminal error才会中断对话，其他error直接continue
 		if event.Error != nil {
 			if event.IsTerminalError() {
 				//填充err，使得返回的err不为nil，表示对话发生了错误
 				err = fmt.Errorf("Event发生TerminalError: %v", event.Error)
-				(*e).st.Append(runlog.KindErrorLine, err.Error())
+				(*e).appendRecord(KindErrorLine, err.Error())
 				return &AgentError{
 					Error:         err,
 					ErrorType:     "TerminalError",
@@ -190,7 +189,7 @@ func (e *Engine) agentRunOnce(Ctx context.Context, userPrompt string) *AgentErro
 		}
 		select {
 		case <-Ctx.Done():
-			(*e).st.SetNotice(runlog.NoticeCancelled, "")
+			(*e).setNotice(NoticeCancelled, "")
 			(*e).errorStreak = 0 //重置错误计数
 			return nil
 		default:

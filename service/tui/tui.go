@@ -813,13 +813,9 @@ func NewTui(view EngineView) *Tui {
 
 	// 注册输入捕获器，每次用户在输入框敲击键盘时都会触发。
 	// 原 ListenUserInput 的注册时机在本函数（app.Run 之前直接设置，无需 QueueUpdate）。
+	// 注意：ctrl+k 不在这里处理——它已提升为应用级捕获（app.SetInputCapture），
+	// 否则帮助页打开时（inputArea 不在视图树里）就再也无法用 ctrl+k 关闭了。
 	InputArea.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		// Ctrl+K 切换帮助页
-		if event.Key() == tcell.KeyCtrlK {
-			tui.toggleHelpPage()
-			return nil
-		}
-
 		// Enter 提交输入
 		// ModNone = 0，无任何修饰键（Ctrl/Shift/Alt 均未按下），即裸按 Enter。
 		// Shift+Enter 落到函数末尾的 return event，由 TextArea 插入换行（手动多行输入）。
@@ -841,13 +837,26 @@ func NewTui(view EngineView) *Tui {
 		return event
 	})
 
-	// 应用级 Esc 捕获：运行期按 Esc 中断当前 agent（Esc → Engine.Interrupt() 提交中断信号，
-	// 方向与旧版 SetAppFuncTriggerWithEsc 相反——不再由引擎往 TUI 注册回调）。
-	// 非运行期放行，让 Esc 落到帮助页的关闭捕获上（与旧版"仅运行期注册"的行为一致）。
+	// 应用级捕获：ctrl+k 全局切换帮助页、esc 按优先级分流。
+	// ⚠️ ctrl+k 必须挂应用级而不是 inputArea：帮助页 SetRoot 后 inputArea 不在
+	// 视图树里，它的捕获器收不到按键——第二次 ctrl+k 就再也没人响应（真踩过的坑）。
+	// esc 优先级：面板开着 → 关面板；否则运行期 → 中断 agent（Esc → Engine.Interrupt()，
+	// 方向与旧版 SetAppFuncTriggerWithEsc 相反——不再由引擎往 TUI 注册回调）；
+	// 非运行期且面板没开 → 放行。
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Key() == tcell.KeyEscape && engineViewRunning(view) {
-			view.Interrupt()
+		switch event.Key() {
+		case tcell.KeyCtrlK:
+			tui.toggleHelpPage()
 			return nil
+		case tcell.KeyEscape:
+			if tui.appLayout.helpTable.helpPageVisible {
+				tui.toggleHelpPage()
+				return nil
+			}
+			if engineViewRunning(view) {
+				view.Interrupt()
+				return nil
+			}
 		}
 		return event // 其他按键正常传递
 	})

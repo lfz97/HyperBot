@@ -14,7 +14,10 @@ package engine
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
+
+	"trpc.group/trpc-go/trpc-agent-go/model"
 )
 
 // 记录 type 字段取值。
@@ -111,9 +114,47 @@ func (e *Engine) appendTyped(typ, text string) {
 // AppendSummary 追加一条摘要提示（session.summarySink 消费方小接口的实现）。
 func (e *Engine) AppendSummary(text string) { e.appendTyped(RecSummary, text) }
 
-// AppendRecordJSON 追加一条已序列化的 JSON 记录（messagerender.logSink 的实现，
-// 框架 message 的透传序列化在渲染包完成）。
+// AppendRecordJSON 追加一条已序列化的 JSON 记录（emitChoice 的透传序列化产物走这里）。
 func (e *Engine) AppendRecordJSON(raw string) { e.appendRecord(raw) }
+
+// wireRecord 消息记录的 JSON 形状：type 承载消息类型，msg 为框架 message 原样。
+type wireRecord struct {
+	Type string         `json:"type"`
+	Msg  *model.Message `json:"msg,omitempty"`
+}
+
+func wireMsg(typ string, m model.Message) string {
+	b, err := json.Marshal(wireRecord{Type: typ, Msg: &m})
+	if err != nil {
+		return "" // 纯 string/json 字段的 message 不会 marshal 失败，防御性兜底
+	}
+	return string(b)
+}
+
+// emitChoice 把框架 Response choice 透传序列化进消息日志——引擎只传原始 message
+// （model.Message 自带 json 标签），增量/完整靠 type 字段区分；怎么渲染是 UI 的事。
+// ShowReasoning=false 时剥掉 reasoning_content（配置属于引擎，UI 无需感知）。
+// 空增量/空定稿不入日志（只 bump 版本没有任何意义）。
+func (e *Engine) emitChoice(choice model.Choice, isPartial bool) {
+	if (*(*e).AgentRunner_p).Stream {
+		d := choice.Delta
+		if !(*(*e).Config_p).Model.ShowReasoning {
+			d.ReasoningContent = ""
+		}
+		if d.Content != "" || d.ReasoningContent != "" || len(d.ToolCalls) != 0 || d.Role == "tool" {
+			e.AppendRecordJSON(wireMsg("delta", d))
+		}
+	}
+	if !isPartial {
+		m := choice.Message
+		if !(*(*e).Config_p).Model.ShowReasoning {
+			m.ReasoningContent = ""
+		}
+		if strings.TrimSpace(m.Content) != "" || len(m.ToolCalls) != 0 || m.Role == "tool" {
+			e.AppendRecordJSON(wireMsg("message", m))
+		}
+	}
+}
 
 // ── 运行状态 ─────────────────────────────────────────────
 

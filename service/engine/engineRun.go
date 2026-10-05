@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"HyperBot/service/engine/messagerender"
 	"context"
 	"fmt"
 	"strings"
@@ -170,7 +169,6 @@ func (e *Engine) agentRunOnce(Ctx context.Context, userPrompt string) *AgentErro
 	}
 
 	partialOutput := ""
-	msgRender := messagerender.NewMessageRender(e, (*(*e).Config_p).Model.ShowReasoning, (*(*e).AgentRunner_p).Stream)
 	for event := range eventChan {
 		//只有terminal error才会中断对话，其他error直接continue
 		if event.Error != nil {
@@ -203,7 +201,7 @@ func (e *Engine) agentRunOnce(Ctx context.Context, userPrompt string) *AgentErro
 			(*e).errorStreak = 0
 			for _, choice := range (*(*event).Response).Choices {
 
-				msgRender.RenderResponse(choice, (*(*event).Response).IsPartial)
+				(*e).emitChoice(choice, (*(*event).Response).IsPartial)
 				gatherPartialOutput(&partialOutput, choice, (*(*e).AgentRunner_p).Stream)
 			}
 

@@ -267,9 +267,10 @@ func (t *Tui) contentWidth() int {
 	return w
 }
 
-// ShowStartupBanner 把启动横幅写进消息区，只在 Startup 那一轮调用一次。
-// 横幅是"死文本"：随对话滚动、resize 不重排，这是刻意的语义。
-func (t *Tui) ShowStartupBanner(infoLines []string) {
+// renderStartupBanner 把启动横幅写进消息区，由 drawLoop 在 StartupInfo 就绪后的第一帧
+// 调用一次（pull 之下不再由引擎推送）。横幅是"死文本"：随对话滚动、resize 不重排，
+// 这是刻意的语义。
+func (t *Tui) renderStartupBanner(infoLines []string) {
 	b := newBanner(infoLines)
-	t.PrintToMsgView("\n"+b.compose(t.contentWidth())+"\n\n\n", false)
+	t.appendMsg("\n" + b.compose(t.contentWidth()) + "\n\n\n")
 }

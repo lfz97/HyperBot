@@ -1,21 +1,15 @@
 package messagerender
 
 import (
-	"HyperBot/service/engine/tools"
-	"HyperBot/utils/pretty"
-	"github.com/rivo/tview"
-	"github.com/tidwall/gjson"
-	"regexp"
 	"strings"
 	"sync"
+
+	"HyperBot/service/engine/runlog"
+	"HyperBot/service/engine/tools"
+
+	"github.com/tidwall/gjson"
 	"trpc.group/trpc-go/trpc-agent-go/model"
 )
-
-// glamourTailPad 匹配行尾的"空白 + ANSI 序列"混合填充。glamour 会把标题、表格、
-// 代码块的每一行都补满整行宽度，每个空格还裹一层 SGR：实测 153B 的 markdown 渲染后
-// 是 12.7KB，其中 92% 是这种填充。消息区 TextView 在进程生命周期内从不清空，且每帧
-// 全量重绘、每次替换都要扫一遍整个 buffer，所以必须剥掉。
-var glamourTailPad = regexp.MustCompile(`(?:\x1b\[[0-9;]*m|[ \t])+$`)
 
 type ResponseMessageStatus struct {
 	startReasoning bool
@@ -23,22 +17,19 @@ type ResponseMessageStatus struct {
 	ShowReasoning  bool
 }
 
+// MessageRender 把框架的 Response 事件翻译成领域记录写进 runlog.Store。
+// 它不再持有任何展示端引用：markdown 渲染、配色、版式全部是消费端（TUI）的事，
+// 本包只负责"发生了什么"——正文增量、定稿原文、思考内容、工具行。
 type MessageRender struct {
-	tui    tuiService
+	log    *runlog.Store
 	Status *ResponseMessageStatus
 	Buffer *toolMsgBuffer
 }
 
-type tuiService interface {
-	PrintToMsgView(content string, clear bool)
-	ReplaceTailInMsgView(raw string, replacement string) bool
-	RenderMarkdown(in string) (string, error)
-}
-
-func NewMessageRender(tui tuiService, ShowReasoning bool, Stream bool) *MessageRender {
+func NewMessageRender(log *runlog.Store, ShowReasoning bool, Stream bool) *MessageRender {
 
 	return &MessageRender{
-		tui: tui,
+		log: log,
 		Status: &ResponseMessageStatus{
 			Stream:        Stream,
 			ShowReasoning: ShowReasoning,
@@ -68,83 +59,49 @@ func (r *MessageRender) renderStreamEvent(Choice model.Choice, isPartial bool) {
 	if Choice.Delta.ReasoningContent != "" {
 		if !(*(*r).Status).startReasoning {
 			if (*(*r).Status).ShowReasoning {
-				(*r).tui.PrintToMsgView("\n", false)
+				(*r).log.Append(runlog.KindNewline, "\n")
 			}
 			(*(*r).Status).startReasoning = true
 		}
 		if (*(*r).Status).ShowReasoning {
 			// 思考内容
-			(*r).tui.PrintToMsgView(pretty.TReasoningContent(Choice.Delta.ReasoningContent), false)
+			(*r).log.Append(runlog.KindReasoning, Choice.Delta.ReasoningContent)
 		}
 	} else if (*(*r).Status).startReasoning {
 		(*(*r).Status).startReasoning = false
 		if (*(*r).Status).ShowReasoning {
-			(*r).tui.PrintToMsgView("\n", false)
+			(*r).log.Append(runlog.KindNewline, "\n")
 		}
 	}
 	if Choice.Delta.Content != "" && Choice.Delta.Role != "tool" {
 		// 正文内容（工具响应片段不作为正文渲染，由下方统一处理工具信息部分处理）
-		(*r).tui.PrintToMsgView(Choice.Delta.Content, false)
+		(*r).log.Append(runlog.KindContentDelta, Choice.Delta.Content)
 	}
 
-	// 合并响应：本 hop 的正文已完整，把刚流出去的 raw 替换成渲染版。两个 provider 实测
-	// 都是每 hop 恰好一个这样的响应，且 Message.Content 与所有 Delta.Content 的拼接字节相同。
+	// 合并响应：本 hop 的正文已完整，投一条定稿记录，消费端把刚流出去的 raw 尾部
+	// 替换成 markdown 渲染版。两个 provider 实测都是每 hop 恰好一个这样的响应，
+	// 且 Message.Content 与所有 Delta.Content 的拼接字节相同；替换（及失败时保 raw）
+	// 的全部语义在消费端，本侧只保证定稿原文与流出的拼接一致。
 	//
 	// 判据只能用 IsPartial：同样在带工具调用的 hop 上，openai 给 Done=false 而 anthropic 给
 	// Done=true（Done 的框架语义是"flow 是否该停"），IsFinalResponse() 则因带工具调用恒为 false。
 	// Role=="tool" 也要挡：工具结果事件的 Message.Content 非空且 Role 是 tool。
 	if !isPartial && strings.TrimSpace(Choice.Message.Content) != "" && Choice.Message.Role != "tool" {
-		// 替换失败说明 raw 已不在 buffer 末尾（中途被别的写入者插过），保持 raw 即可。
-		// 绝不能退化成追加，否则正文会重复显示一遍。
-		(*r).tui.ReplaceTailInMsgView(Choice.Message.Content, r.renderBody(Choice.Message.Content))
+		(*r).log.Append(runlog.KindContentFinal, Choice.Message.Content)
 	}
 }
 
 func (r *MessageRender) renderNonStreamEvent(Choice model.Choice) {
 	// 思考信息 - 根据配置决定是否显示
 	if Choice.Message.ReasoningContent != "" && (*(*r).Status).ShowReasoning {
-		(*r).tui.PrintToMsgView("\n", false)
-		(*r).tui.PrintToMsgView(pretty.TReasoningContent(Choice.Message.ReasoningContent), false)
-		(*r).tui.PrintToMsgView("\n", false)
+		(*r).log.Append(runlog.KindNewline, "\n")
+		(*r).log.Append(runlog.KindReasoning, Choice.Message.ReasoningContent)
+		(*r).log.Append(runlog.KindNewline, "\n")
 	}
-	// 正文内容
+	// 正文内容（非流式没有先流出的 raw，消费端会直接追加渲染版）
 	if strings.TrimSpace(Choice.Message.Content) != "" && Choice.Message.Role != "tool" {
-		(*r).tui.PrintToMsgView(r.renderBody(Choice.Message.Content), false)
+		(*r).log.Append(runlog.KindContentFinal, Choice.Message.Content)
 	}
-}
-
-// renderBody 用 glamour 渲染 markdown，TranslateANSI 转为 tview 颜色标签。
-// 流式与非流式两条路径共用，保证两种模式的最终观感一致。
-//
-// 正文标记必须加在渲染结果上，不能加在 markdown 源码前面：`● ` 会让首行的块级结构失效
-// ——实测代码围栏和表格会整个塌成一行、列表首项不再被识别、标题降级成普通段落。
-func (r *MessageRender) renderBody(content string) string {
-	out, err := (*r).tui.RenderMarkdown(content)
-	if err != nil {
-		out = content // 渲染失败退回原文，别把整条回复吞掉
-	}
-
-	// glamour 的输出恒以一个换行开头，不剥掉的话标记会独占一行、与正文脱开
-	out = strings.TrimRight(strings.TrimLeft(out, "\n\r"), "\n\r ")
-	lines := strings.Split(out, "\n")
-	for i, l := range lines {
-		l = glamourTailPad.ReplaceAllString(l, "")
-		// 剥填充会连带剥掉行尾闭合样式的 reset，不补回则颜色泄漏到后续行
-		// （实测不补会留下 2~5 个未闭合标签）
-		if l != "" && !strings.HasSuffix(l, "\x1b[m") {
-			l += "\x1b[m"
-		}
-		lines[i] = l
-	}
-	// 标记加在第一个有可见内容的行上：正文以代码块或表格开头时，
-	// 剥完填充后首行是空的，直接前置会让 ● 独占一行
-	for i, l := range lines {
-		if strings.TrimSpace(l) != "" {
-			lines[i] = pretty.TContentNoneStreamTag(l)
-			break
-		}
-	}
-	return tview.TranslateANSI(strings.Join(lines, "\n")) + "[-:-:-]"
 }
 
 func (r *MessageRender) gatherToolMessage(Choice model.Choice) {
@@ -210,11 +167,7 @@ func (r *MessageRender) renderToolMessages() {
 		}
 		(*msg_p).printed = true
 		in, out := renderToolMessageByMapper(mappers, msg_p)
-		(*r).tui.PrintToMsgView(pretty.TToolCompact(
-			(*msg_p).FunctionName,
-			[]byte(in),
-			out,
-		), false)
+		(*r).log.AppendTool((*msg_p).FunctionName, in, out)
 	}
 
 }

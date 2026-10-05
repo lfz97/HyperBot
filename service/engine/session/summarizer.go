@@ -3,7 +3,6 @@ package session
 import (
 	"HyperBot/service/engine/config"
 	"HyperBot/service/engine/models"
-	"HyperBot/utils/pretty"
 	"embed"
 	"fmt"
 	"regexp"
@@ -35,14 +34,14 @@ func initSummarizerPrompts() {
 	userSummarizerPrompt = string(userSummarizerPrompt_b)
 }
 
-// msgPrinter 本包对 TUI 的全部需求：摘要生成后往消息区打一行提示。
-// 在消费方按需声明小接口，而不是依赖 requirements.TuiService 的 13 个方法——
-// 否则 TUI 门面上任何签名变动都会牵连到跟它无关的 session 包。
-type msgPrinter interface {
-	PrintToMsgView(content string, clear bool)
+// summarySink 本包对展示端的全部需求：摘要生成后投一条摘要记录。
+// 在消费方按需声明小接口（engine 侧 runlog.Store 天然满足）——
+// session 包不感知展示端是谁，也不依赖任何 TUI 类型。
+type summarySink interface {
+	AppendSummary(text string)
 }
 
-func NewSummarizer(m config.Model, tui msgPrinter) summary.SessionSummarizer {
+func NewSummarizer(m config.Model, sink summarySink) summary.SessionSummarizer {
 	initSummarizerPrompts()
 	//设置tiktoken计算方式，默认的方式太不准确了
 	counter, _ := tiktoken.New(m.Model)
@@ -82,10 +81,10 @@ func NewSummarizer(m config.Model, tui msgPrinter) summary.SessionSummarizer {
 			return fmt.Sprintf("[%s returned: %s]", msg.ToolName, content)
 		}),
 	}
-	if tui != nil {
+	if sink != nil {
 		opts = append(opts, summary.WithPostSummaryHook(func(s *summary.PostSummaryHookContext) error {
 			cleanSummary := reThink.ReplaceAllString(s.Summary, "") //将摘要内容中的<think>...</think>部分去掉
-			tui.PrintToMsgView(pretty.TColoredText(pretty.TColorGreen, fmt.Sprintf("\n->已生成摘要：\n%v\n", cleanSummary)), false)
+			sink.AppendSummary(cleanSummary)
 			return nil
 		}))
 	}

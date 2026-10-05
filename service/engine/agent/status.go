@@ -24,9 +24,9 @@ const (
 	memoryEntryMaxRunes = 200
 )
 
-// Display 是 agent 把渲染好的文本推给展示端的出口，当前只有 todo 清单（供 TUI 的 TodoBar 显示）。
-// 在 agent 包内声明（1 个方法），避免把 requirements.TuiService 这个 13 方法的
-// 胖接口渗进 agent 包——agent 只需要"能把文本推给 UI"这一个能力。
+// Display 是 agent 把文本推给展示端的出口，当前只有 todo 清单（供 TUI 的 TodoBar 显示）。
+// 在 agent 包内声明（1 个方法）——消费方小接口，engine 侧的 runlog.Store 天然满足；
+// agent 包不感知展示端是谁，也不依赖任何 TUI 类型。
 // 按能力命名而非按当前唯一调用方命名（不叫 TodoTextSink）：以后加别的展示项直接扩方法即可，不用改名。
 // 非交互调用方（如将来的 schedule agent）传 nil：仍然注入 prompt，只是不推 UI。
 type Display interface {

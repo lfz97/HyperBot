@@ -32,6 +32,10 @@ const (
 	// spinnerTicks 指示器每推进一帧占用多少个 drawInterval tick。3 × 30ms = 90ms/帧，
 	// 10 帧约 0.9s 转一圈。
 	spinnerTicks = 3
+	// tailRenderInterval 流式期间对"当前消息"重跑 glamour 的最小间隔。delta 可能每几毫秒
+	// 一条，30fps 逐帧渲染没有感知收益；100ms 已远超阅读速度。单次成本 = glamour(当前消息)，
+	// 典型 2~10KB 消息在 2C 机器上是个位数毫秒——单用户应用可放心全量渲染。
+	tailRenderInterval = 100 * time.Millisecond
 )
 
 // EngineView 是 TUI 对引擎的全部依赖（消费方定义的接口）。
@@ -105,7 +109,7 @@ type Tui struct {
 	engine    EngineView
 
 	// dirty 标记"内容已写入 widget 但尚未上屏"，由 drawLoop 消费。
-	// 写入走 QueueUpdate（只改 widget、不重绘）而不是 QueueUpdateDraw：后者每次调用都
+	// 写入走 SetText（只改 widget、不重绘）而不是 QueueUpdateDraw：后者每次调用都
 	// 阻塞等待一次完整全屏重绘，而 TextView.Draw 内部的 parseAhead 会把整个文本缓冲区
 	// 拷贝一遍（t.text.String()），流式输出下就是每 token O(n)、整体 O(n²)。
 	dirty    atomic.Bool
@@ -206,12 +210,16 @@ type drawState struct {
 	shownNotice    string // NoticeBar 上一帧的渲染结果
 	seenVersion    uint64 // 已渲染到的消息日志版本
 	seenSeq        int64  // 已渲染到的最后一条记录序号
-	streamRaw      string // 当前正文流的原文累积（流式增量之间），供定稿尾替换
-	inReasoning    bool   // 正在输出思考块（流式框行判定）
-	sawDelta       bool   // 本轮消息是否见过流式增量（区分流式定稿/非流式消息）
+	shownView      string // TextView 当前内容（无变化不 SetText，省整段 reparse）
+	// ── 全量渲染模型：视图 = base（已完成段）+ live（当前消息整体渲染）──
+	base           string                   // 已完成段（banner、定稿消息渲染体、工具行、提示行），只增不改
+	curReasoning   string                   // 当前消息已流出的思考内容
+	curContent     string                   // 当前消息已流出的正文
 	toolCalls      map[string]*wireToolCall // 待结果的工具调用缓冲
-	bannerDone     bool   // 启动横幅已渲染（只在 StartupInfo 就绪后的第一帧渲染一次）
-	fatalHandled   bool   // 终态已处理（渲染 + 停止事件循环）
+	boundarySeen   bool                     // 本轮新记录里出现过边界/定稿（视图需立即重组）
+	lastTailRender time.Time                // 上次对 live 部分跑 glamour 的时间（节流）
+	bannerDone     bool                     // 启动横幅已渲染（只在 StartupInfo 就绪后的第一帧渲染一次）
+	fatalHandled   bool                     // 终态已处理（渲染 + 停止事件循环）
 }
 
 // startDrawLoop 启动固定帧率的重绘循环，只启动一次。
@@ -263,30 +271,39 @@ func (t *Tui) tickBanner(st *drawState) {
 		return // 引擎 init 未完成，等下一帧再拉
 	}
 	st.bannerDone = true
-	t.renderStartupBanner(lines)
+	st.base += t.startupBannerView(lines)
+	t.setView(st, t.composeView(st))
 }
 
-// tickMsgLog 比对消息日志版本号，把新记录渲染进消息区。
-// 版本号与记录是两次加锁读取，中间新到的记录下一帧自然会补上——拉的是状态，
-// 丢帧无损。空闲（版本未变）时直接返回，零成本。
+// tickMsgLog 比对消息日志版本号，消费新记录并重组视图。
+// 全量渲染模型下视图 = base + live(当前消息)：边界/定稿立即重组上屏；
+// 纯增量按 tailRenderInterval 节流——流式文本的阅读速度远低于 30fps，
+// 逐帧 glamour 没有感知收益。
 func (t *Tui) tickMsgLog(st *drawState) {
 	ver := t.engine.Version()
 	if ver == st.seenVersion {
 		return
 	}
 	recs := t.engine.Records(st.seenSeq)
-	if len(recs) > 0 {
-		for _, line := range recs {
-			t.renderRecord(line, st)
-		}
-		st.seenSeq += int64(len(recs))
+	if len(recs) == 0 {
+		st.seenVersion = ver
+		return
 	}
+	for _, line := range recs {
+		t.renderRecord(line, st)
+	}
+	st.seenSeq += int64(len(recs))
 	st.seenVersion = ver
+
+	if !st.boundarySeen && time.Since(st.lastTailRender) < tailRenderInterval {
+		return
+	}
+	st.lastTailRender = time.Now()
+	t.setView(st, t.composeView(st))
 }
 
-// renderRecord 把一条 JSON 记录翻译成带色文本并写入消息区。
-// 记录的 type 字段承载消息类型；框架 message 原样透传，这里的全部工作都是
-// 渲染决策：reasoning 框行、正文流式合并、工具行拼装、markdown、配色。
+// renderRecord 消化一条 JSON 记录，更新视图状态（base/live/工具缓冲）。
+// 记录的 type 字段承载消息类型；框架 message 原样透传，渲染决策全部在本侧。
 func (t *Tui) renderRecord(line string, st *drawState) {
 	var rec wireRecord
 	if err := json.Unmarshal([]byte(line), &rec); err != nil {
@@ -298,25 +315,12 @@ func (t *Tui) renderRecord(line string, st *drawState) {
 		if rec.Msg == nil || json.Unmarshal(rec.Msg, &m) != nil {
 			return
 		}
-		st.sawDelta = true
 		if m.Role == "tool" {
 			t.renderToolResult(&m, st)
 			return
 		}
-		if m.ReasoningContent != "" {
-			if !st.inReasoning {
-				st.inReasoning = true
-				t.appendMsg("\n")
-			}
-			t.appendMsg(pretty.TReasoningContent(m.ReasoningContent))
-		} else if st.inReasoning {
-			st.inReasoning = false
-			t.appendMsg("\n")
-		}
-		if m.Content != "" {
-			st.streamRaw += m.Content
-			t.appendMsg(m.Content)
-		}
+		st.curReasoning += m.ReasoningContent
+		st.curContent += m.Content
 		t.bufferToolCalls(&m, st)
 	case "message":
 		var m model.Message
@@ -328,31 +332,37 @@ func (t *Tui) renderRecord(line string, st *drawState) {
 			return
 		}
 		t.bufferToolCalls(&m, st)
-		// 思考块只在非流式消息里由本侧框行渲染；流式的思考已随增量出屏
-		if !st.sawDelta && m.ReasoningContent != "" {
-			t.appendMsg("\n")
-			t.appendMsg(pretty.TReasoningContent(m.ReasoningContent))
-			t.appendMsg("\n")
+		// 定稿：以框架完整 message 为准刷新当前消息并 base 化
+		if m.ReasoningContent != "" {
+			st.base += renderReasoningBlock(m.ReasoningContent)
+		} else if st.curReasoning != "" {
+			st.base += renderReasoningBlock(st.curReasoning)
 		}
 		if strings.TrimSpace(m.Content) != "" {
-			t.appendFinal(m.Content, st)
+			st.base += t.renderBody(m.Content)
 		}
-		t.resetStreamBoundary(st)
+		t.resetCur(st)
+		st.boundarySeen = true
 	case "user":
-		t.appendMsg(pretty.TUserInput(rec.Text))
-		t.resetStreamBoundary(st)
+		t.flushCur(st)
+		st.base += pretty.TUserInput(rec.Text)
+		st.boundarySeen = true
 	case "slash":
-		t.appendMsg(pretty.TColoredText(pretty.TColorLightGreen, "\n"+rec.Text+"\n"))
-		t.resetStreamBoundary(st)
+		t.flushCur(st)
+		st.base += pretty.TColoredText(pretty.TColorLightGreen, "\n"+rec.Text+"\n")
+		st.boundarySeen = true
 	case "warn":
-		t.appendMsg(pretty.TWarningF("%s", rec.Text))
-		t.resetStreamBoundary(st)
+		t.flushCur(st)
+		st.base += pretty.TWarningF("%s", rec.Text)
+		st.boundarySeen = true
 	case "error":
-		t.appendMsg(pretty.TErrorF("%s", rec.Text))
-		t.resetStreamBoundary(st)
+		t.flushCur(st)
+		st.base += pretty.TErrorF("%s", rec.Text)
+		st.boundarySeen = true
 	case "summary":
-		t.appendMsg(pretty.TColoredText(pretty.TColorGreen, "\n->已生成摘要：\n"+rec.Text+"\n"))
-		t.resetStreamBoundary(st)
+		t.flushCur(st)
+		st.base += pretty.TColoredText(pretty.TColorGreen, "\n->已生成摘要：\n"+rec.Text+"\n")
+		st.boundarySeen = true
 	}
 }
 
@@ -378,7 +388,7 @@ func (t *Tui) bufferToolCalls(m *model.Message, st *drawState) {
 }
 
 // renderToolResult 渲染工具行：结果（Role=tool 的框架 message）到达时，按 ToolID
-// 匹配此前缓冲的工具调用，拼紧凑行（TToolCompact 内建参数/结果压缩与截断）。
+// 匹配此前缓冲的工具调用（TToolCompact 内建参数/结果压缩与截断，原始数据直喂即可）。
 // 无缓冲匹配时与旧版一致：宁可不出工具行，也不凭空渲染。
 func (t *Tui) renderToolResult(m *model.Message, st *drawState) {
 	entry := st.toolCalls[m.ToolID]
@@ -386,67 +396,59 @@ func (t *Tui) renderToolResult(m *model.Message, st *drawState) {
 		return
 	}
 	delete(st.toolCalls, m.ToolID)
-	// 工具行本身是流边界：此后流出的原文不再与本段连续
-	t.resetStreamBoundary(st)
-	t.appendMsg(pretty.TToolCompact(entry.name, []byte(entry.args), m.Content))
+	t.flushCur(st)
+	st.base += pretty.TToolCompact(entry.name, []byte(entry.args), m.Content)
+	st.boundarySeen = true
 }
 
-// resetStreamBoundary 收束当前正文流：定稿/工具行/提示行等都意味着
-// "之前流出去的原文不再连续"，定稿尾替换只对当前段负责。
-func (t *Tui) resetStreamBoundary(st *drawState) {
-	st.streamRaw = ""
-	st.sawDelta = false
+// renderReasoningBlock 思考块渲染：前后各一个空行框行（纯函数，流式 live 与定稿 base 同型，
+// 所以流式期间看到的和定稿后留下的完全一致，没有切换跳变）。
+func renderReasoningBlock(r string) string {
+	return "\n" + pretty.TReasoningContent(r) + "\n"
 }
 
-// appendFinal 渲染定稿正文：流式路径做"原文尾部 → markdown 渲染版"的替换，
-// 非流式路径（没有任何累积原文）直接追加渲染版。语义与旧版
-// ReplaceTailInMsgView(renderBody(content)) 逐一对齐。
-func (t *Tui) appendFinal(full string, st *drawState) {
-	rendered := t.renderBody(full)
-	raw := st.streamRaw
-	t.app.QueueUpdate(func() {
-		if raw != "" {
-			buf := t.appLayout.agentMessage.GetText(false)
-			if newBuf, replaced := mergeTail(buf, raw, rendered); replaced {
-				// SetText 只调 resetIndex()，不动 lineOffset / trackEnd，所以滚动位置保得住
-				t.appLayout.agentMessage.SetText(newBuf)
-				return
-			}
-		}
-		// 非流式、或替换失败（raw 已不在 buffer 末尾——中途被别的记录插过）。
-		// 绝不能退化成"再追加一份原文"，只补渲染版即可；替换失败最多退化成
-		// "没有 markdown 渲染"，改错位置才是毁掉整屏。
-		fmt.Fprint(t.appLayout.agentMessage, rendered)
-	})
-	t.markDirty()
-}
-
-// appendMsg 向消息区追加一段文本。等价旧 PrintToMsgView(content, false)——
-// clear 参数全仓库无人传 true（死参数），pull 化时顺手删除。
-func (t *Tui) appendMsg(content string) {
-	t.app.QueueUpdate(func() {
-		fmt.Fprint(t.appLayout.agentMessage, content)
-	})
-	// 这里不调 ScrollToEnd()。它会把 TextView 的 trackEnd 强行置回 true，于是用户在
-	// 流式输出期间往上翻滚查看历史时，下一个 token 就把视图弹回底部。trackEnd 本身就是
-	// "是否在底部、是否该跟随"的标记，tview 自己维护（滚轮上翻置 false、翻回底部置 true），
-	// 初始值在 NewTui 里开一次即可。
-	t.markDirty()
-}
-
-// mergeTail 把 buffer 末尾的 raw 替换为 replacement，返回新 buffer 与是否替换成功。
-// 只在 raw 正好位于 buffer 末尾时才替换；用 LastIndex 而不是 Replace——短回复
-// （如"好的。"）可能在前面出现过（比如用户输入经回显进了同一个 buffer）。
-func mergeTail(buf, raw, replacement string) (string, bool) {
-	// LastIndex(buf, "") 返回 len(buf) 而不是 -1，不挡会在末尾凭空追加一份正文
-	if raw == "" {
-		return buf, false
+// flushCur 把当前消息已流出的内容渲染进 base（边界记录与定稿前调用）。
+func (t *Tui) flushCur(st *drawState) {
+	if st.curReasoning != "" {
+		st.base += renderReasoningBlock(st.curReasoning)
 	}
-	i := strings.LastIndex(buf, raw)
-	if i < 0 || i+len(raw) != len(buf) {
-		return buf, false
+	if strings.TrimSpace(st.curContent) != "" {
+		st.base += t.renderBody(st.curContent)
 	}
-	return buf[:i] + replacement, true
+	t.resetCur(st)
+}
+
+// resetCur 丢弃当前消息的累积内容（定稿已按框架完整 message 入 base 后调用）。
+func (t *Tui) resetCur(st *drawState) {
+	st.curReasoning = ""
+	st.curContent = ""
+}
+
+// composeView 组合当前视图：base（已完成段）+ live（当前消息全量渲染）。
+// 全量渲染模型：不做"原文追加 + 定稿替换"，当前消息每次都按其累积内容整体出渲染版，
+// 定稿时以框架完整 message 为准刷新进 base——流式期间看到的就是最终形态。
+func (t *Tui) composeView(st *drawState) string {
+	var b strings.Builder
+	b.WriteString(st.base)
+	if st.curReasoning != "" {
+		b.WriteString(renderReasoningBlock(st.curReasoning))
+	}
+	if st.curContent != "" {
+		b.WriteString(t.renderBody(st.curContent))
+	}
+	return b.String()
+}
+
+// setView 把组合好的视图写入消息区。SetText 只调 resetIndex()，不动 lineOffset/trackEnd
+// ——滚动跟随与用户上翻的既有语义不变；内容无变化时不 SetText（省整段 reparse）。
+func (t *Tui) setView(st *drawState, content string) {
+	if content == st.shownView {
+		return
+	}
+	st.shownView = content
+	t.appLayout.agentMessage.SetText(content) // TextView.SetText 自带锁，drawLoop 直调安全
+	st.boundarySeen = false
+	t.markDirty()
 }
 
 // ── markdown 渲染（自 messageRender.renderBody 迁入：渲染是表达层的事）──
@@ -458,7 +460,7 @@ func mergeTail(buf, raw, replacement string) (string, bool) {
 var glamourTailPad = regexp.MustCompile(`(?:\x1b\[[0-9;]*m|[ \t])+$`)
 
 // renderBody 用 glamour 渲染 markdown，TranslateANSI 转为 tview 颜色标签。
-// 流式定稿与非流式两条路径共用，保证两种模式的最终观感一致。
+// 流式 live 与定稿两条路径共用，保证两种模式的最终观感一致。
 //
 // 正文标记必须加在渲染结果上，不能加在 markdown 源码前面：`● ` 会让首行的块级结构失效
 // ——实测代码围栏和表格会整个塌成一行、列表首项不再被识别、标题降级成普通段落。
@@ -665,9 +667,9 @@ func (t *Tui) tickFatal(fatal *wireFatal, st *drawState) {
 		return
 	}
 	st.fatalHandled = true
-	t.appendMsg(renderFatal(fatal.Text, fatal.Style))
-	// 强制刷一帧：appendMsg 只写入不重绘，不显式 Draw 的话退出信息
-	// 可能还没上屏 app 就 Stop 了。
+	t.flushCur(st)
+	st.base += renderFatal(fatal.Text, fatal.Style)
+	t.setView(st, t.composeView(st)) // 终态立即上屏（不经节流）
 	t.app.Draw()
 	t.app.QueueUpdate(func() {
 		if !fatal.WaitKey {
@@ -705,7 +707,7 @@ func (t *Tui) setIndicator(s string) {
 	t.dirty.Store(true)
 }
 
-// markDirty 标记需要重绘。必须在 widget 写入完成之后调用：QueueUpdate 是阻塞的，
+// markDirty 标记需要重绘。必须在 widget 写入完成之后调用：SetText 是自带锁的同步写，
 // 返回时内容已经落地，这样 drawLoop 的下一帧才画得到它。反过来（先标记后写入）
 // 会出现"这一帧把标记消费掉了、内容却还没写进去"，导致最后一批文本永不上屏。
 func (t *Tui) markDirty() {

@@ -76,7 +76,7 @@ type Engine struct {
 
 	// ── 对上层 UI 暴露的可观察状态（pull 契约，方法见 uistate.go）──
 	mu        sync.Mutex // 串行化引擎各 goroutine 的写入与 UI goroutine 的读取
-	records   []MsgRecord
+	records   []string
 	seq       int64
 	version   uint64
 	runState  RunState

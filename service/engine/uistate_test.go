@@ -1,12 +1,13 @@
 package engine
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
 
-// 本文件锁定 pull 契约的状态语义：版本号单调、增量拉取为快照、
-// 提交输入的 best-effort 行为、终态/通知/静态数据的读写。
+// 本文件锁定 JSON 契约的状态语义：版本号单调、增量拉取为快照、
+// 提交输入的 best-effort 行为、终态/通知/帮助项的 JSON 形状。
 
 func TestAppendAndRecords(t *testing.T) {
 	e := GetEngineService("test")
@@ -14,9 +15,9 @@ func TestAppendAndRecords(t *testing.T) {
 		t.Fatalf("初始 Version 应为 0，得到 %d", e.Version())
 	}
 
-	e.appendRecord(KindUser, "hello")
-	e.appendRecord(KindContentDelta, "wo")
-	e.AppendTool("read_file", "(a.txt)", "(ok)")
+	e.appendRecord(`{"type":"user","text":"hello"}`)
+	e.appendTyped(RecWarn, "3 秒后重试")
+	e.AppendSummary("已生成摘要")
 
 	if e.Version() != 3 {
 		t.Fatalf("三次写入后 Version 应为 3，得到 %d", e.Version())
@@ -26,29 +27,33 @@ func TestAppendAndRecords(t *testing.T) {
 	if len(all) != 3 {
 		t.Fatalf("Records(0) 应返回 3 条，得到 %d", len(all))
 	}
-	for i := 1; i < len(all); i++ {
-		if all[i].Seq <= all[i-1].Seq {
-			t.Fatalf("Records 必须按 Seq 升序：%v", all)
-		}
-	}
-	if all[0].Kind != KindUser || all[0].Text != "hello" {
-		t.Fatalf("第 1 条记录不符：%+v", all[0])
-	}
-	if all[2].Tool == nil || all[2].Tool.Name != "read_file" {
-		t.Fatalf("第 3 条应为工具记录：%+v", all[2])
+	if all[0] != `{"type":"user","text":"hello"}` {
+		t.Fatalf("第 1 条记录不符：%s", all[0])
 	}
 
-	if got := e.Records(all[0].Seq); len(got) != 2 {
+	var rec struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(all[1]), &rec); err != nil {
+		t.Fatalf("记录必须是合法 JSON：%v", err)
+	}
+	if rec.Type != RecWarn || rec.Text != "3 秒后重试" {
+		t.Fatalf("appendTyped 形状不符：%s", all[1])
+	}
+	if err := json.Unmarshal([]byte(all[2]), &rec); err != nil {
+		t.Fatalf("记录必须是合法 JSON：%v", err)
+	}
+	if rec.Type != RecSummary || rec.Text != "已生成摘要" {
+		t.Fatalf("摘要记录形状不符：%s", all[2])
+	}
+
+	// 增量拉取：Seq 语义 = 顺序计数
+	if got := e.Records(1); len(got) != 2 {
 		t.Fatalf("增量拉取应返回 2 条，得到 %d", len(got))
 	}
-	if got := e.Records(all[2].Seq); len(got) != 0 {
+	if got := e.Records(3); len(got) != 0 {
 		t.Fatalf("全部消费后增量拉取应为空，得到 %d", len(got))
-	}
-
-	// 返回切片是拷贝：外部改动不得影响引擎内部状态
-	all[0].Text = "tampered"
-	if e.Records(0)[0].Text != "hello" {
-		t.Fatal("Records 返回的必须是快照，外部修改不应穿透")
 	}
 }
 
@@ -78,57 +83,69 @@ func TestSubmitInput(t *testing.T) {
 	}
 }
 
-func TestRunStateAndFatal(t *testing.T) {
+func TestRunStateJSON(t *testing.T) {
 	e := GetEngineService("test")
-	if e.RunState().Running {
-		t.Fatal("初始不应处于运行态")
+
+	var idle struct {
+		Running bool `json:"running"`
+		Fatal   *struct {
+			Text    string `json:"text"`
+			Style   string `json:"style"`
+			WaitKey bool   `json:"waitKey"`
+		} `json:"fatal"`
 	}
-	if e.RunState().Fatal != nil {
-		t.Fatal("初始不应有终态")
+	if err := json.Unmarshal([]byte(e.RunStateJSON()), &idle); err != nil {
+		t.Fatalf("RunStateJSON 必须是合法 JSON：%v", err)
+	}
+	if idle.Running || idle.Fatal != nil {
+		t.Fatalf("初始快照应为运行中/无终态：%s", e.RunStateJSON())
 	}
 
 	e.setRunning(true)
-	if !e.RunState().Running {
-		t.Fatal("setRunning(true) 后应处于运行态")
-	}
-
 	e.setFatal(FatalError, "加载配置文件错误: x", true)
-	rs := e.RunState()
-	if rs.Fatal == nil || rs.Fatal.Style != FatalError || rs.Fatal.Text != "加载配置文件错误: x" || !rs.Fatal.WaitKey {
-		t.Fatalf("终态快照不符：%+v", rs.Fatal)
+	if err := json.Unmarshal([]byte(e.RunStateJSON()), &idle); err != nil {
+		t.Fatalf("RunStateJSON 必须是合法 JSON：%v", err)
+	}
+	if !idle.Running || idle.Fatal == nil {
+		t.Fatalf("终态快照缺失：%s", e.RunStateJSON())
+	}
+	if idle.Fatal.Style != FatalError || idle.Fatal.Text != "加载配置文件错误: x" || !idle.Fatal.WaitKey {
+		t.Fatalf("终态字段不符：%+v", idle.Fatal)
 	}
 }
 
-func TestNoticeAndStaticData(t *testing.T) {
+func TestNoticeAndHelpItemsJSON(t *testing.T) {
 	e := GetEngineService("test")
 
-	if kind, _, setAt := e.Notice(); kind != NoticeNone || !setAt.IsZero() {
-		t.Fatalf("初始通知槽位应为零值，得到 %v@%v", kind, setAt)
+	var notice struct {
+		Kind  string `json:"kind"`
+		Text  string `json:"text"`
+		SetAt string `json:"setAt"`
 	}
+	if err := json.Unmarshal([]byte(e.NoticeJSON()), &notice); err != nil {
+		t.Fatalf("NoticeJSON 必须是合法 JSON：%v", err)
+	}
+	if notice.Kind != NoticeNone {
+		t.Fatalf("初始通知槽位应为 none：%s", e.NoticeJSON())
+	}
+
 	e.setNotice(NoticeWarning, "broken")
-	kind, text, setAt := e.Notice()
-	if kind != NoticeWarning || text != "broken" || time.Since(setAt) > time.Minute {
-		t.Fatalf("通知槽位快照不符：%v %q %v", kind, text, setAt)
+	if err := json.Unmarshal([]byte(e.NoticeJSON()), &notice); err != nil {
+		t.Fatalf("NoticeJSON 必须是合法 JSON：%v", err)
+	}
+	if notice.Kind != NoticeWarning || notice.Text != "broken" {
+		t.Fatalf("通知槽位不符：%s", e.NoticeJSON())
+	}
+	if _, err := time.Parse(time.RFC3339, notice.SetAt); err != nil {
+		t.Fatalf("setAt 应为 RFC3339 时间戳：%q", notice.SetAt)
 	}
 
-	if _, ok := e.StartupInfo(); ok {
-		t.Fatal("StartupInfo 未就绪时应返回 false")
+	if e.HelpItemsJSON() != "[]" {
+		t.Fatalf("初始技能帮助项应为空数组：%s", e.HelpItemsJSON())
 	}
-	e.setStartupInfo([]string{"model m"})
-	lines, ok := e.StartupInfo()
-	if !ok || len(lines) != 1 {
-		t.Fatalf("StartupInfo 就绪后应可读，得到 %v %v", lines, ok)
-	}
-
 	e.setSkillHelpItems([]HelpItem{{Cmd: "/foo", Desc: "bar"}})
-	items := e.SkillHelpItems()
-	if len(items) != 1 || items[0].Cmd != "/foo" {
-		t.Fatalf("技能帮助项不符：%v", items)
-	}
-	// 返回的是拷贝：外部 append 不得穿透
-	items = append(items, HelpItem{Cmd: "/evil"})
-	if len(e.SkillHelpItems()) != 1 {
-		t.Fatal("SkillHelpItems 返回的必须是快照")
+	if e.HelpItemsJSON() != `[{"cmd":"/foo","desc":"bar"}]` {
+		t.Fatalf("帮助项 JSON 形状不符：%s", e.HelpItemsJSON())
 	}
 }
 

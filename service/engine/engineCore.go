@@ -25,6 +25,7 @@ func GetEngineService(name string) *Engine {
 	return &Engine{
 		Agentname: name,
 		inputCh:   make(chan string),
+		notice:    notice{Kind: NoticeNone},
 	}
 }
 
@@ -41,7 +42,7 @@ func (e *Engine) Init() {
 //  - 不能在 TUI 回调里 os.Exit——screen.Fini() 在 app.Run() 返回路径上调用，
 //    硬退出会把终端留在 alt-screen + raw mode。
 // pull 之后的分工：引擎置终态 + 驻留；渲染、等待按键、停循环由 TUI 完成。
-func (e *Engine) parkWithFatal(style FatalStyle, text string, waitKey bool) {
+func (e *Engine) parkWithFatal(style string, text string, waitKey bool) {
 	e.setFatal(style, text, waitKey)
 	select {}
 }
@@ -90,13 +91,13 @@ func (e *Engine) AgentStart() {
 				//    新对话/中断时归零；耗尽因此只可能由零输出失败触发。
 				// ③ 整个复用 *EndTurn_p，不新造 literal —— 新建会静默丢掉 Reason 与
 				//    PartialOutput（TerminalError 时后者是真实累积到的部分输出）。
-				(*e).appendRecord(KindErrorLine, fmt.Sprintf("连续 %d 次失败，已停止自动重试。请检查网络/配置后重新输入。", errorMaxTimes))
+				(*e).appendTyped("error", fmt.Sprintf("连续 %d 次失败，已停止自动重试。请检查网络/配置后重新输入。", errorMaxTimes))
 				MsgContext = *EndTurn_p
 				continue
 			}
 			// 必须在 Sleep 之前打：sleep 期间引擎 goroutine 阻塞、不监听 inputChan，
 			// 用户打字没有反应，需要知道程序在等什么。
-			(*e).appendRecord(KindWarn, fmt.Sprintf("%d 秒后重试（第 %d/%d 次）...", errorSleepGap/time.Second, (*e).errorStreak, errorMaxTimes))
+			(*e).appendTyped("warn", fmt.Sprintf("%d 秒后重试（第 %d/%d 次）...", errorSleepGap/time.Second, (*e).errorStreak, errorMaxTimes))
 			time.Sleep(errorSleepGap)
 			MsgContext = *EndTurn_p
 

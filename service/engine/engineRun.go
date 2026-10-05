@@ -74,7 +74,7 @@ func (e *Engine) agentRunIteratively(Ctx context.Context, inputContext turnInfo)
 			checkprompt := strings.ReplaceAll(userPrompt, "\n", "")
 			checkprompt = strings.ReplaceAll(checkprompt, " ", "")
 			if checkprompt == "/exit" {
-				(*e).appendRecord(KindSlashEcho, checkprompt)
+				(*e).appendTyped("slash", checkprompt)
 				return &turnInfo{
 					Code:          Exit,
 					Reason:        "用户主动结束对话",
@@ -82,7 +82,7 @@ func (e *Engine) agentRunIteratively(Ctx context.Context, inputContext turnInfo)
 				}
 
 			} else if checkprompt == "/new" {
-				(*e).appendRecord(KindSlashEcho, checkprompt)
+				(*e).appendTyped("slash", checkprompt)
 				return &turnInfo{
 					Code:   New,
 					Reason: "用户主动开始新对话",
@@ -92,7 +92,7 @@ func (e *Engine) agentRunIteratively(Ctx context.Context, inputContext turnInfo)
 				continue //如果用户输入为空，重新开始本轮循环，等待用户输入
 
 			} else {
-				(*e).appendRecord(KindUser, userPrompt)
+				(*e).appendTyped("user", userPrompt)
 				break //正常输入，继续执行后续逻辑
 			}
 
@@ -161,7 +161,7 @@ func (e *Engine) agentRunOnce(Ctx context.Context, userPrompt string) *AgentErro
 		// 在源头打印，与下面的 TerminalError 分支保持一致：每类错误只打一次。
 		// 改前这里不打，只靠 agentRunIteratively 循环顶部打一次，与 TerminalError
 		// 打两次的行为不一致。
-		(*e).appendRecord(KindErrorLine, err.Error())
+		(*e).appendTyped("error", err.Error())
 		return &AgentError{
 			Error:         err,
 			ErrorType:     "RunError",
@@ -177,7 +177,7 @@ func (e *Engine) agentRunOnce(Ctx context.Context, userPrompt string) *AgentErro
 			if event.IsTerminalError() {
 				//填充err，使得返回的err不为nil，表示对话发生了错误
 				err = fmt.Errorf("Event发生TerminalError: %v", event.Error)
-				(*e).appendRecord(KindErrorLine, err.Error())
+				(*e).appendTyped("error", err.Error())
 				return &AgentError{
 					Error:         err,
 					ErrorType:     "TerminalError",

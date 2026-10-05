@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -8,11 +9,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"HyperBot/service/engine"
 	"HyperBot/utils/pretty"
 	"charm.land/glamour/v2"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+	"trpc.group/trpc-go/trpc-agent-go/model"
 )
 
 // 定义颜色，配色统一来源于 pretty.TuiXxx 常量，确保界面风格统一且美观
@@ -25,8 +26,8 @@ var (
 const (
 	// drawInterval 重绘节流间隔。tview 只在 QueueUpdateDraw、按键/鼠标/resize 事件时重绘，
 	// 纯流式输出期间这些都不发生，所以由 drawLoop 按固定帧率驱动刷新。
-	// pull 架构下它同时是引擎状态的上屏延迟上界：引擎只写状态，
-	// 本循环每帧比对版本号/快照、把增量渲染出来，帧率即流畅度。
+	// pull 架构下它同时是引擎状态的上屏延迟上界：引擎只写状态字段，
+	// 本循环每帧拉取快照/增量、把增量渲染出来，帧率即流畅度。
 	drawInterval = 30 * time.Millisecond
 	// spinnerTicks 指示器每推进一帧占用多少个 drawInterval tick。3 × 30ms = 90ms/帧，
 	// 10 帧约 0.9s 转一圈。
@@ -34,19 +35,68 @@ const (
 )
 
 // EngineView 是 TUI 对引擎的全部依赖（消费方定义的接口）。
-// 引擎侧的 *Engine 天然满足它（TUI 仅引用 engine 包的类型），
-// 引擎也不 import 本包——引擎对表现层的依赖为零，控制权全部在 TUI：
-// 状态由 TUI 按帧拉取，输入/取消由 TUI 主动调用。
+// 上下游零 import：跨界只有 stdlib 类型与 JSON 文本，消息类型放在 JSON 的
+// type/style/kind 字段上；引擎侧的 *Engine 天然满足本接口。
+// 控制权全部在 TUI：状态由 TUI 按帧拉取，输入/取消由 TUI 主动调用。
 type EngineView interface {
 	Version() uint64
-	Records(afterSeq int64) []engine.MsgRecord
-	RunState() engine.RunState
+	Records(afterSeq int64) []string // 消息日志增量（每条一行 JSON，type 字段承载消息类型）
+	RunStateJSON() string            // {"running":bool,"fatal":{"text","style","waitKey"}|null}
 	TodoText() string
-	Notice() (engine.NoticeKind, string, time.Time)
+	NoticeJSON() string // {"kind","text","setAt":RFC3339}
 	StartupInfo() ([]string, bool)
-	SkillHelpItems() []engine.HelpItem
+	HelpItemsJSON() string // [{"cmd","desc"}]
 	SubmitInput(line string) bool
 	Cancel()
+}
+
+// ── 跨界 JSON 形状（与引擎侧 uistate.go 的 wire schema 对齐）──────────
+
+// wireRunState / wireFatal 运行状态快照。
+type wireFatal struct {
+	Text    string `json:"text"`
+	Style   string `json:"style"` // plain | error | success | exit
+	WaitKey bool   `json:"waitKey"`
+}
+
+type wireRunState struct {
+	Running bool       `json:"running"`
+	Fatal   *wireFatal `json:"fatal"`
+}
+
+// wireNotice 通知栏槽位快照。
+type wireNotice struct {
+	Kind  string `json:"kind"` // none | new_conversation | cancelled | success | warning
+	Text  string `json:"text"`
+	SetAt string `json:"setAt"` // RFC3339
+}
+
+// wireHelpItem 帮助页一行。
+type wireHelpItem struct {
+	Cmd  string `json:"cmd"`
+	Desc string `json:"desc"`
+}
+
+// wireRecord 消息日志记录：type 承载消息类型。
+//   - delta / message：msg 为框架 model.Message 原样（框架自带 json 标签，两端同型收发）
+//   - user / slash / warn / error / summary：text 为语义原文
+type wireRecord struct {
+	Type string          `json:"type"`
+	Msg  json.RawMessage `json:"msg,omitempty"`
+	Text string          `json:"text,omitempty"`
+}
+
+// wireToolCall 待结果的工具调用缓冲条目（按 ToolCall.ID 索引）。
+type wireToolCall struct {
+	name string
+	args string
+}
+
+// engineViewRunning 拉取运行态快照里的 running 字段（Esc 门控用）。
+func engineViewRunning(v EngineView) bool {
+	var rs wireRunState
+	_ = json.Unmarshal([]byte(v.RunStateJSON()), &rs)
+	return rs.Running
 }
 
 type Tui struct {
@@ -116,12 +166,12 @@ func spinnerIndicator(frame int) string {
 //
 // TodoBar：纵向清单栏，每个任务一行，有清单时占 N 行、无清单时塌成 0 行。
 // NoticeBar：固定 1 行，承载瞬时通知与常驻键位提示，永不塌陷（hint 常驻）。
-// pull 之后两者都不再持有跨 goroutine 状态：清单文本与通知槽位都在引擎的
-// engine.Store 里，drawLoop 每帧拉取，widget 写入保持单线程（drawLoop）。
+// pull 之后两者都不再持有跨 goroutine 状态：清单文本与通知槽位都是引擎的
+// 状态字段，drawLoop 每帧拉取，widget 写入保持单线程（drawLoop）。
 
 const (
 	// noticeTTL 临时通知的停留时长。到期后 NoticeBar 自动回落到兜底提示。
-	// 契约不变：TTL 从引擎写入槽位那一刻（SetAt）起算。
+	// 契约不变：TTL 从引擎写入槽位那一刻（setAt）起算。
 	noticeTTL = 4 * time.Second
 	// minMessageRows 消息区无论如何至少保留的行数。矮终端下用它钳制 TodoBar 高度：
 	// Flex 的 distSize = height - 所有 fixedSize 之和且不做钳制，Box.SetRect 也原样
@@ -155,8 +205,11 @@ type drawState struct {
 	shownTodo      string // TodoBar 上一帧的原始文本
 	shownNotice    string // NoticeBar 上一帧的渲染结果
 	seenVersion    uint64 // 已渲染到的消息日志版本
-	seenSeq        int64  // 已渲染到的最后一条记录 Seq
-	streamRaw      string // 当前正文流的原文累积（ContentDelta 之间），供定稿尾替换
+	seenSeq        int64  // 已渲染到的最后一条记录序号
+	streamRaw      string // 当前正文流的原文累积（流式增量之间），供定稿尾替换
+	inReasoning    bool   // 正在输出思考块（流式框行判定）
+	sawDelta       bool   // 本轮消息是否见过流式增量（区分流式定稿/非流式消息）
+	toolCalls      map[string]*wireToolCall // 待结果的工具调用缓冲
 	bannerDone     bool   // 启动横幅已渲染（只在 StartupInfo 就绪后的第一帧渲染一次）
 	fatalHandled   bool   // 终态已处理（渲染 + 停止事件循环）
 }
@@ -172,15 +225,15 @@ func (t *Tui) startDrawLoop() {
 			ticker := time.NewTicker(drawInterval)
 			defer ticker.Stop()
 
-			st := &drawState{}
+			st := &drawState{toolCalls: map[string]*wireToolCall{}}
 			for range ticker.C {
-				rs := t.engine.RunState()
+				running, fatal := t.pollRunState()
 				t.tickBanner(st)
 				t.tickMsgLog(st)
-				t.tickIndicator(rs.Running, st)
+				t.tickIndicator(running, st)
 				t.tickTodoBar(st)
-				t.tickNoticeBar(rs.Running, st)
-				t.tickFatal(rs.Fatal, st)
+				t.tickNoticeBar(running, st)
+				t.tickFatal(fatal, st)
 				// 没有新内容就不重绘，空闲时不产生任何 CPU 开销
 				if t.dirty.CompareAndSwap(true, false) {
 					t.app.Draw()
@@ -188,6 +241,15 @@ func (t *Tui) startDrawLoop() {
 			}
 		}()
 	})
+}
+
+// pollRunState 拉取并解析运行状态快照。
+func (t *Tui) pollRunState() (bool, *wireFatal) {
+	var rs wireRunState
+	if err := json.Unmarshal([]byte(t.engine.RunStateJSON()), &rs); err != nil {
+		return false, nil // 坏帧不致盲：下一帧重拉
+	}
+	return rs.Running, rs.Fatal
 }
 
 // tickBanner 在引擎就绪 StartupInfo 后的第一帧渲染启动横幅（只渲染一次）。
@@ -214,53 +276,126 @@ func (t *Tui) tickMsgLog(st *drawState) {
 	}
 	recs := t.engine.Records(st.seenSeq)
 	if len(recs) > 0 {
-		for _, rec := range recs {
-			t.renderRecord(rec, st)
+		for _, line := range recs {
+			t.renderRecord(line, st)
 		}
-		st.seenSeq = recs[len(recs)-1].Seq
+		st.seenSeq += int64(len(recs))
 	}
 	st.seenVersion = ver
 }
 
-// renderRecord 把一条领域记录翻译成带色文本并写入消息区。
-// 这是"引擎只说发生了什么、TUI 决定怎么画"的落点：所有 pretty.* 配色都活在本侧，
-// 引擎日志里只有语义原文。每种 Kind 的渲染与旧版引擎侧 PrintToMsgView 的拼串逐字节对齐。
-func (t *Tui) renderRecord(rec engine.MsgRecord, st *drawState) {
-	switch rec.Kind {
-	case engine.KindNewline:
-		t.appendMsg("\n")
-	case engine.KindUser:
+// renderRecord 把一条 JSON 记录翻译成带色文本并写入消息区。
+// 记录的 type 字段承载消息类型；框架 message 原样透传，这里的全部工作都是
+// 渲染决策：reasoning 框行、正文流式合并、工具行拼装、markdown、配色。
+func (t *Tui) renderRecord(line string, st *drawState) {
+	var rec wireRecord
+	if err := json.Unmarshal([]byte(line), &rec); err != nil {
+		return // 坏行直接跳过（记录是自描述 JSON，正常流程不会出现）
+	}
+	switch rec.Type {
+	case "delta":
+		var m model.Message
+		if rec.Msg == nil || json.Unmarshal(rec.Msg, &m) != nil {
+			return
+		}
+		st.sawDelta = true
+		if m.Role == "tool" {
+			t.renderToolResult(&m, st)
+			return
+		}
+		if m.ReasoningContent != "" {
+			if !st.inReasoning {
+				st.inReasoning = true
+				t.appendMsg("\n")
+			}
+			t.appendMsg(pretty.TReasoningContent(m.ReasoningContent))
+		} else if st.inReasoning {
+			st.inReasoning = false
+			t.appendMsg("\n")
+		}
+		if m.Content != "" {
+			st.streamRaw += m.Content
+			t.appendMsg(m.Content)
+		}
+		t.bufferToolCalls(&m, st)
+	case "message":
+		var m model.Message
+		if rec.Msg == nil || json.Unmarshal(rec.Msg, &m) != nil {
+			return
+		}
+		if m.Role == "tool" {
+			t.renderToolResult(&m, st)
+			return
+		}
+		t.bufferToolCalls(&m, st)
+		// 思考块只在非流式消息里由本侧框行渲染；流式的思考已随增量出屏
+		if !st.sawDelta && m.ReasoningContent != "" {
+			t.appendMsg("\n")
+			t.appendMsg(pretty.TReasoningContent(m.ReasoningContent))
+			t.appendMsg("\n")
+		}
+		if strings.TrimSpace(m.Content) != "" {
+			t.appendFinal(m.Content, st)
+		}
+		t.resetStreamBoundary(st)
+	case "user":
 		t.appendMsg(pretty.TUserInput(rec.Text))
-	case engine.KindSlashEcho:
+		t.resetStreamBoundary(st)
+	case "slash":
 		t.appendMsg(pretty.TColoredText(pretty.TColorLightGreen, "\n"+rec.Text+"\n"))
-	case engine.KindReasoning:
-		t.appendMsg(pretty.TReasoningContent(rec.Text))
-	case engine.KindContentDelta:
-		st.streamRaw += rec.Text
-		t.appendMsg(rec.Text)
-	case engine.KindContentFinal:
-		t.appendFinal(rec.Text, st)
-	case engine.KindTool:
-		t.appendMsg(pretty.TToolCompact(rec.Tool.Name, []byte(rec.Tool.In), rec.Tool.Out))
-	case engine.KindWarn:
+		t.resetStreamBoundary(st)
+	case "warn":
 		t.appendMsg(pretty.TWarningF("%s", rec.Text))
-	case engine.KindErrorLine:
+		t.resetStreamBoundary(st)
+	case "error":
 		t.appendMsg(pretty.TErrorF("%s", rec.Text))
-	case engine.KindSummary:
+		t.resetStreamBoundary(st)
+	case "summary":
 		t.appendMsg(pretty.TColoredText(pretty.TColorGreen, "\n->已生成摘要：\n"+rec.Text+"\n"))
-	default:
-		t.appendMsg(rec.Text)
+		t.resetStreamBoundary(st)
+	}
+}
+
+// bufferToolCalls 缓冲工具调用（等结果到达后拼工具行）。
+// provider 可能把一次调用拆成多个增量片段：同 ID 合并、无 ID 按 index 兜底、
+// 名字非空才覆盖、参数按字节续接——完整调用与分片调用两种形态都稳。
+func (t *Tui) bufferToolCalls(m *model.Message, st *drawState) {
+	for i, tc := range m.ToolCalls {
+		key := tc.ID
+		if key == "" {
+			key = fmt.Sprintf("#%d", i)
+		}
+		entry := st.toolCalls[key]
+		if entry == nil {
+			entry = &wireToolCall{}
+			st.toolCalls[key] = entry
+		}
+		if tc.Function.Name != "" {
+			entry.name = tc.Function.Name
+		}
+		entry.args += string(tc.Function.Arguments)
+	}
+}
+
+// renderToolResult 渲染工具行：结果（Role=tool 的框架 message）到达时，按 ToolID
+// 匹配此前缓冲的工具调用，拼紧凑行（TToolCompact 内建参数/结果压缩与截断）。
+// 无缓冲匹配时与旧版一致：宁可不出工具行，也不凭空渲染。
+func (t *Tui) renderToolResult(m *model.Message, st *drawState) {
+	entry := st.toolCalls[m.ToolID]
+	if entry == nil {
 		return
 	}
-	// 正文流边界维护：定稿消费掉累积原文；其余带样式/持久行都意味着"新的一段"，
-	// 之前的原文不再连续。Newline 与 Reasoning 刻意不清空——它们出现在思考块
-	// 边界上，若插在正文中间，尾替换会像旧版一样自然失败、保住 raw。
-	switch rec.Kind {
-	case engine.KindContentFinal,
-		engine.KindUser, engine.KindSlashEcho, engine.KindTool,
-		engine.KindWarn, engine.KindErrorLine, engine.KindSummary:
-		st.streamRaw = ""
-	}
+	delete(st.toolCalls, m.ToolID)
+	// 工具行本身是流边界：此后流出的原文不再与本段连续
+	t.resetStreamBoundary(st)
+	t.appendMsg(pretty.TToolCompact(entry.name, []byte(entry.args), m.Content))
+}
+
+// resetStreamBoundary 收束当前正文流：定稿/工具行/提示行等都意味着
+// "之前流出去的原文不再连续"，定稿尾替换只对当前段负责。
+func (t *Tui) resetStreamBoundary(st *drawState) {
+	st.streamRaw = ""
+	st.sawDelta = false
 }
 
 // appendFinal 渲染定稿正文：流式路径做"原文尾部 → markdown 渲染版"的替换，
@@ -314,7 +449,7 @@ func mergeTail(buf, raw, replacement string) (string, bool) {
 	return buf[:i] + replacement, true
 }
 
-// ── markdown 渲染（自 messageRender.renderBody 迁入：渲染是表达层的事） ──
+// ── markdown 渲染（自 messageRender.renderBody 迁入：渲染是表达层的事）──
 
 // glamourTailPad 匹配行尾的"空白 + ANSI 序列"混合填充。glamour 会把标题、表格、
 // 代码块的每一行都补满整行宽度，每个空格还裹一层 SGR：实测 153B 的 markdown 渲染后
@@ -416,13 +551,14 @@ func (t *Tui) tickIndicator(running bool, st *drawState) {
 }
 
 // tickNoticeBar 刷新通知栏。TTL 到期、通知到达、running 翻转三件事全走这一条路径，
-// 因此不需要任何事件驱动的机制。通知槽位在引擎侧（Engine 字段），TTL 从 SetAt 起算。
+// 因此不需要任何事件驱动的机制。通知槽位是引擎的状态字段，TTL 从 setAt 起算。
 func (t *Tui) tickNoticeBar(running bool, st *drawState) {
 	nb := t.appLayout.noticeBar
-	kind, text, setAt := t.engine.Notice()
+	var wn wireNotice
+	_ = json.Unmarshal([]byte(t.engine.NoticeJSON()), &wn)
 	s := hintIdle
-	if kind != engine.NoticeNone && time.Since(setAt) < noticeTTL {
-		s = renderNotice(kind, text)
+	if setAt, err := time.Parse(time.RFC3339, wn.SetAt); err == nil && wn.Kind != "none" && time.Since(setAt) < noticeTTL {
+		s = renderNotice(wn.Kind, wn.Text)
 	} else if running {
 		s = hintRunning
 	}
@@ -434,16 +570,16 @@ func (t *Tui) tickNoticeBar(running bool, st *drawState) {
 }
 
 // renderNotice 把通知槽位翻译成带色文本。文案配色在这里（表达层），
-// 引擎只存 Kind 与原文；无文本的固定文案（新对话/取消）也由本侧拼装。
-func renderNotice(kind engine.NoticeKind, text string) string {
+// 引擎只存 kind 与原文；无文本的固定文案（新对话/取消）也由本侧拼装。
+func renderNotice(kind, text string) string {
 	switch kind {
-	case engine.NoticeNewConversation:
+	case "new_conversation":
 		return pretty.TBarNewConversation()
-	case engine.NoticeCancelled:
+	case "cancelled":
 		return pretty.TBarCancelled()
-	case engine.NoticeSuccess:
+	case "success":
 		return pretty.TBarSuccess(text)
-	case engine.NoticeWarning:
+	case "warning":
 		return pretty.TBarWarning(text)
 	default:
 		return pretty.TColoredText(pretty.TuiSubText, text)
@@ -524,12 +660,12 @@ func renderTodoLines(text string) string {
 // 之后的收尾链路是：app.Stop() → tui.Run() 返回 → tview 复原终端 → main() 返回 → 进程退出。
 // 不能在回调里直接 os.Exit：screen.Fini() 是在 app.Run() 的返回路径上调的，
 // 从回调硬退出会跳过它，终端会留在 alt-screen + raw mode，退出后用户的 shell 是坏的。
-func (t *Tui) tickFatal(fatal *engine.Fatal, st *drawState) {
+func (t *Tui) tickFatal(fatal *wireFatal, st *drawState) {
 	if st.fatalHandled || fatal == nil {
 		return
 	}
 	st.fatalHandled = true
-	t.appendMsg(renderFatal(fatal))
+	t.appendMsg(renderFatal(fatal.Text, fatal.Style))
 	// 强制刷一帧：appendMsg 只写入不重绘，不显式 Draw 的话退出信息
 	// 可能还没上屏 app 就 Stop 了。
 	t.app.Draw()
@@ -548,18 +684,17 @@ func (t *Tui) tickFatal(fatal *engine.Fatal, st *drawState) {
 	})
 }
 
-// renderFatal 把终态消息按样式上色（原 ShowSuccessInMsgViewAndExit 里 TSuccess
-// 在 TUI 侧套色的契约推广到全部样式；引擎只存语义原文）。
-func renderFatal(f *engine.Fatal) string {
-	switch f.Style {
-	case engine.FatalSuccess:
-		return pretty.TSuccess(f.Text)
-	case engine.FatalExit:
-		return pretty.TExit(f.Text)
-	case engine.FatalError:
-		return pretty.TErrorF("%s", f.Text)
+// renderFatal 把终态消息按样式上色（引擎只存语义原文与 style 字符串）。
+func renderFatal(text, style string) string {
+	switch style {
+	case "success":
+		return pretty.TSuccess(text)
+	case "exit":
+		return pretty.TExit(text)
+	case "error":
+		return pretty.TErrorF("%s", text)
 	default:
-		return f.Text
+		return text
 	}
 }
 
@@ -588,7 +723,7 @@ func (t *Tui) Run() {
 	}
 }
 
-// NewTui 组装界面与交互捕获。view 是引擎侧状态源（*Engine）。
+// NewTui 组装界面与交互捕获。view 是引擎侧状态源（*Engine，经 EngineView 接口注入）。
 func NewTui(view EngineView) *Tui {
 	//设置Agent消息显示区
 	AgentMessage := tview.NewTextView().
@@ -706,7 +841,7 @@ func NewTui(view EngineView) *Tui {
 
 			//获取输入文本
 			text := tui.appLayout.inputArea.GetText()
-			// 主动提交给引擎（Store.SubmitInput 内部 select/default，非阻塞）。
+			// 主动提交给引擎（Engine.SubmitInput 内部 select/default，非阻塞）。
 			// 引擎忙（无人接收）时提交失败、保留输入框内容，用户输入不丢失——
 			// 与旧版 unbuffered chan + default 的行为一致。
 			if tui.engine.SubmitInput(text) {
@@ -719,12 +854,12 @@ func NewTui(view EngineView) *Tui {
 		return event
 	})
 
-	// 应用级 Esc 捕获：运行期按 Esc 中断当前 agent（cancel 由引擎经 SetActiveCancel 注入，
+	// 应用级 Esc 捕获：运行期按 Esc 中断当前 agent（cancel 由引擎经 setActiveCancel 注入，
 	// 方向与旧版 SetAppFuncTriggerWithEsc 相反——不再由引擎往 TUI 注册回调）。
 	// 非运行期放行，让 Esc 落到帮助页的关闭捕获上（与旧版"仅运行期注册"的行为一致）。
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Key() == tcell.KeyEscape && view.RunState().Running {
-			view.Cancel() // 执行取消
+		if event.Key() == tcell.KeyEscape && engineViewRunning(view) {
+			view.Cancel()
 			return nil
 		}
 		return event // 其他按键正常传递

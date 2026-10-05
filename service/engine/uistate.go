@@ -1,92 +1,74 @@
 package engine
 
-// 本文件是引擎对上层 UI 暴露的可观察状态与方法（pull 契约）。
-// 不设中间层：状态就是 Engine 的字段（定义见 init.go 的 Engine struct），
-// 一把 mu 串行化引擎各 goroutine 的写入与 UI goroutine 的读取；
-// UI 按帧拉取快照/增量（Version/Records/RunState/...），输入与取消经
-// SubmitInput/Cancel 进入引擎。渲染、配色、按键解释全部是 UI 侧的事。
+// 本文件是引擎对上层 UI 暴露的可观察状态与方法（pull + JSON 契约）。
+// 上下游零 import：跨界只有 stdlib 类型与 JSON 文本，消息类型放在 JSON 的
+// type/style/kind 字段上，schema 自描述。
+//
+// 消息日志每条记录是一行 JSON：
+//   {"type":"delta","msg":{...框架 model.Message 原样...}}   流式增量
+//   {"type":"message","msg":{...框架 model.Message 原样...}} 完整消息（定稿/工具声明/工具结果）
+//   {"type":"user","text":"..."} / {"type":"slash","text":"..."}
+//   {"type":"warn","text":"..."} / {"type":"error","text":"..."} / {"type":"summary","text":"..."}
+// 引擎只透传框架原始 message（model.Message 自带 json 标签，可直接序列化），
+// 怎么渲染、怎么解释是 UI 侧的事。
 
 import (
+	"encoding/json"
 	"time"
 )
 
-// MsgKind 消息记录的类型。消费端（TUI）按 Kind 决定配色与版式，
-// 引擎只产出语义原文（Text），不关心颜色。
-type MsgKind uint8
-
+// 记录 type 字段取值。
 const (
-	KindNewline      MsgKind = iota // 裸换行（思考块前后的版式空行）
-	KindUser                        // 用户输入回显
-	KindSlashEcho                   // /exit /new 斜杠命令回显
-	KindReasoning                   // 思考内容（流式 delta 或非流式整块）
-	KindContentDelta                // 正文流式增量（原文）
-	KindContentFinal                // 正文定稿（完整原文；消费端渲染 markdown 并做尾部替换）
-	KindTool                        // 工具调用行（紧凑格式）
-	KindWarn                        // 重试提示等警告行
-	KindErrorLine                   // 错误提示行
-	KindSummary                     // 会话摘要提示
+	RecDelta   = "delta"   // 流式增量（msg=框架 message）
+	RecMessage = "message" // 完整消息（msg=框架 message）
+	RecUser    = "user"
+	RecSlash   = "slash"
+	RecWarn    = "warn"
+	RecError   = "error"
+	RecSummary = "summary"
 )
 
-// ToolLine 一条工具调用记录的载荷（入参/出参由引擎按 param mapper 摘要）。
-type ToolLine struct {
-	Name string
-	In   string
-	Out  string
-}
-
-// MsgRecord 消息日志中的一条记录。
-type MsgRecord struct {
-	Seq    int64
-	Kind   MsgKind
-	Text   string    // 主载荷（语义原文）
-	Tool   *ToolLine // Kind==KindTool 时非空
-	Branch string    // 预留：产出分支标识（子 agent / cronagent），主会话恒为空
-}
-
-// NoticeKind 通知栏槽位的类型（瞬时通知，与消息区的持久行不同）。
-type NoticeKind uint8
-
+// 终态 style 字段取值。
 const (
-	NoticeNone            NoticeKind = iota // 无通知（零值）
-	NoticeNewConversation                   // 新对话开始（文案由消费端固定）
-	NoticeCancelled                         // 会话被取消（同上）
-	NoticeSuccess                           // 带文本的成功提示
-	NoticeWarning                           // 带文本的警告提示
+	FatalPlain   = "plain"
+	FatalError   = "error"
+	FatalSuccess = "success"
+	FatalExit    = "exit"
 )
 
-// FatalStyle 终态消息的样式，消费端据此上色。
-type FatalStyle uint8
-
+// 通知 kind 字段取值。
 const (
-	FatalPlain   FatalStyle = iota // 原样输出
-	FatalError                     // 错误样式
-	FatalSuccess                   // 成功样式
-	FatalExit                      // 退出告别样式
+	NoticeNone            = "none"
+	NoticeNewConversation = "new_conversation"
+	NoticeCancelled       = "cancelled"
+	NoticeSuccess         = "success"
+	NoticeWarning         = "warning"
 )
 
-// Fatal 进程终态：引擎设置后即认为自己的使命结束（引擎侧 goroutine 经 parkWithFatal
-// 永久驻留），消费端观察到后负责收尾——渲染消息、按 WaitKey 等待按键、停止事件循环
-// 让 main 返回。
+// Fatal 进程终态（RunStateJSON 里 fatal 对象的形状）。
 type Fatal struct {
-	Text    string     // 语义原文，样式由 Style 决定
-	Style   FatalStyle
-	WaitKey bool       // true=渲染后等用户按任意键再退出
+	Text    string `json:"text"`
+	Style   string `json:"style"`   // FatalXxx 常量
+	WaitKey bool   `json:"waitKey"` // true=渲染后等用户按任意键再退出
 }
 
 // RunState 运行状态快照（幂等，last-write-wins）。
 type RunState struct {
-	Running bool
-	Fatal   *Fatal // 非 nil 表示进程应结束
+	Running bool   `json:"running"`
+	Fatal   *Fatal `json:"fatal"` // 非 nil 表示进程应结束
 }
 
-// HelpItem 帮助页的一行（斜杠命令 + 描述）。
-type HelpItem struct{ Cmd, Desc string }
+// HelpItem 帮助页的一行（JSON 形状 {"cmd","desc"}）。
+type HelpItem struct {
+	Cmd  string `json:"cmd"`
+	Desc string `json:"desc"`
+}
 
 // notice 通知栏槽位内容。SetAt 供消费端计算 TTL（旧契约 4s，语义不变）。
 type notice struct {
-	Kind  NoticeKind
-	Text  string
-	SetAt time.Time
+	Kind  string    `json:"kind"`
+	Text  string    `json:"text"`
+	SetAt time.Time `json:"setAt"`
 }
 
 // ── 消息日志 ─────────────────────────────────────────────
@@ -99,65 +81,58 @@ func (e *Engine) Version() uint64 {
 	return e.version
 }
 
-// Records 返回 Seq 大于 afterSeq 的全部记录（按 Seq 升序）。
-func (e *Engine) Records(afterSeq int64) []MsgRecord {
+// Records 返回 Seq 大于 afterSeq 的全部记录（每条一行 JSON，按写入顺序）。
+func (e *Engine) Records(afterSeq int64) []string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	out := make([]MsgRecord, 0, len(e.records))
+	out := make([]string, 0, len(e.records))
 	for i := range e.records {
-		if e.records[i].Seq > afterSeq {
+		if int64(i+1) > afterSeq {
 			out = append(out, e.records[i])
 		}
 	}
 	return out
 }
 
-// appendRecord 追加一条文本记录（引擎内部写入口；跨包子包经下方意图方法）。
-func (e *Engine) appendRecord(kind MsgKind, text string) {
+// appendRecord 追加一条已序列化的 JSON 记录（引擎内部写入口）。
+func (e *Engine) appendRecord(rawJSON string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.seq++
-	e.records = append(e.records, MsgRecord{Seq: e.seq, Kind: kind, Text: text})
+	e.records = append(e.records, rawJSON)
 	e.version++
 }
 
-// AppendTool 追加一条工具调用记录（messagerender.logSink 的实现）。
-func (e *Engine) AppendTool(name, in, out string) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.seq++
-	e.records = append(e.records, MsgRecord{
-		Seq:  e.seq,
-		Kind: KindTool,
-		Tool: &ToolLine{Name: name, In: in, Out: out},
-	})
-	e.version++
+// appendTyped 追加一条 {"type":typ,"text":...} 形状的记录（引擎内部文本事件用）。
+func (e *Engine) appendTyped(typ, text string) {
+	b, err := json.Marshal(struct {
+		Type string `json:"type"`
+		Text string `json:"text,omitempty"`
+	}{typ, text})
+	if err != nil {
+		return // 纯 string 字段不会失败，防御性兜底
+	}
+	e.appendRecord(string(b))
 }
 
 // AppendSummary 追加一条摘要提示（session.summarySink 消费方小接口的实现）。
-func (e *Engine) AppendSummary(text string) { e.appendRecord(KindSummary, text) }
+func (e *Engine) AppendSummary(text string) { e.appendTyped(RecSummary, text) }
 
-// ── messagerender.logSink 的意图化实现：渲染包只说发生了什么 ──
-
-// AppendNewline 追加一条版式空行。
-func (e *Engine) AppendNewline() { e.appendRecord(KindNewline, "\n") }
-
-// AppendReasoning 追加思考内容。
-func (e *Engine) AppendReasoning(text string) { e.appendRecord(KindReasoning, text) }
-
-// AppendContentDelta 追加正文流式增量。
-func (e *Engine) AppendContentDelta(text string) { e.appendRecord(KindContentDelta, text) }
-
-// AppendContentFinal 追加正文定稿（完整原文）。
-func (e *Engine) AppendContentFinal(text string) { e.appendRecord(KindContentFinal, text) }
+// AppendRecordJSON 追加一条已序列化的 JSON 记录（messagerender.logSink 的实现，
+// 框架 message 的透传序列化在渲染包完成）。
+func (e *Engine) AppendRecordJSON(raw string) { e.appendRecord(raw) }
 
 // ── 运行状态 ─────────────────────────────────────────────
 
-// RunState 返回运行状态快照。
-func (e *Engine) RunState() RunState {
+// RunStateJSON 返回运行状态快照 JSON（{"running":bool,"fatal":{...}|null}）。
+func (e *Engine) RunStateJSON() string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.runState
+	b, err := json.Marshal(e.runState)
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
 }
 
 // setRunning 标记 agent 是否在运行（指示器/提示条/Esc 行为的依据）。
@@ -168,7 +143,7 @@ func (e *Engine) setRunning(running bool) {
 }
 
 // setFatal 设置进程终态（配套 parkWithFatal 的驻留由调用方完成）。
-func (e *Engine) setFatal(style FatalStyle, text string, waitKey bool) {
+func (e *Engine) setFatal(style, text string, waitKey bool) {
 	e.mu.Lock()
 	e.runState.Fatal = &Fatal{Text: text, Style: style, WaitKey: waitKey}
 	e.mu.Unlock()
@@ -193,18 +168,22 @@ func (e *Engine) SetTodoText(text string) {
 
 // ── 通知栏槽位 ───────────────────────────────────────────
 
-// setNotice 写入通知栏槽位（瞬时通知；文案原样存储，配色由消费端按 Kind 决定）。
-func (e *Engine) setNotice(kind NoticeKind, text string) {
+// setNotice 写入通知栏槽位（瞬时通知；文案原样存储，配色由消费端按 kind 决定）。
+func (e *Engine) setNotice(kind, text string) {
 	e.mu.Lock()
 	e.notice = notice{Kind: kind, Text: text, SetAt: time.Now()}
 	e.mu.Unlock()
 }
 
-// Notice 返回通知栏槽位快照（Kind/Text/SetAt）。
-func (e *Engine) Notice() (NoticeKind, string, time.Time) {
+// NoticeJSON 返回通知栏槽位快照 JSON（{"kind","text","setAt":RFC3339}）。
+func (e *Engine) NoticeJSON() string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.notice.Kind, e.notice.Text, e.notice.SetAt
+	b, err := json.Marshal(e.notice)
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
 }
 
 // ── 静态数据 ─────────────────────────────────────────────
@@ -225,11 +204,18 @@ func (e *Engine) setStartupInfo(lines []string) {
 	e.mu.Unlock()
 }
 
-// SkillHelpItems 返回技能帮助项快照（默认项 /new /exit 由消费端自己持有）。
-func (e *Engine) SkillHelpItems() []HelpItem {
+// HelpItemsJSON 返回技能帮助项 JSON（[{"cmd","desc"}]；默认项 /new /exit 由消费端自持）。
+func (e *Engine) HelpItemsJSON() string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return append([]HelpItem(nil), e.skills...)
+	if e.skills == nil {
+		return "[]" // nil 切片会 marshal 成 null，契约上空就是 []
+	}
+	b, err := json.Marshal(e.skills)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
 }
 
 // setSkillHelpItems 整体替换技能帮助项（loadSkills 每次刷新都重建）。

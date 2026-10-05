@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"encoding/json"
+
 	"HyperBot/utils/pretty"
 
 	"github.com/gdamore/tcell/v2"
@@ -37,7 +39,9 @@ func (t *Tui) refreshhelpTable() {
 		{cmd: "/new", desc: "开始新对话"},
 		{cmd: "/exit", desc: "退出程序"},
 	}
-	for _, it := range t.engine.SkillHelpItems() {
+	var ws []wireHelpItem
+	_ = json.Unmarshal([]byte(t.engine.HelpItemsJSON()), &ws)
+	for _, it := range ws {
 		items = append(items, helpItem{cmd: it.Cmd, desc: it.Desc})
 	}
 

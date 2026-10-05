@@ -81,24 +81,17 @@ func (e *Engine) Version() uint64 {
 	return e.version
 }
 
-// Records 返回 Seq 大于 afterSeq 的全部记录（每条一行 JSON，按写入顺序）。
-func (e *Engine) Records(afterSeq int64) []string {
+// Records 返回全部消息日志记录（每条一行 JSON，按写入顺序）。
+func (e *Engine) Records() []string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	out := make([]string, 0, len(e.records))
-	for i := range e.records {
-		if int64(i+1) > afterSeq {
-			out = append(out, e.records[i])
-		}
-	}
-	return out
+	return append([]string(nil), e.records...)
 }
 
 // appendRecord 追加一条已序列化的 JSON 记录（引擎内部写入口）。
 func (e *Engine) appendRecord(rawJSON string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.seq++
 	e.records = append(e.records, rawJSON)
 	e.version++
 }

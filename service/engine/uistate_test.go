@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// 本文件锁定 JSON 契约的状态语义：版本号单调、增量拉取为快照、
+// 本文件锁定 JSON 契约的状态语义：版本号单调、Records 全量返回、
 // 提交输入的 best-effort 行为、终态/通知/帮助项的 JSON 形状。
 
 func TestAppendAndRecords(t *testing.T) {
@@ -23,9 +23,9 @@ func TestAppendAndRecords(t *testing.T) {
 		t.Fatalf("三次写入后 Version 应为 3，得到 %d", e.Version())
 	}
 
-	all := e.Records(0)
+	all := e.Records()
 	if len(all) != 3 {
-		t.Fatalf("Records(0) 应返回 3 条，得到 %d", len(all))
+		t.Fatalf("Records() 应返回 3 条，得到 %d", len(all))
 	}
 	if all[0] != `{"type":"user","text":"hello"}` {
 		t.Fatalf("第 1 条记录不符：%s", all[0])
@@ -46,14 +46,6 @@ func TestAppendAndRecords(t *testing.T) {
 	}
 	if rec.Type != RecSummary || rec.Text != "已生成摘要" {
 		t.Fatalf("摘要记录形状不符：%s", all[2])
-	}
-
-	// 增量拉取：Seq 语义 = 顺序计数
-	if got := e.Records(1); len(got) != 2 {
-		t.Fatalf("增量拉取应返回 2 条，得到 %d", len(got))
-	}
-	if got := e.Records(3); len(got) != 0 {
-		t.Fatalf("全部消费后增量拉取应为空，得到 %d", len(got))
 	}
 }
 

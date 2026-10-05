@@ -23,9 +23,10 @@ const (
 // 若在 TUI 启动前同步执行会卡死整个进程（终态都无从渲染）。
 func GetEngineService(name string) *Engine {
 	return &Engine{
-		Agentname: name,
-		inputCh:   make(chan string),
-		notice:    notice{Kind: NoticeNone},
+		Agentname:   name,
+		inputCh:     make(chan string),
+		interruptCh: make(chan struct{}),
+		notice:      notice{Kind: NoticeNone},
 	}
 }
 

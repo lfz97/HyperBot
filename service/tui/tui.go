@@ -51,7 +51,7 @@ type EngineView interface {
 	StartupInfo() ([]string, bool)
 	HelpItemsJSON() string
 	SubmitInput(line string) bool
-	Cancel()
+	Interrupt() bool
 }
 
 // ── 跨界 JSON 形状（与引擎侧 uistate.go 的 wire schema 对齐）──────────
@@ -841,12 +841,12 @@ func NewTui(view EngineView) *Tui {
 		return event
 	})
 
-	// 应用级 Esc 捕获：运行期按 Esc 中断当前 agent（cancel 由引擎经 setActiveCancel 注入，
+	// 应用级 Esc 捕获：运行期按 Esc 中断当前 agent（Esc → Engine.Interrupt() 提交中断信号，
 	// 方向与旧版 SetAppFuncTriggerWithEsc 相反——不再由引擎往 TUI 注册回调）。
 	// 非运行期放行，让 Esc 落到帮助页的关闭捕获上（与旧版"仅运行期注册"的行为一致）。
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyEscape && engineViewRunning(view) {
-			view.Cancel()
+			view.Interrupt()
 			return nil
 		}
 		return event // 其他按键正常传递

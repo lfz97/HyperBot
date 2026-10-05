@@ -272,20 +272,17 @@ func (e *Engine) SubmitInput(line string) bool {
 	}
 }
 
-// setActiveCancel 注册/注销当前运行的取消函数（对应旧 SetAppFuncTriggerWithEsc/Clear，
-// 方向反转：不再由引擎往 TUI 注册回调，而是消费端在 Esc 时调用 Cancel）。
-func (e *Engine) setActiveCancel(f func()) {
-	e.cancelMu.Lock()
-	e.cancelFn = f
-	e.cancelMu.Unlock()
-}
-
-// Cancel 触发当前运行的取消；无运行中的取消函数时是 no-op。
-func (e *Engine) Cancel() {
-	e.cancelMu.Lock()
-	f := e.cancelFn
-	e.cancelMu.Unlock()
-	if f != nil {
-		f()
+// Interrupt 提交一次中断信号（前端 Esc 时调用）。引擎运行循环读取该通道判定中断：
+// 运行期的桥接 goroutine 消费信号并取消当前轮 ctx；非运行期无接收方，返回 false
+// 可安全忽略。无缓冲通道保证信号不会跨回合残留。
+func (e *Engine) Interrupt() bool {
+	select {
+	case e.interruptCh <- struct{}{}:
+		return true
+	default:
+		return false
 	}
 }
+
+// InterruptChan 返回中断信号通道（桥接 goroutine 读取）。
+func (e *Engine) InterruptChan() <-chan struct{} { return e.interruptCh }

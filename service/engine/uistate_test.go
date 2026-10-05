@@ -141,22 +141,24 @@ func TestNoticeAndHelpItemsJSON(t *testing.T) {
 	}
 }
 
-func TestCancelHook(t *testing.T) {
+func TestInterrupt(t *testing.T) {
 	e := GetEngineService("test")
-	e.Cancel() // 未注册时必须是 no-op，不能 panic
 
-	fired := false
-	e.setActiveCancel(func() { fired = true })
-	e.Cancel()
-	if !fired {
-		t.Fatal("注册后 Cancel 应触发取消函数")
+	// 非运行期无接收方：提交返回 false，信号不残留
+	if e.Interrupt() {
+		t.Fatal("无接收方时 Interrupt 应返回 false")
 	}
 
-	e.setActiveCancel(nil)
-	fired = false
-	e.Cancel()
-	if fired {
-		t.Fatal("注销后 Cancel 不应再触发")
+	got := make(chan struct{}, 1)
+	go func() { got <- (<-e.InterruptChan()) }()
+	time.Sleep(100 * time.Millisecond)
+	if !e.Interrupt() {
+		t.Fatal("有接收方时 Interrupt 应返回 true")
+	}
+	select {
+	case <-got:
+	case <-time.After(time.Second):
+		t.Fatal("中断信号未被引擎侧收到")
 	}
 }
 

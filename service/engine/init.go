@@ -86,8 +86,7 @@ type Engine struct {
 	skills    []HelpItem
 	inputCh   chan string
 
-	cancelMu sync.Mutex
-	cancelFn func()
+	interruptCh chan struct{}
 }
 type Agentrunner struct {
 	Runner    runner.Runner

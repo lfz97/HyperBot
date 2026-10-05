@@ -98,10 +98,18 @@ func (e *Engine) agentRunIteratively(Ctx context.Context, inputContext turnInfo)
 		}
 	}
 
-	// 注册应用级输入捕获器，监听ESC键以取消后续agent的输出。
-	(*e).setActiveCancel(cancel)
-	// 函数返回前注销取消函数，避免运行结束后 Esc 仍触发取消
-	defer (*e).setActiveCancel(nil)
+	// 中断桥接：前端 Esc → Interrupt() → 中断通道 → 本 goroutine 读取后取消当前轮
+	// （框架流式只认 ctx，通道信号在这里转成 ctx 取消）。runDone 在回合结束时 close，
+	// 桥接随之退出——无缓冲通道保证信号不会跨回合残留。
+	runDone := make(chan struct{})
+	defer close(runDone)
+	go func() {
+		select {
+		case <-(*e).interruptCh:
+			cancel()
+		case <-runDone:
+		}
+	}()
 
 	// AgentRunOnce返回的消息包含本次对话输入输出的所有消息。
 	// 运行指示器的开关紧贴这次调用：用 defer 复位是为了 panic 安全——agentRunOnce
@@ -109,7 +117,7 @@ func (e *Engine) agentRunIteratively(Ctx context.Context, inputContext turnInfo)
 	// 不要挂到本函数开头那个 Ctx 上：那个 ctx 的生命周期包含前面等用户输入的阶段，
 	// 挂上去 spinner 会在用户还没打字时就转起来。
 	(*e).setRunning(true)
-	(*e).setRunning(false)
+	defer (*e).setRunning(false)
 	AgentError_p := e.agentRunOnce(Ctx, userPrompt)
 	if AgentError_p != nil { //如果运行过程中发生错误
 		return &turnInfo{

@@ -204,17 +204,16 @@ type todoBar struct {
 // drawState 是 drawLoop 的私有状态。只被 drawLoop 这一个 goroutine 读写，
 // 不是共享状态，因此无需同步（刻意不做成 Tui 的字段，避免误导后人以为要加锁）。
 type drawState struct {
-	seenVersion    uint64         // 已消费的消息日志版本
-	pending        bool           // 有待重组的视图（节流窗口内推迟，不会丢）
-	lastCompose    time.Time      // 上次视图重组时间（节流）
-	rendered       map[int]string // 记录序号 → 渲染文本（纯函数缓存：日志只增不改，渲染结果永久有效）
-	banner         string         // 启动横幅（就绪后进视图头部）
-	bannerDone     bool           // 启动横幅已渲染（只在 StartupInfo 就绪后的第一帧渲染一次）
-	fatalHandled   bool           // 终态已处理（渲染 + 停止事件循环）
-	showingRunning bool           // indicator 当前显示的是否为运行态
-	spinTick       int            // spinner 帧推进计数
-	shownTodo      string         // TodoBar 上一帧的原始文本
-	shownNotice    string         // NoticeBar 上一帧的渲染结果
+	seenVersion    uint64    // 已消费的消息日志版本
+	pending        bool      // 有待重组的视图（节流窗口内推迟，不会丢）
+	lastCompose    time.Time // 上次视图重组时间（节流）
+	banner         string    // 启动横幅（就绪后进视图头部）
+	bannerDone     bool      // 启动横幅已渲染（只在 StartupInfo 就绪后的第一帧渲染一次）
+	fatalHandled   bool      // 终态已处理（渲染 + 停止事件循环）
+	showingRunning bool      // indicator 当前显示的是否为运行态
+	spinTick       int       // spinner 帧推进计数
+	shownTodo      string    // TodoBar 上一帧的原始文本
+	shownNotice    string    // NoticeBar 上一帧的渲染结果
 }
 
 // startDrawLoop 启动固定帧率的重绘循环，只启动一次。
@@ -228,7 +227,7 @@ func (t *Tui) startDrawLoop() {
 			ticker := time.NewTicker(drawInterval)
 			defer ticker.Stop()
 
-			st := &drawState{rendered: map[int]string{}}
+			st := &drawState{}
 			for range ticker.C {
 				running, fatal := t.pollRunState()
 				t.tickBanner(st)
@@ -286,11 +285,13 @@ func (t *Tui) tickMsgLog(st *drawState) {
 }
 
 // composeView 全量渲染：从消息日志整体重组视图文本。
-// 视图 = banner + Σ(每条记录的渲染结果)。每条记录只渲染一次并按序号缓存
-// （日志只增不改，渲染结果永久有效）；未定稿的流式尾段（末尾连续的 delta）
-// 每次重组都按其累积内容整体出渲染版——流式期间看到的就是最终形态，
-// 没有"原文追加、定稿替换"的二次处理。上屏效率由 tcell 的逐格 diff 兜底
-// （tscreen.go drawCell：未变化的 cell 直接跳过），TUI 不必自己记录任何 diff。
+// 无缓存、纯函数式——每次重组都对全部记录重放状态机（流式尾段、工具缓冲）
+// 并重新渲染。曾用过"记录序号→渲染文本"的缓存跳过已渲染记录，但它与跨记录
+// 状态机的交互（缓存命中跳过定稿清空/尾段消费）接连制造了三个静默失效 bug，
+// 已整体移除：正确性不依赖任何记账。性能账：glamour 渲染 O(历史总长)/次
+// 重组，composeInterval 节流下短会话无感；长会话如遇迟钝，升级路径是
+// "不可变前缀缓存 + live 尾段重渲"。上屏效率由 tcell 的逐格 diff 兜底
+// （tscreen.go drawCell：未变化的 cell 直接跳过），终端 I/O 只与变化量相关。
 func (t *Tui) composeView(st *drawState) string {
 	recs := t.engine.Records()
 	var b strings.Builder
@@ -300,34 +301,10 @@ func (t *Tui) composeView(st *drawState) string {
 	tailReasoning := &strings.Builder{} // 流式尾段：末尾连续 delta 累积的思考/正文
 	tailContent := &strings.Builder{}
 	toolBuf := map[string]*wireToolCall{} // 工具调用缓冲（随扫描重建）
-	for i, line := range recs {
+	for _, line := range recs {
 		var rec wireRecord
 		if err := json.Unmarshal([]byte(line), &rec); err != nil {
 			continue // 坏行直接跳过（记录是自描述 JSON，正常流程不会出现）
-		}
-
-		// 缓存命中：复用首次渲染的输出。但跨记录的状态机（流式尾段、工具缓冲）
-		// 必须照常推进——缓存复用的是"输出"，不是"状态"。漏掉这一步，定稿
-		// 记录的 tail.Reset() 就永远不会执行，上一轮的流式内容会永久滞留在
-		// 尾段里混进下一轮视图（真 bug：第二轮对话起旧回复卡在视图末尾）。
-		if cached, ok := st.rendered[i]; ok {
-			b.WriteString(cached)
-			switch rec.Type {
-			case "message":
-				var m model.Message
-				if rec.Msg == nil || json.Unmarshal(rec.Msg, &m) != nil || m.Role == "tool" {
-					if m.Role == "tool" {
-						delete(toolBuf, m.ToolID) // 消费掉配对的工具调用缓冲
-					}
-					continue
-				}
-				tailReasoning.Reset()
-				tailContent.Reset()
-			case "user", "slash", "warn", "error", "summary":
-				tailReasoning.Reset()
-				tailContent.Reset()
-			}
-			continue
 		}
 
 		var out string
@@ -354,9 +331,8 @@ func (t *Tui) composeView(st *drawState) string {
 				break
 			}
 			bufferToolCalls(&m, toolBuf)
-			// 思考块并入本条输出（定稿自带则用它，否则用流式尾累积的，两者本应同文）。
-			// 必须进缓存：思考块只在这里渲染一次，缓存命中后靠缓存条目复现，
-			// 否则定稿后思考块会从视图里消失。
+			// 思考块并入本条输出（定稿自带则用它，否则用流式尾累积的，两者本应同文），
+			// 流式期间与定稿后的观感一致，没有切换跳变。
 			var body strings.Builder
 			if m.ReasoningContent != "" {
 				body.WriteString(renderReasoningBlock(m.ReasoningContent))
@@ -381,9 +357,6 @@ func (t *Tui) composeView(st *drawState) string {
 			out = t.flushTailView(tailReasoning, tailContent) + pretty.TErrorF("%s", rec.Text)
 		case "summary":
 			out = t.flushTailView(tailReasoning, tailContent) + pretty.TColoredText(pretty.TColorGreen, "\n->已生成摘要：\n"+rec.Text+"\n")
-		}
-		if out != "" {
-			st.rendered[i] = out
 		}
 		b.WriteString(out)
 	}
@@ -437,8 +410,7 @@ func renderReasoningBlock(r string) string {
 }
 
 // flushTailView 渲染流式尾段并清空累积，返回值作为边界记录（user/slash/warn/
-// error/summary）输出的前缀一并写入缓存。后续重组时尾段由状态重放重新累积、
-// 缓存命中时丢弃（同文，首次渲染已在缓存条目里）——不重复也不丢失。
+// error/summary）输出的前缀——边界记录到达时，未定稿的流式内容先于它上屏。
 func (t *Tui) flushTailView(tailReasoning, tailContent *strings.Builder) string {
 	var b strings.Builder
 	if tailReasoning.Len() > 0 {

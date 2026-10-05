@@ -301,14 +301,35 @@ func (t *Tui) composeView(st *drawState) string {
 	tailContent := &strings.Builder{}
 	toolBuf := map[string]*wireToolCall{} // 工具调用缓冲（随扫描重建）
 	for i, line := range recs {
-		if cached, ok := st.rendered[i]; ok {
-			b.WriteString(cached)
-			continue
-		}
 		var rec wireRecord
 		if err := json.Unmarshal([]byte(line), &rec); err != nil {
 			continue // 坏行直接跳过（记录是自描述 JSON，正常流程不会出现）
 		}
+
+		// 缓存命中：复用首次渲染的输出。但跨记录的状态机（流式尾段、工具缓冲）
+		// 必须照常推进——缓存复用的是"输出"，不是"状态"。漏掉这一步，定稿
+		// 记录的 tail.Reset() 就永远不会执行，上一轮的流式内容会永久滞留在
+		// 尾段里混进下一轮视图（真 bug：第二轮对话起旧回复卡在视图末尾）。
+		if cached, ok := st.rendered[i]; ok {
+			b.WriteString(cached)
+			switch rec.Type {
+			case "message":
+				var m model.Message
+				if rec.Msg == nil || json.Unmarshal(rec.Msg, &m) != nil || m.Role == "tool" {
+					if m.Role == "tool" {
+						delete(toolBuf, m.ToolID) // 消费掉配对的工具调用缓冲
+					}
+					continue
+				}
+				tailReasoning.Reset()
+				tailContent.Reset()
+			case "user", "slash", "warn", "error", "summary":
+				tailReasoning.Reset()
+				tailContent.Reset()
+			}
+			continue
+		}
+
 		var out string
 		switch rec.Type {
 		case "delta":
@@ -333,32 +354,33 @@ func (t *Tui) composeView(st *drawState) string {
 				break
 			}
 			bufferToolCalls(&m, toolBuf)
-			// 思考块：定稿 message 自带则用它，否则用流式尾累积的（两者本应同文）
+			// 思考块并入本条输出（定稿自带则用它，否则用流式尾累积的，两者本应同文）。
+			// 必须进缓存：思考块只在这里渲染一次，缓存命中后靠缓存条目复现，
+			// 否则定稿后思考块会从视图里消失。
+			var body strings.Builder
 			if m.ReasoningContent != "" {
-				b.WriteString(renderReasoningBlock(m.ReasoningContent))
+				body.WriteString(renderReasoningBlock(m.ReasoningContent))
 			} else if tailReasoning.Len() > 0 {
-				b.WriteString(renderReasoningBlock(tailReasoning.String()))
+				body.WriteString(renderReasoningBlock(tailReasoning.String()))
 			}
 			tailReasoning.Reset()
 			if strings.TrimSpace(m.Content) != "" {
-				out = t.renderBody(m.Content)
+				body.WriteString(t.renderBody(m.Content))
 			}
 			tailContent.Reset()
+			out = body.String()
 		case "user":
-			flushTail(&b, tailReasoning, tailContent, t)
-			out = pretty.TUserInput(rec.Text)
+			// 流式尾段先于边界记录上屏，并并入本条缓存——后续重组时尾段由
+			// 状态重放重新累积、缓存命中时丢弃（同文，首次渲染已在缓存里）。
+			out = t.flushTailView(tailReasoning, tailContent) + pretty.TUserInput(rec.Text)
 		case "slash":
-			flushTail(&b, tailReasoning, tailContent, t)
-			out = pretty.TColoredText(pretty.TColorLightGreen, "\n"+rec.Text+"\n")
+			out = t.flushTailView(tailReasoning, tailContent) + pretty.TColoredText(pretty.TColorLightGreen, "\n"+rec.Text+"\n")
 		case "warn":
-			flushTail(&b, tailReasoning, tailContent, t)
-			out = pretty.TWarningF("%s", rec.Text)
+			out = t.flushTailView(tailReasoning, tailContent) + pretty.TWarningF("%s", rec.Text)
 		case "error":
-			flushTail(&b, tailReasoning, tailContent, t)
-			out = pretty.TErrorF("%s", rec.Text)
+			out = t.flushTailView(tailReasoning, tailContent) + pretty.TErrorF("%s", rec.Text)
 		case "summary":
-			flushTail(&b, tailReasoning, tailContent, t)
-			out = pretty.TColoredText(pretty.TColorGreen, "\n->已生成摘要：\n"+rec.Text+"\n")
+			out = t.flushTailView(tailReasoning, tailContent) + pretty.TColoredText(pretty.TColorGreen, "\n->已生成摘要：\n"+rec.Text+"\n")
 		}
 		if out != "" {
 			st.rendered[i] = out
@@ -414,16 +436,20 @@ func renderReasoningBlock(r string) string {
 	return "\n" + pretty.TReasoningContent(r) + "\n"
 }
 
-// flushTail 把流式尾段累积的内容渲染进输出（边界记录到达时调用）。
-func flushTail(b *strings.Builder, tailReasoning, tailContent *strings.Builder, t *Tui) {
+// flushTailView 渲染流式尾段并清空累积，返回值作为边界记录（user/slash/warn/
+// error/summary）输出的前缀一并写入缓存。后续重组时尾段由状态重放重新累积、
+// 缓存命中时丢弃（同文，首次渲染已在缓存条目里）——不重复也不丢失。
+func (t *Tui) flushTailView(tailReasoning, tailContent *strings.Builder) string {
+	var b strings.Builder
 	if tailReasoning.Len() > 0 {
 		b.WriteString(renderReasoningBlock(tailReasoning.String()))
-		tailReasoning.Reset()
 	}
 	if tailContent.Len() > 0 {
 		b.WriteString(t.renderBody(tailContent.String()))
-		tailContent.Reset()
 	}
+	tailReasoning.Reset()
+	tailContent.Reset()
+	return b.String()
 }
 
 // ── markdown 渲染（自 messageRender.renderBody 迁入：渲染是表达层的事）──

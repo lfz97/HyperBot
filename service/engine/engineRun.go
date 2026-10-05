@@ -1,8 +1,6 @@
 package engine
 
 import (
-	"HyperBot/service/engine/messagerender"
-	"HyperBot/utils/pretty"
 	"context"
 	"fmt"
 	"strings"
@@ -38,9 +36,9 @@ func (e *Engine) agentRunIteratively(Ctx context.Context, inputContext turnInfo)
 	//New（用户敲 /new）才推"新对话已开始"，刚启动时没有"上一轮对话"，推了是噪音。
 	//Error 与 Int 不在这里打印——各自已在 agentRunOnce 里打过，再打就是重复。
 	if inputContext.Code == Startup {
-		(*e).tui.ShowStartupBanner((*e).startupInfoLines())
+		(*e).setStartupInfo((*e).startupInfoLines())
 	} else if inputContext.Code == New {
-		(*e).tui.ShowNotice(pretty.TBarNewConversation())
+		(*e).setNotice(NoticeNewConversation, "")
 	}
 
 	var userPrompt string
@@ -70,12 +68,12 @@ func (e *Engine) agentRunIteratively(Ctx context.Context, inputContext turnInfo)
 
 		} else {
 			select {
-			case userPrompt = <-(*e).tui.ListenUserInput(): //启用输入框并将用户输入放进Channel
+			case userPrompt = <-(*e).inputCh: //用户输入由 TUI 经 Engine.SubmitInput 主动提交进来
 			}
 			checkprompt := strings.ReplaceAll(userPrompt, "\n", "")
 			checkprompt = strings.ReplaceAll(checkprompt, " ", "")
 			if checkprompt == "/exit" {
-				(*e).tui.PrintToMsgView(pretty.TColoredText(pretty.TColorLightGreen, fmt.Sprintf("\n%s\n", checkprompt)), false)
+				(*e).appendTyped("slash", checkprompt)
 				return &turnInfo{
 					Code:          Exit,
 					Reason:        "用户主动结束对话",
@@ -83,7 +81,7 @@ func (e *Engine) agentRunIteratively(Ctx context.Context, inputContext turnInfo)
 				}
 
 			} else if checkprompt == "/new" {
-				(*e).tui.PrintToMsgView(pretty.TColoredText(pretty.TColorLightGreen, fmt.Sprintf("\n%s\n", checkprompt)), false)
+				(*e).appendTyped("slash", checkprompt)
 				return &turnInfo{
 					Code:   New,
 					Reason: "用户主动开始新对话",
@@ -93,25 +91,33 @@ func (e *Engine) agentRunIteratively(Ctx context.Context, inputContext turnInfo)
 				continue //如果用户输入为空，重新开始本轮循环，等待用户输入
 
 			} else {
-				(*e).tui.PrintToMsgView(pretty.TUserInput(userPrompt), false)
+				(*e).appendTyped("user", userPrompt)
 				break //正常输入，继续执行后续逻辑
 			}
 
 		}
 	}
 
-	// 注册应用级输入捕获器，监听ESC键以取消后续agent的输出。
-	(*e).tui.SetAppFuncTriggerWithEsc(cancel)
-	// 函数返回前清除应用级捕获器，避免ESC事件被持续拦截
-	defer (*e).tui.ClearAppFuncTrigger()
+	// 中断桥接：前端 Esc → Interrupt() → 中断通道 → 本 goroutine 读取后取消当前轮
+	// （框架流式只认 ctx，通道信号在这里转成 ctx 取消）。runDone 在回合结束时 close，
+	// 桥接随之退出——无缓冲通道保证信号不会跨回合残留。
+	runDone := make(chan struct{})
+	defer close(runDone)
+	go func() {
+		select {
+		case <-(*e).interruptCh:
+			cancel()
+		case <-runDone:
+		}
+	}()
 
 	// AgentRunOnce返回的消息包含本次对话输入输出的所有消息。
 	// 运行指示器的开关紧贴这次调用：用 defer 复位是为了 panic 安全——agentRunOnce
 	// 内部跑的是框架代码，panic 时指示器会永远转下去。
 	// 不要挂到本函数开头那个 Ctx 上：那个 ctx 的生命周期包含前面等用户输入的阶段，
 	// 挂上去 spinner 会在用户还没打字时就转起来。
-	(*e).tui.SetAgentRunning(true)
-	defer (*e).tui.SetAgentRunning(false)
+	(*e).setRunning(true)
+	defer (*e).setRunning(false)
 	AgentError_p := e.agentRunOnce(Ctx, userPrompt)
 	if AgentError_p != nil { //如果运行过程中发生错误
 		return &turnInfo{
@@ -162,7 +168,7 @@ func (e *Engine) agentRunOnce(Ctx context.Context, userPrompt string) *AgentErro
 		// 在源头打印，与下面的 TerminalError 分支保持一致：每类错误只打一次。
 		// 改前这里不打，只靠 agentRunIteratively 循环顶部打一次，与 TerminalError
 		// 打两次的行为不一致。
-		(*e).tui.PrintToMsgView(pretty.TErrorF("%v", err), false)
+		(*e).appendTyped("error", err.Error())
 		return &AgentError{
 			Error:         err,
 			ErrorType:     "RunError",
@@ -171,14 +177,13 @@ func (e *Engine) agentRunOnce(Ctx context.Context, userPrompt string) *AgentErro
 	}
 
 	partialOutput := ""
-	msgRender := messagerender.NewMessageRender((*e).tui, (*(*e).Config_p).Model.ShowReasoning, (*(*e).AgentRunner_p).Stream)
 	for event := range eventChan {
 		//只有terminal error才会中断对话，其他error直接continue
 		if event.Error != nil {
 			if event.IsTerminalError() {
 				//填充err，使得返回的err不为nil，表示对话发生了错误
 				err = fmt.Errorf("Event发生TerminalError: %v", event.Error)
-				(*e).tui.PrintToMsgView(pretty.TErrorF("%v", err), false)
+				(*e).appendTyped("error", err.Error())
 				return &AgentError{
 					Error:         err,
 					ErrorType:     "TerminalError",
@@ -190,7 +195,7 @@ func (e *Engine) agentRunOnce(Ctx context.Context, userPrompt string) *AgentErro
 		}
 		select {
 		case <-Ctx.Done():
-			(*e).tui.ShowNotice(pretty.TBarCancelled())
+			(*e).setNotice(NoticeCancelled, "")
 			(*e).errorStreak = 0 //重置错误计数
 			return nil
 		default:
@@ -204,7 +209,7 @@ func (e *Engine) agentRunOnce(Ctx context.Context, userPrompt string) *AgentErro
 			(*e).errorStreak = 0
 			for _, choice := range (*(*event).Response).Choices {
 
-				msgRender.RenderResponse(choice, (*(*event).Response).IsPartial)
+				(*e).emitChoice(choice, (*(*event).Response).IsPartial)
 				gatherPartialOutput(&partialOutput, choice, (*(*e).AgentRunner_p).Stream)
 			}
 

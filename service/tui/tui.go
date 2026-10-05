@@ -1,16 +1,19 @@
 package tui
 
 import (
-	"strings"
-
-	"HyperBot/utils/pretty"
-	"charm.land/glamour/v2"
+	"encoding/json"
 	"fmt"
-	"github.com/gdamore/tcell/v2"
-	"github.com/rivo/tview"
+	"regexp"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"HyperBot/utils/pretty"
+	"charm.land/glamour/v2"
+	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/tview"
+	"trpc.group/trpc-go/trpc-agent-go/model"
 )
 
 // 定义颜色，配色统一来源于 pretty.TuiXxx 常量，确保界面风格统一且美观
@@ -23,27 +26,94 @@ var (
 const (
 	// drawInterval 重绘节流间隔。tview 只在 QueueUpdateDraw、按键/鼠标/resize 事件时重绘，
 	// 纯流式输出期间这些都不发生，所以由 drawLoop 按固定帧率驱动刷新。
+	// pull 架构下它同时是引擎状态的上屏延迟上界：引擎只写状态字段，
+	// 本循环每帧拉取快照/增量、把增量渲染出来，帧率即流畅度。
 	drawInterval = 30 * time.Millisecond
 	// spinnerTicks 指示器每推进一帧占用多少个 drawInterval tick。3 × 30ms = 90ms/帧，
 	// 10 帧约 0.9s 转一圈。
 	spinnerTicks = 3
+	// composeInterval 视图重组的最小间隔。全量渲染 = 每次从日志整体重组视图文本，
+	// 单次成本 = O(日志) 的字符串拼接与 TextView reparse + glamour(流式尾段)，
+	// 单用户应用量级可忽略；100ms 只是把 delta 高频到达时的无效重组合并掉。
+	composeInterval = 100 * time.Millisecond
 )
+
+// EngineView 是 TUI 对引擎的全部依赖（消费方定义的接口）。
+// 上下游零 import：跨界只有 stdlib 类型与 JSON 文本，消息类型放在 JSON 的
+// type/style/kind 字段上；引擎侧的 *Engine 天然满足本接口。
+// 控制权全部在 TUI：状态由 TUI 按帧拉取，输入/取消由 TUI 主动调用。
+type EngineView interface {
+	Version() uint64
+	Records() []string // 消息日志全量（每条一行 JSON，type 字段承载消息类型）
+	RunStateJSON() string
+	TodoText() string
+	NoticeJSON() string
+	StartupInfo() ([]string, bool)
+	HelpItemsJSON() string
+	SubmitInput(line string) bool
+	Interrupt() bool
+}
+
+// ── 跨界 JSON 形状（与引擎侧 uistate.go 的 wire schema 对齐）──────────
+
+// wireRunState / wireFatal 运行状态快照。
+type wireFatal struct {
+	Text    string `json:"text"`
+	Style   string `json:"style"` // plain | error | success | exit
+	WaitKey bool   `json:"waitKey"`
+}
+
+type wireRunState struct {
+	Running bool       `json:"running"`
+	Fatal   *wireFatal `json:"fatal"`
+}
+
+// wireNotice 通知栏槽位快照。
+type wireNotice struct {
+	Kind  string `json:"kind"` // none | new_conversation | cancelled | success | warning
+	Text  string `json:"text"`
+	SetAt string `json:"setAt"` // RFC3339
+}
+
+// wireHelpItem 帮助页一行。
+type wireHelpItem struct {
+	Cmd  string `json:"cmd"`
+	Desc string `json:"desc"`
+}
+
+// wireRecord 消息日志记录：type 承载消息类型。
+//   - delta / message：msg 为框架 model.Message 原样（框架自带 json 标签，两端同型收发）
+//   - user / slash / warn / error / summary：text 为语义原文
+type wireRecord struct {
+	Type string          `json:"type"`
+	Msg  json.RawMessage `json:"msg,omitempty"`
+	Text string          `json:"text,omitempty"`
+}
+
+// wireToolCall 待结果的工具调用缓冲条目（按 ToolCall.ID 索引）。
+type wireToolCall struct {
+	name string
+	args string
+}
+
+// engineViewRunning 拉取运行态快照里的 running 字段（Esc 门控用）。
+func engineViewRunning(v EngineView) bool {
+	var rs wireRunState
+	_ = json.Unmarshal([]byte(v.RunStateJSON()), &rs)
+	return rs.Running
+}
 
 type Tui struct {
 	app       *tview.Application
 	appLayout *layout
-	inputChan chan string
+	engine    EngineView
 
 	// dirty 标记"内容已写入 widget 但尚未上屏"，由 drawLoop 消费。
-	// 写入走 QueueUpdate（只改 widget、不重绘）而不是 QueueUpdateDraw：后者每次调用都
+	// 写入走 SetText（只改 widget、不重绘）而不是 QueueUpdateDraw：后者每次调用都
 	// 阻塞等待一次完整全屏重绘，而 TextView.Draw 内部的 parseAhead 会把整个文本缓冲区
 	// 拷贝一遍（t.text.String()），流式输出下就是每 token O(n)、整体 O(n²)。
 	dirty    atomic.Bool
 	drawOnce sync.Once
-
-	// running 由引擎 goroutine 通过 SetAgentRunning 写、drawLoop 读。
-	// 指示器的实际外观切换全在 drawLoop 单线程里做，所以只有这一个字段需要跨 goroutine。
-	running atomic.Bool
 
 	// glamour renderer 构建时要解析一遍 style JSON，按宽度缓存复用
 	renderMu sync.Mutex
@@ -61,14 +131,14 @@ type layout struct {
 	inputArea    *tview.TextArea
 	helpTable    *helptable
 }
+
 type helptable struct {
 	h               *tview.Table
 	helpPageVisible bool
-	// helpItems 由引擎 goroutine 写（AddHelpItems / ResetHelpItems），
-	// 由 UI goroutine 读（toggleHelpPage → refreshhelpTable），必须加锁
-	mu        sync.Mutex
-	helpItems []helpItem
+	// pull 之后帮助项不再存放于 TUI：默认项在 refreshhelpTable 里写死，
+	// 技能项每次打开帮助页时从引擎状态拉取（loadSkills 随时可能重建列表）。
 }
+
 type helpItem struct {
 	cmd  string
 	desc string
@@ -100,9 +170,12 @@ func spinnerIndicator(frame int) string {
 //
 // TodoBar：纵向清单栏，每个任务一行，有清单时占 N 行、无清单时塌成 0 行。
 // NoticeBar：固定 1 行，承载瞬时通知与常驻键位提示，永不塌陷（hint 常驻）。
+// pull 之后两者都不再持有跨 goroutine 状态：清单文本与通知槽位都是引擎的
+// 状态字段，drawLoop 每帧拉取，widget 写入保持单线程（drawLoop）。
 
 const (
 	// noticeTTL 临时通知的停留时长。到期后 NoticeBar 自动回落到兜底提示。
+	// 契约不变：TTL 从引擎写入槽位那一刻（setAt）起算。
 	noticeTTL = 4 * time.Second
 	// minMessageRows 消息区无论如何至少保留的行数。矮终端下用它钳制 TodoBar 高度：
 	// Flex 的 distSize = height - 所有 fixedSize 之和且不做钳制，Box.SetRect 也原样
@@ -121,87 +194,34 @@ const (
 // noticeBar 输入框上方的单行通知栏。notice 与 hint 二选一，一次只显示一种。
 type noticeBar struct {
 	view *tview.TextView
-
-	// 槽位由引擎 goroutine 写（setNotice），由 drawLoop 读写（render 里清理过期
-	// 通知），是真·多写入方，必须加锁。
-	// 注意与 indicator 的区别：indicator 只有 drawLoop 一个写入方，所以不需要锁。
-	mu          sync.Mutex
-	notice      string    // 临时通知（已带颜色标签，调用方负责）
-	noticeUntil time.Time // 过期时间
-}
-
-func (b *noticeBar) setNotice(msg string, ttl time.Duration) {
-	b.mu.Lock()
-	b.notice = msg
-	b.noticeUntil = time.Now().Add(ttl)
-	b.mu.Unlock()
-}
-
-// render 未过期的 notice 优先，否则回落到 hint（按 running 二选一）。
-// running 由调用方（drawLoop）传入，它本来就已经读过这个原子标志。
-func (b *noticeBar) render(running bool) string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	if b.notice != "" {
-		if time.Now().Before(b.noticeUntil) {
-			return b.notice
-		}
-		b.notice = "" // 过期即清，避免每帧反复比对一个死字符串
-	}
-	if running {
-		return hintRunning
-	}
-	return hintIdle
 }
 
 // todoBar 输入框上方的纵向清单栏（每个任务一行）。有清单时占 N 行，无清单时塌成 0 行。
 type todoBar struct {
 	view *tview.TextView
-
-	// text 是引擎 goroutine 推来的原始多行纯文本（每个任务一行，未转义）。转义、
-	// 着色、SetText、ResizeItem 全在 drawLoop 里做，保持"widget 写入单线程"。
-	// 引擎写、drawLoop 读，是真·多写入方，必须加锁。
-	mu   sync.Mutex
-	text string
-}
-
-func (b *todoBar) store(text string) {
-	b.mu.Lock()
-	b.text = text
-	b.mu.Unlock()
-}
-
-func (b *todoBar) current() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.text
-}
-
-// SetTodoText 更新 TodoBar 的清单文本，传空串则整栏塌成 0 行。
-// 当前收到的是多行文本（functionTools.TodoStatusBar 的输出，每个任务一行）。
-// ⚠️ text 是**来自框架/LLM 的纯文本**（以 "[TODO] " 开头，且条目正文由 LLM 撰写），
-// 转义与着色由 drawLoop 负责——与 ShowNotice 的契约相反（那个收的是受信 markup，
-// 转义会破坏颜色标签）。
-// 由 agent 包的 BeforeModel callback 在每次 LLM hop 推送，可从任意 goroutine 调用。
-func (t *Tui) SetTodoText(text string) {
-	t.appLayout.todoBar.store(text)
-	t.markDirty()
 }
 
 // drawState 是 drawLoop 的私有状态。只被 drawLoop 这一个 goroutine 读写，
 // 不是共享状态，因此无需同步（刻意不做成 Tui 的字段，避免误导后人以为要加锁）。
 type drawState struct {
-	showingRunning bool   // indicator 当前显示的是否为运行态
-	spinTick       int    // spinner 帧推进计数
-	shownTodo      string // TodoBar 上一帧的原始文本
-	shownNotice    string // NoticeBar 上一帧的渲染结果
+	seenVersion    uint64         // 已消费的消息日志版本
+	pending        bool           // 有待重组的视图（节流窗口内推迟，不会丢）
+	lastCompose    time.Time      // 上次视图重组时间（节流）
+	rendered       map[int]string // 记录序号 → 渲染文本（纯函数缓存：日志只增不改，渲染结果永久有效）
+	banner         string         // 启动横幅（就绪后进视图头部）
+	bannerDone     bool           // 启动横幅已渲染（只在 StartupInfo 就绪后的第一帧渲染一次）
+	fatalHandled   bool           // 终态已处理（渲染 + 停止事件循环）
+	showingRunning bool           // indicator 当前显示的是否为运行态
+	spinTick       int            // spinner 帧推进计数
+	shownTodo      string         // TodoBar 上一帧的原始文本
+	shownNotice    string         // NoticeBar 上一帧的渲染结果
 }
 
 // startDrawLoop 启动固定帧率的重绘循环，只启动一次。
-// 它是"重绘节流 + 动画时钟"的多重身份：除了按 dirty 标志节流重绘，还独占驱动
-// 运行指示器动画与两个 bar 的内容刷新。所有 widget 写入因此都是单线程的，
-// 配合 TextView.SetText 自带锁，既不需要额外同步也不需要为每件事单起 ticker。
+// 它是 pull 架构的心跳：每帧从引擎状态拉取五类东西——启动横幅（就绪后一次）、
+// 消息日志（版本变化即全量重组）、运行指示器、清单栏、通知栏——外加终态观察。
+// 所有 widget 写入因此都是单线程的，配合 TextView.SetText 自带锁，
+// 既不需要额外同步也不需要为每件事单起 ticker。
 func (t *Tui) startDrawLoop() {
 	t.drawOnce.Do(func() {
 		go func() {
@@ -210,10 +230,13 @@ func (t *Tui) startDrawLoop() {
 
 			st := &drawState{}
 			for range ticker.C {
-				running := t.running.Load()
+				running, fatal := t.pollRunState()
+				t.tickBanner(st)
+				t.tickMsgLog(st)
 				t.tickIndicator(running, st)
 				t.tickTodoBar(st)
 				t.tickNoticeBar(running, st)
+				t.tickFatal(fatal, st)
 				// 没有新内容就不重绘，空闲时不产生任何 CPU 开销
 				if t.dirty.CompareAndSwap(true, false) {
 					t.app.Draw()
@@ -222,6 +245,268 @@ func (t *Tui) startDrawLoop() {
 		}()
 	})
 }
+
+// pollRunState 拉取并解析运行状态快照。
+func (t *Tui) pollRunState() (bool, *wireFatal) {
+	var rs wireRunState
+	if err := json.Unmarshal([]byte(t.engine.RunStateJSON()), &rs); err != nil {
+		return false, nil // 坏帧不致盲：下一帧重拉
+	}
+	return rs.Running, rs.Fatal
+}
+
+// tickBanner 在引擎就绪 StartupInfo 后的第一帧组装启动横幅（只组装一次）。
+// 横幅内容是引擎的数据、排版是 TUI 的表达——所以数据走拉取，渲染留在本侧。
+func (t *Tui) tickBanner(st *drawState) {
+	if st.bannerDone {
+		return
+	}
+	lines, ok := t.engine.StartupInfo()
+	if !ok {
+		return // 引擎 init 未完成，等下一帧再拉
+	}
+	st.bannerDone = true
+	st.banner = t.startupBannerView(lines)
+	st.pending = true // 触发本帧重组
+}
+
+// tickMsgLog 引擎版本有变化就标记待重组；重组按 composeInterval 节流
+// （把 delta 高频到达时的无效重组合并掉；推迟的重组下帧重试、不会丢）。
+func (t *Tui) tickMsgLog(st *drawState) {
+	if ver := t.engine.Version(); ver != st.seenVersion {
+		st.seenVersion = ver
+		st.pending = true
+	}
+	if !st.pending || time.Since(st.lastCompose) < composeInterval {
+		return
+	}
+	st.pending = false
+	st.lastCompose = time.Now()
+	t.setView(t.composeView(st))
+}
+
+// composeView 全量渲染：从消息日志整体重组视图文本。
+// 视图 = banner + Σ(每条记录的渲染结果)。每条记录只渲染一次并按序号缓存
+// （日志只增不改，渲染结果永久有效）；未定稿的流式尾段（末尾连续的 delta）
+// 每次重组都按其累积内容整体出渲染版——流式期间看到的就是最终形态，
+// 没有"原文追加、定稿替换"的二次处理。上屏效率由 tcell 的逐格 diff 兜底
+// （tscreen.go drawCell：未变化的 cell 直接跳过），TUI 不必自己记录任何 diff。
+func (t *Tui) composeView(st *drawState) string {
+	recs := t.engine.Records()
+	var b strings.Builder
+	if st.bannerDone {
+		b.WriteString(st.banner)
+	}
+	tailReasoning := &strings.Builder{} // 流式尾段：末尾连续 delta 累积的思考/正文
+	tailContent := &strings.Builder{}
+	toolBuf := map[string]*wireToolCall{} // 工具调用缓冲（随扫描重建）
+	for i, line := range recs {
+		if cached, ok := st.rendered[i]; ok {
+			b.WriteString(cached)
+			continue
+		}
+		var rec wireRecord
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			continue // 坏行直接跳过（记录是自描述 JSON，正常流程不会出现）
+		}
+		var out string
+		switch rec.Type {
+		case "delta":
+			var m model.Message
+			if rec.Msg == nil || json.Unmarshal(rec.Msg, &m) != nil {
+				continue
+			}
+			if m.Role == "tool" {
+				out = renderToolResult(&m, toolBuf)
+			} else {
+				tailReasoning.WriteString(m.ReasoningContent)
+				tailContent.WriteString(m.Content)
+				bufferToolCalls(&m, toolBuf)
+			}
+		case "message":
+			var m model.Message
+			if rec.Msg == nil || json.Unmarshal(rec.Msg, &m) != nil {
+				continue
+			}
+			if m.Role == "tool" {
+				out = renderToolResult(&m, toolBuf)
+				break
+			}
+			bufferToolCalls(&m, toolBuf)
+			// 思考块：定稿 message 自带则用它，否则用流式尾累积的（两者本应同文）
+			if m.ReasoningContent != "" {
+				b.WriteString(renderReasoningBlock(m.ReasoningContent))
+			} else if tailReasoning.Len() > 0 {
+				b.WriteString(renderReasoningBlock(tailReasoning.String()))
+			}
+			tailReasoning.Reset()
+			if strings.TrimSpace(m.Content) != "" {
+				out = t.renderBody(m.Content)
+			}
+			tailContent.Reset()
+		case "user":
+			flushTail(&b, tailReasoning, tailContent, t)
+			out = pretty.TUserInput(rec.Text)
+		case "slash":
+			flushTail(&b, tailReasoning, tailContent, t)
+			out = pretty.TColoredText(pretty.TColorLightGreen, "\n"+rec.Text+"\n")
+		case "warn":
+			flushTail(&b, tailReasoning, tailContent, t)
+			out = pretty.TWarningF("%s", rec.Text)
+		case "error":
+			flushTail(&b, tailReasoning, tailContent, t)
+			out = pretty.TErrorF("%s", rec.Text)
+		case "summary":
+			flushTail(&b, tailReasoning, tailContent, t)
+			out = pretty.TColoredText(pretty.TColorGreen, "\n->已生成摘要：\n"+rec.Text+"\n")
+		}
+		if out != "" {
+			st.rendered[i] = out
+		}
+		b.WriteString(out)
+	}
+	// 流式尾段 live：按累积内容整体出渲染版（流式期间看到的就是最终形态）
+	if tailReasoning.Len() > 0 {
+		b.WriteString(renderReasoningBlock(tailReasoning.String()))
+	}
+	if tailContent.Len() > 0 {
+		b.WriteString(t.renderBody(tailContent.String()))
+	}
+	return b.String()
+}
+
+// bufferToolCalls 缓冲工具调用（等结果到达后拼工具行）。
+// provider 可能把一次调用拆成多个增量片段：同 ID 合并、无 ID 按 index 兜底、
+// 名字非空才覆盖、参数按字节续接——完整调用与分片调用两种形态都稳。
+func bufferToolCalls(m *model.Message, toolBuf map[string]*wireToolCall) {
+	for i, tc := range m.ToolCalls {
+		key := tc.ID
+		if key == "" {
+			key = fmt.Sprintf("#%d", i)
+		}
+		entry := toolBuf[key]
+		if entry == nil {
+			entry = &wireToolCall{}
+			toolBuf[key] = entry
+		}
+		if tc.Function.Name != "" {
+			entry.name = tc.Function.Name
+		}
+		entry.args += string(tc.Function.Arguments)
+	}
+}
+
+// renderToolResult 渲染工具行：结果（Role=tool 的框架 message）到达时，按 ToolID
+// 匹配此前缓冲的工具调用（TToolCompact 内建参数/结果压缩与截断，原始数据直喂即可）。
+// 无缓冲匹配时与旧版一致：宁可不出工具行，也不凭空渲染。
+func renderToolResult(m *model.Message, toolBuf map[string]*wireToolCall) string {
+	entry := toolBuf[m.ToolID]
+	if entry == nil {
+		return ""
+	}
+	delete(toolBuf, m.ToolID)
+	return pretty.TToolCompact(entry.name, []byte(entry.args), m.Content)
+}
+
+// renderReasoningBlock 思考块渲染：前后各一个空行框行（纯函数，流式尾段与定稿同型，
+// 所以流式期间看到的和定稿后留下的完全一致，没有切换跳变）。
+func renderReasoningBlock(r string) string {
+	return "\n" + pretty.TReasoningContent(r) + "\n"
+}
+
+// flushTail 把流式尾段累积的内容渲染进输出（边界记录到达时调用）。
+func flushTail(b *strings.Builder, tailReasoning, tailContent *strings.Builder, t *Tui) {
+	if tailReasoning.Len() > 0 {
+		b.WriteString(renderReasoningBlock(tailReasoning.String()))
+		tailReasoning.Reset()
+	}
+	if tailContent.Len() > 0 {
+		b.WriteString(t.renderBody(tailContent.String()))
+		tailContent.Reset()
+	}
+}
+
+// ── markdown 渲染（自 messageRender.renderBody 迁入：渲染是表达层的事）──
+
+// glamourTailPad 匹配行尾的"空白 + ANSI 序列"混合填充。glamour 会把标题、表格、
+// 代码块的每一行都补满整行宽度，每个空格还裹一层 SGR：实测 153B 的 markdown 渲染后
+// 是 12.7KB，其中 92% 是这种填充。消息区 TextView 在进程生命周期内从不清空，且每帧
+// 全量重绘、每次重组都要扫一遍整个 buffer，所以必须剥掉。
+var glamourTailPad = regexp.MustCompile(`(?:\x1b\[[0-9;]*m|[ \t])+$`)
+
+// renderBody 用 glamour 渲染 markdown，TranslateANSI 转为 tview 颜色标签。
+// 流式尾段与定稿两条路径共用，保证两种模式的最终观感一致。
+//
+// 正文标记必须加在渲染结果上，不能加在 markdown 源码前面：`● ` 会让首行的块级结构失效
+// ——实测代码围栏和表格会整个塌成一行、列表首项不再被识别、标题降级成普通段落。
+func (t *Tui) renderBody(content string) string {
+	out, err := t.renderMarkdown(content)
+	if err != nil {
+		out = content // 渲染失败退回原文，别把整条回复吞掉
+	}
+
+	// glamour 的输出恒以一个换行开头，不剥掉的话标记会独占一行、与正文脱开
+	out = strings.TrimRight(strings.TrimLeft(out, "\n\r"), "\n\r ")
+	lines := strings.Split(out, "\n")
+	for i, l := range lines {
+		l = glamourTailPad.ReplaceAllString(l, "")
+		// 剥填充会连带剥掉行尾闭合样式的 reset，不补回则颜色泄漏到后续行
+		// （实测不补会留下 2~5 个未闭合标签）
+		if l != "" && !strings.HasSuffix(l, "\x1b[m") {
+			l += "\x1b[m"
+		}
+		lines[i] = l
+	}
+	// 标记加在第一个有可见内容的行上：正文以代码块或表格开头时，
+	// 剥完填充后首行是空的，直接前置会让 ● 独占一行
+	for i, l := range lines {
+		if strings.TrimSpace(l) != "" {
+			lines[i] = pretty.TContentNoneStreamTag(l)
+			break
+		}
+	}
+	return tview.TranslateANSI(strings.Join(lines, "\n")) + "[-:-:-]"
+}
+
+// renderMarkdown 用 glamour 渲染 markdown（原 TuiService.RenderMarkdown 内化为本侧私有方法）。
+func (t *Tui) renderMarkdown(in string) (string, error) {
+	r, err := t.glamourRenderer()
+	if err != nil {
+		return "", err
+	}
+	return r.Render(in)
+}
+
+// glamourRenderer 返回按当前消息区宽度缓存的 renderer，宽度变化时才重建。
+func (t *Tui) glamourRenderer() (*glamour.TermRenderer, error) {
+	// 宽度读取与竞争规避见 banner.go 里 contentWidth 的注释
+	w := t.contentWidth()
+	if w < 40 {
+		w = 80
+	}
+
+	t.renderMu.Lock()
+	defer t.renderMu.Unlock()
+	if t.renderer != nil && t.renderW == w {
+		return t.renderer, nil
+	}
+	r, err := glamour.NewTermRenderer(
+		glamour.WithStandardStyle("dark"),
+		glamour.WithWordWrap(w),
+		glamour.WithStylesFromJSONBytes([]byte(`{
+			"document": {
+				"margin": 0
+			}
+		}`)),
+	)
+	if err != nil {
+		return nil, err
+	}
+	t.renderer, t.renderW = r, w
+	return r, nil
+}
+
+// ── 指示器 / 两个 bar 的帧刷新 ─────────────────────────
 
 // tickIndicator 推进运行指示器。
 // 用 if/else-if 而非 switch —— 项目风格要求，不要改回 switch。
@@ -243,20 +528,45 @@ func (t *Tui) tickIndicator(running bool, st *drawState) {
 }
 
 // tickNoticeBar 刷新通知栏。TTL 到期、通知到达、running 翻转三件事全走这一条路径，
-// 因此不需要任何事件驱动的机制。
+// 因此不需要任何事件驱动的机制。通知槽位是引擎的状态字段，TTL 从 setAt 起算。
 func (t *Tui) tickNoticeBar(running bool, st *drawState) {
 	nb := t.appLayout.noticeBar
-	if s := nb.render(running); s != st.shownNotice {
+	var wn wireNotice
+	_ = json.Unmarshal([]byte(t.engine.NoticeJSON()), &wn)
+	s := hintIdle
+	if setAt, err := time.Parse(time.RFC3339, wn.SetAt); err == nil && wn.Kind != "none" && time.Since(setAt) < noticeTTL {
+		s = renderNotice(wn.Kind, wn.Text)
+	} else if running {
+		s = hintRunning
+	}
+	if s != st.shownNotice {
 		st.shownNotice = s
 		nb.view.SetText(s) // TextView.SetText 自带锁，无需 QueueUpdate
 		t.dirty.Store(true)
 	}
 }
 
+// renderNotice 把通知槽位翻译成带色文本。文案配色在这里（表达层），
+// 引擎只存 kind 与原文；无文本的固定文案（新对话/取消）也由本侧拼装。
+func renderNotice(kind, text string) string {
+	switch kind {
+	case "new_conversation":
+		return pretty.TBarNewConversation()
+	case "cancelled":
+		return pretty.TBarCancelled()
+	case "success":
+		return pretty.TBarSuccess(text)
+	case "warning":
+		return pretty.TBarWarning(text)
+	default:
+		return pretty.TColoredText(pretty.TuiSubText, text)
+	}
+}
+
 // tickTodoBar 刷新清单栏的内容与高度（0 到 N 行，每个任务一行）。
 //
-// 高度钳制的原因：Flex 的 distSize = height - 所有 fixedSize 之和且不做钳制，
-// Box.SetRect 也原样存负高度，而 pos += size 用原始值。终端高度不足时 distSize
+// 高度钳制的原因：Flex 的 distSize = height - 所有 fixedSize 之和且不做钳制，Box.SetRect
+// 也原样存负高度，而 pos += size 用原始值。终端高度不足时 distSize
 // 变负 → AgentMessage 拿到负高度 → pos 倒退 → 下方三个 item 全部画错行、
 // 屏幕底部留未绘制残影。行数超过 max 时压到 max（顶部行可见，其余被挡住）；
 // max 不足 1 时塌成 0 行。
@@ -267,7 +577,7 @@ func (t *Tui) tickNoticeBar(running bool, st *drawState) {
 // （它会顺手把 trackEnd 设成 true，直接底部锚定）。
 func (t *Tui) tickTodoBar(st *drawState) {
 	tb := t.appLayout.todoBar
-	text := tb.current()
+	text := t.engine.TodoText()
 	if text == st.shownTodo {
 		return
 	}
@@ -322,15 +632,48 @@ func renderTodoLines(text string) string {
 	return strings.Join(lines, "\n")
 }
 
-// ShowNotice 在 NoticeBar 显示一条临时通知，noticeTTL 后自动回落到兜底提示。
-// ⚠️ msg 必须是**已带 tview 颜色标签的受信 markup**（用 pretty.TBarXxx 系列生成），
-// 本方法不做转义——转义会破坏颜色标签。与 SetTodoText 的契约相反。
-// 只取 mutex 写字段、不走 QueueUpdate，因此在 app.Run() 启动前调用也不会阻塞。
-// 这比被它替换掉的 ShowSuccessInMsgView 更好：后者经 PrintToMsgView → QueueUpdate，
-// 会在事件循环启动前阻塞住 init 序列。
-func (t *Tui) ShowNotice(msg string) {
-	t.appLayout.noticeBar.setNotice(msg, noticeTTL)
-	t.markDirty()
+// tickFatal 观察进程终态。引擎置 Fatal 后只写状态、不再推进任何流程，
+// 收尾的执行权在本侧：渲染消息 → 强制上屏 → （按需）等任意键 → 停止事件循环。
+// 之后的收尾链路是：app.Stop() → tui.Run() 返回 → tview 复原终端 → main() 返回 → 进程退出。
+// 不能在回调里直接 os.Exit：screen.Fini() 是在 app.Run() 的返回路径上调的，
+// 从回调硬退出会跳过它，终端会留在 alt-screen + raw mode，退出后用户的 shell 是坏的。
+func (t *Tui) tickFatal(fatal *wireFatal, st *drawState) {
+	if st.fatalHandled || fatal == nil {
+		return
+	}
+	st.fatalHandled = true
+	var b strings.Builder
+	b.WriteString(t.composeView(st))
+	b.WriteString(renderFatal(fatal.Text, fatal.Style))
+	t.setView(b.String()) // 终态立即上屏（不经节流）
+	t.app.Draw()
+	t.app.QueueUpdate(func() {
+		if !fatal.WaitKey {
+			t.app.Stop()
+			return
+		}
+		// 只要有按键就退出程序
+		t.app.SetFocus(t.appLayout.agentMessage)
+		t.appLayout.agentMessage.SetInputCapture(
+			func(event *tcell.EventKey) *tcell.EventKey {
+				t.app.Stop()
+				return nil
+			})
+	})
+}
+
+// renderFatal 把终态消息按样式上色（引擎只存语义原文与 style 字符串）。
+func renderFatal(text, style string) string {
+	switch style {
+	case "success":
+		return pretty.TSuccess(text)
+	case "exit":
+		return pretty.TExit(text)
+	case "error":
+		return pretty.TErrorF("%s", text)
+	default:
+		return text
+	}
 }
 
 // setIndicator 更新指示器文本并请求重绘。只允许 drawLoop 调用。
@@ -340,226 +683,35 @@ func (t *Tui) setIndicator(s string) {
 	t.dirty.Store(true)
 }
 
-// SetAgentRunning 标记 agent 是否正在运行。只写一个原子标志，可从任意 goroutine 调用、
-// 不阻塞；指示器的实际切换由 drawLoop 在下一帧完成（最多 drawInterval 延迟）。
-func (t *Tui) SetAgentRunning(running bool) {
-	t.running.Store(running)
+// setView 把重组好的视图写入消息区。上屏效率由 tcell 的逐格 diff 兜底
+// （tscreen.go drawCell：未变化的 cell 直接跳过），TUI 不必自己记录任何 diff。
+// SetText 只调 resetIndex()，不动 lineOffset/trackEnd——滚动跟随与用户上翻的
+// 既有语义不变。
+func (t *Tui) setView(content string) {
+	t.appLayout.agentMessage.SetText(content) // TextView.SetText 自带锁，drawLoop 直调安全
+	t.markDirty()
 }
 
-// markDirty 标记需要重绘。必须在 widget 写入完成之后调用：QueueUpdate 是阻塞的，
-// 返回时内容已经落地，这样 drawLoop 的下一帧才画得到它。反过来（先标记后写入）
-// 会出现"这一帧把标记消费掉了、内容却还没写进去"，导致最后一批文本永不上屏。
+// markDirty 标记需要重绘。必须在 widget 写入完成之后调用：写入是同步落地的，
+// 这样 drawLoop 的下一帧才画得到它。反过来（先标记后写入）会出现"这一帧把标记
+// 消费掉了、内容却还没写进去"，导致最后一批内容永不上屏。
 func (t *Tui) markDirty() {
 	t.startDrawLoop()
 	t.dirty.Store(true)
 }
 
-func (t *Tui) PrintToMsgView(content string, clear bool) {
-	t.app.QueueUpdate(func() {
-		if clear {
-			t.appLayout.agentMessage.Clear()
-		}
-		fmt.Fprint(t.appLayout.agentMessage, content)
-	})
-	// 这里不调 ScrollToEnd()。它会把 TextView 的 trackEnd 强行置回 true，于是用户在
-	// 流式输出期间往上翻滚查看历史时，下一个 token 就把视图弹回底部。trackEnd 本身就是
-	// "是否在底部、是否该跟随"的标记，tview 自己维护（滚轮上翻置 false、翻回底部置 true），
-	// 初始值在 GetTuiService 里开一次即可。
-	t.markDirty()
-}
-
-// ReplaceTailInMsgView 把消息区末尾的 raw 文本替换成渲染版，返回是否替换成功。
-//
-// 只在 raw 正好位于 buffer 末尾时才替换。中途有别的写入者插进来时（工具块、
-// session/summarizer.go 的摘要钩子、TerminalError 消息），宁可放弃替换、保持 raw，
-// 也绝不改动前面的历史——替换失败最多退化成"没有 markdown 渲染"，改错位置则是毁掉整屏。
-//
-// 读取和 SetText 必须在同一个 QueueUpdate 里：GetText 在 tview v0.42.0 不加锁，
-// 分两次调用的话中间可能插进一次写入，把那个 delta 吃掉。
-func (t *Tui) ReplaceTailInMsgView(raw string, replacement string) bool {
-	replaced := false
-	t.app.QueueUpdate(func() {
-		// LastIndex(buf, "") 返回 len(buf) 而不是 -1，不挡会在末尾凭空追加一份正文
-		if raw == "" {
-			return
-		}
-		buf := t.appLayout.agentMessage.GetText(false)
-		// 用 LastIndex 而不是 Replace：短回复（如"好的。"）可能在前面出现过，
-		// 比如用户自己的输入经 pretty.TUserInput 回显进同一个 buffer
-		i := strings.LastIndex(buf, raw)
-		if i < 0 || i+len(raw) != len(buf) {
-			return
-		}
-		// SetText 只调 resetIndex()，不动 lineOffset / trackEnd，所以滚动位置保得住
-		t.appLayout.agentMessage.SetText(buf[:i] + replacement)
-		replaced = true
-	})
-	// replaced 在闭包里写、外面读是安全的：QueueUpdate 阻塞到执行完才返回，
-	// 与 banner.go 里 contentWidth 的写法一致
-	t.markDirty()
-	return replaced
-}
-
-func (t *Tui) ListenUserInput() chan string {
-	t.app.QueueUpdateDraw(func() {
-		t.app.SetFocus(t.appLayout.inputArea)
-
-		//注册一个输入捕获器，每次用户在输入框敲击键盘时都会触发
-		t.appLayout.inputArea.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-			// Ctrl+K 切换帮助页
-			if event.Key() == tcell.KeyCtrlK {
-				t.toggleHelpPage()
-				return nil
-			}
-
-			// Enter 提交输入
-			// ModNone = 0，无任何修饰键（Ctrl/Shift/Alt 均未按下），即裸按 Enter。
-			// Shift+Enter 落到函数末尾的 return event，由 TextArea 插入换行（手动多行输入）。
-			// bracketed paste 保证粘贴里的 \n 走 PasteEvent 通道，不会产生 KeyEnter 事件
-			if event.Key() == tcell.KeyEnter && event.Modifiers() == tcell.ModNone {
-
-				//获取输入文本
-				text := t.appLayout.inputArea.GetText()
-				// 发送输入文本到 inputChan。default 分支：对端（引擎循环）未在监听时
-				// （如自动 turn 期间）不投递，避免 unbuffered send 阻塞 tview 事件循环
-				// 导致 UI 卡死。注意：只有投递成功才清空输入框，default 分支保留文本，
-				// 用户输入不丢失。
-				select {
-				case t.inputChan <- text:
-					t.appLayout.inputArea.SetText("", false)
-				default:
-				}
-				return nil //Enter事件不捕获
-			}
-
-			//传递事件给 TextArea 默认处理（插入字符、换行等）
-			return event
-		})
-	})
-	return t.inputChan
-
-}
-
-func (t *Tui) SetAppFuncTriggerWithEsc(f func()) {
-	(*t).app.QueueUpdateDraw(func() {
-		(*t).app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-			if event.Key() == tcell.KeyEscape {
-				f() // 执行回调
-				return nil
-			}
-			return event // 其他按键正常传递
-		})
-	})
-}
-
-func (t *Tui) ClearAppFuncTrigger() {
-	(*t).app.QueueUpdateDraw(func() {
-		(*t).app.SetInputCapture(nil)
-	})
-}
-
-// showMsgAndExit 打印一条消息并结束程序。waitForKey=true 时等用户按任意键再退出。
-//
-// 末尾的 select{} 是故意的，不要改成"由回调 close(chan) 然后返回"：
-//   - 调用方（引擎 init 序列）打完致命错误后并没有 return，一旦这里返回，引擎 goroutine
-//     会带着未初始化的状态（如 nil memory service）继续往下跑，最后在别处 panic。
-//   - 也不能在下面的回调里直接 os.Exit：screen.Fini() 是在 app.Run() 的返回路径上调的，
-//     从回调硬退出会跳过它，终端会留在 alt-screen + raw mode，退出后用户的 shell 是坏的。
-//
-// 现在的收尾链路是：app.Stop() → tui.Run() 返回 → tview 复原终端 → main() 返回 → 进程退出。
-func (t *Tui) showMsgAndExit(msg string, waitForKey bool) {
-	t.PrintToMsgView(msg, false)
-	// 强制刷一帧：PrintToMsgView 现在只写入不重绘，不显式 Draw 的话退出信息
-	// 可能还没上屏 app 就 Stop 了。
-	t.app.Draw()
-	t.app.QueueUpdate(func() {
-		if !waitForKey {
-			t.app.Stop()
-			return
-		}
-		//只要有按键就退出程序
-		t.app.SetFocus(t.appLayout.agentMessage)
-		t.appLayout.agentMessage.SetInputCapture(
-			func(event *tcell.EventKey) *tcell.EventKey {
-				t.app.Stop()
-				return nil
-			})
-	})
-	select {}
-}
-
-func (t *Tui) ShowErrorInMsgViewAndExit(errmsg string) {
-	t.showMsgAndExit(errmsg, true)
-}
-
-func (t *Tui) ShowSuccessInMsgViewAndExit(sussessmsg string) {
-	t.showMsgAndExit(pretty.TSuccess(sussessmsg), true)
-}
-
-func (t *Tui) ShowMsgAndExitNoTrigger(msg string) {
-	t.showMsgAndExit(msg, false)
-}
-
-func (t *Tui) AddHelpItems(items []map[string]string) {
-	ht := t.appLayout.helpTable
-	ht.mu.Lock()
-	defer ht.mu.Unlock()
-	for _, i := range items {
-		for k, v := range i {
-			ht.helpItems = append(ht.helpItems, helpItem{cmd: k, desc: v})
-		}
-	}
-}
-
-func (t *Tui) ResetHelpItems() {
-	t.defaultHelpItems()
-}
-
-// RenderMarkdown 用 glamour 渲染 markdown。
-func (t *Tui) RenderMarkdown(in string) (string, error) {
-	r, err := t.glamourRenderer()
-	if err != nil {
-		return "", err
-	}
-	return r.Render(in)
-}
-
-// glamourRenderer 返回按当前消息区宽度缓存的 renderer，宽度变化时才重建。
-func (t *Tui) glamourRenderer() (*glamour.TermRenderer, error) {
-	// 宽度读取与竞争规避见 banner.go 里 contentWidth 的注释
-	w := t.contentWidth()
-	if w < 40 {
-		w = 80
-	}
-
-	t.renderMu.Lock()
-	defer t.renderMu.Unlock()
-	if t.renderer != nil && t.renderW == w {
-		return t.renderer, nil
-	}
-	r, err := glamour.NewTermRenderer(
-		glamour.WithStandardStyle("dark"),
-		glamour.WithWordWrap(w),
-		glamour.WithStylesFromJSONBytes([]byte(`{
-			"document": {
-				"margin": 0
-			}
-		}`)),
-	)
-	if err != nil {
-		return nil, err
-	}
-	t.renderer, t.renderW = r, w
-	return r, nil
-}
-
+// Run 启动 tview 事件循环（阻塞到 app.Stop()）。
 func (t *Tui) Run() {
-	err := (*t).app.Run()
-	if err != nil {
+	// 帧循环必须在 app.Run() 之前启动：pull 架构下引擎只写状态、不会调用 TUI，
+	// 没有任何"推送"会触发第一次 markDirty，帧轮询必须自己跑起来。
+	t.startDrawLoop()
+	if err := t.app.Run(); err != nil {
 		panic("Error running application: " + err.Error())
 	}
 }
-func GetTuiService() *Tui {
+
+// NewTui 组装界面与交互捕获。view 是引擎侧状态源（*Engine，经 EngineView 接口注入）。
+func NewTui(view EngineView) *Tui {
 	//设置Agent消息显示区
 	AgentMessage := tview.NewTextView().
 		SetDynamicColors(true). // 启用颜色
@@ -653,22 +805,53 @@ func GetTuiService() *Tui {
 			inputArea:    InputArea,
 			helpTable: &helptable{
 				h:               HelpTable,
-				helpItems:       []helpItem{},
 				helpPageVisible: false,
 			},
 		},
-		inputChan: make(chan string),
+		engine: view,
 	}
 
-	(*(*(*tui).appLayout).helpTable).h.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Key() == tcell.KeyEscape || event.Key() == tcell.KeyCtrlK {
+	// 注册输入捕获器，每次用户在输入框敲击键盘时都会触发。
+	// 原 ListenUserInput 的注册时机在本函数（app.Run 之前直接设置，无需 QueueUpdate）。
+	InputArea.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		// Ctrl+K 切换帮助页
+		if event.Key() == tcell.KeyCtrlK {
 			tui.toggleHelpPage()
 			return nil
 		}
+
+		// Enter 提交输入
+		// ModNone = 0，无任何修饰键（Ctrl/Shift/Alt 均未按下），即裸按 Enter。
+		// Shift+Enter 落到函数末尾的 return event，由 TextArea 插入换行（手动多行输入）。
+		// bracketed paste 保证粘贴里的 \n 走 PasteEvent 通道，不会产生 KeyEnter 事件
+		if event.Key() == tcell.KeyEnter && event.Modifiers() == tcell.ModNone {
+
+			//获取输入文本
+			text := tui.appLayout.inputArea.GetText()
+			// 主动提交给引擎（Engine.SubmitInput 内部 select/default，非阻塞）。
+			// 引擎忙（无人接收）时提交失败、保留输入框内容，用户输入不丢失——
+			// 与旧版 unbuffered chan + default 的行为一致。
+			if tui.engine.SubmitInput(text) {
+				tui.appLayout.inputArea.SetText("", false)
+			}
+			return nil //Enter事件不捕获
+		}
+
+		//传递事件给 TextArea 默认处理（插入字符、换行等）
 		return event
 	})
-	tui.defaultHelpItems()
+
+	// 应用级 Esc 捕获：运行期按 Esc 中断当前 agent（Esc → Engine.Interrupt() 提交中断信号，
+	// 方向与旧版 SetAppFuncTriggerWithEsc 相反——不再由引擎往 TUI 注册回调）。
+	// 非运行期放行，让 Esc 落到帮助页的关闭捕获上（与旧版"仅运行期注册"的行为一致）。
+	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyEscape && engineViewRunning(view) {
+			view.Interrupt()
+			return nil
+		}
+		return event // 其他按键正常传递
+	})
+
 	tui.refreshhelpTable()
 	return tui
-
 }

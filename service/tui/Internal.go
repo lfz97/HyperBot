@@ -1,8 +1,9 @@
 package tui
 
 import (
+	"encoding/json"
+
 	"HyperBot/utils/pretty"
-	"slices"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -30,14 +31,19 @@ func (t *Tui) toggleHelpPage() {
 
 func (t *Tui) refreshhelpTable() {
 	ht := t.appLayout.helpTable
-
-	// helpItems 可能被引擎 goroutine 的 AddHelpItems 并发追加（loadSkills 在 init 序列里跑），
-	// 先在锁内取快照再建单元格，不要持锁操作 table
-	ht.mu.Lock()
-	items := slices.Clone(ht.helpItems)
-	ht.mu.Unlock()
-
 	ht.h.Clear()
+
+	// 默认项 TUI 自持；技能项每次打开时从引擎状态拉取——loadSkills 在 init/refresh
+	// 序列里随时可能重建列表，拉取式天然拿到最新版，也省掉了旧的并发写锁。
+	items := []helpItem{
+		{cmd: "/new", desc: "开始新对话"},
+		{cmd: "/exit", desc: "退出程序"},
+	}
+	var ws []wireHelpItem
+	_ = json.Unmarshal([]byte(t.engine.HelpItemsJSON()), &ws)
+	for _, it := range ws {
+		items = append(items, helpItem{cmd: it.Cmd, desc: it.Desc})
+	}
 
 	mainColor := tcell.GetColor(pretty.TuiMainText)
 	subColor := tcell.GetColor(pretty.TuiSubText)
@@ -55,15 +61,5 @@ func (t *Tui) refreshhelpTable() {
 
 		ht.h.SetCell(index, 0, cmdCell)
 		ht.h.SetCell(index, 1, descCell)
-	}
-}
-
-func (t *Tui) defaultHelpItems() {
-	ht := t.appLayout.helpTable
-	ht.mu.Lock()
-	defer ht.mu.Unlock()
-	ht.helpItems = []helpItem{
-		{"/new", "开始新对话"},
-		{"/exit", "退出程序"},
 	}
 }

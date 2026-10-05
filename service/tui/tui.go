@@ -228,7 +228,7 @@ func (t *Tui) startDrawLoop() {
 			ticker := time.NewTicker(drawInterval)
 			defer ticker.Stop()
 
-			st := &drawState{}
+			st := &drawState{rendered: map[int]string{}}
 			for range ticker.C {
 				running, fatal := t.pollRunState()
 				t.tickBanner(st)

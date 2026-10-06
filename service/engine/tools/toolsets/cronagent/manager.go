@@ -302,8 +302,9 @@ func NewManager(agentname string, cfg *config.Config, systemprompt string, Skill
 			tools = append(tools, builtinTools...)
 			opts := []llmagent.Option{
 				llmagent.WithGenerationConfig(model.GenerationConfig{
-					MaxTokens: &(*cfg).Model.MaxTokens, // 最大生成 token 数，来自配置 maxtokens 字段
-					Stream:    (*cfg).Model.Stream,
+					MaxTokens:       &(*cfg).Model.MaxTokens, // 最大生成 token 数，来自配置 maxtokens 字段
+					Stream:          (*cfg).Model.Stream,
+					ReasoningEffort: (*cfg).Model.ReasoningEffortPtr(), // 思考强度，来自配置 reasoning_effort 字段，留空不下发
 				}),
 				llmagent.WithTools(tools),
 				llmagent.WithGlobalInstruction(systemprompt), //系统提示词

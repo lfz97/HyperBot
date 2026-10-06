@@ -14,6 +14,7 @@ model:
   maxtokens: 12800 # 每次请求的最大生成 token 数，默认 12800
   httptimeout: 3600 # 单位/秒
   show_reasoning: false   # 显示推理内容，默认 false（不显示）
+  reasoning_effort: max # 思考强度档位，取决于提供商支持（如 DeepSeek v4 仅 high/max），留空则不下发该参数
 
 # MCP 服务配置
 # Type 可选: "sse" 或 "streamable_http"

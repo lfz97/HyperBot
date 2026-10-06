@@ -147,8 +147,9 @@ func (e *Engine) newRunner() {
 			tools = append(tools, (*e).SqliteMemoryService.Tools()...) //将SqliteMemoryService的工具添加到全局工具列表中，使得Agent能够调用记忆相关的工具
 			opts := []llmagent.Option{
 				llmagent.WithGenerationConfig(model.GenerationConfig{
-					MaxTokens: &(*(*e).Config_p).Model.MaxTokens, // 最大生成 token 数，来自配置 maxtokens 字段
-					Stream:    (*(*e).Config_p).Model.Stream,
+					MaxTokens:       &(*(*e).Config_p).Model.MaxTokens, // 最大生成 token 数，来自配置 maxtokens 字段
+					Stream:          (*(*e).Config_p).Model.Stream,
+					ReasoningEffort: (*(*e).Config_p).Model.ReasoningEffortPtr(), // 思考强度，来自配置 reasoning_effort 字段，留空不下发
 				}),
 				llmagent.WithTools(tools),
 				llmagent.WithGlobalInstruction((*e).Systemprompt), //系统提示词

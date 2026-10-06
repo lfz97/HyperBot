@@ -48,7 +48,7 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "latest (main 自动构建)" \
-              --notes "main 分支每次推送的自动构建制品（musl 静态链接，linux/amd64），随推送自动替换。版本发布请勿使用本 release。" \
+              --notes "main 分支每次推送自动构建" \
               --prerelease
           fi
 

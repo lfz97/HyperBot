@@ -51,9 +51,6 @@ func successText(text string) string {
 	return "\n" + lipgloss.NewStyle().Foreground(cGreen).Render(text) + "\n"
 }
 
-// exitText 退出消息（绿，同 success 语义）。
-func exitText(text string) string { return successText(text) }
-
 // warnText 警告消息（黄）。
 func warnText(text string) string {
 	return "\n" + lipgloss.NewStyle().Foreground(cYellow).Render(text) + "\n"

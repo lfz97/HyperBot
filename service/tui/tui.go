@@ -42,8 +42,7 @@ type TUI struct {
 	viewText     string // 最近一次上屏的视图全文
 	todoText     string
 	running      bool
-	fatal        *wireFatal // 非 nil 后进入终态模式
-	fatalHandled bool
+	fatalHandled bool // 终态已处理（/exit 直接退、init 错误等任意键）
 	waitingKey   bool // 终态 waitKey=true：等任意键退出
 }
 
@@ -94,9 +93,6 @@ func (t *TUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd := t.bottom.spinner.Update(m)
 		t.recalcComponentSize()
 		return t, cmd
-
-	case quitMsg:
-		return t, tea.Quit
 	}
 	return t, nil
 }
@@ -140,16 +136,14 @@ func (t *TUI) applyFrame(m frameMsg) (tea.Model, tea.Cmd) {
 		t.recalcComponentSize()
 	}
 
-	// 终态：渲染已随 view 上屏，这里只负责收尾。
+	// 终态：waitKey=true 的消息（init 错误等）已随 view 上屏、等任意键退出；
+	// waitKey=false（/exit）无告别语，直接退出。
 	if m.fatal != nil && !t.fatalHandled {
 		t.fatalHandled = true
-		t.fatal = m.fatal
 		if m.fatal.WaitKey {
 			t.waitingKey = true // 任意键退出（keyMsgHandler 里拦截）
 		} else {
-			// 不等按键：给一帧渲染时间，别让告别语一闪而过都做不到。
-			cmds = append(cmds, tea.Tick(400*time.Millisecond,
-				func(time.Time) tea.Msg { return quitMsg{} }))
+			return t, tea.Quit
 		}
 	}
 	return t, tea.Batch(cmds...)

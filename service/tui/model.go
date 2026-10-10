@@ -77,6 +77,3 @@ type frameMsg struct {
 	running bool   // agent 是否在运行（spinner 开关依据）
 	fatal   *wireFatal
 }
-
-// quitMsg 延迟退出的载体（终态渲染上屏后再退出）。
-type quitMsg struct{}

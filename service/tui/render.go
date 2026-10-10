@@ -93,8 +93,9 @@ func (t *TUI) composeView(st *pullState) string {
 	if tailContent.Len() > 0 {
 		b.WriteString(renderBody(st, tailContent.String()))
 	}
-	// 终态消息拼在最后（引擎置 fatal 后 park，不再有新记录）
-	if st.lastFatal != nil {
+	// 终态消息拼在最后（引擎置 fatal 后 park，不再有新记录）；
+	// /exit 的终态无文案（Text 为空），不拼接。
+	if st.lastFatal != nil && st.lastFatal.Text != "" {
 		b.WriteString(renderFatal(st.lastFatal.Text, st.lastFatal.Style))
 	}
 	return b.String()
@@ -117,11 +118,10 @@ func renderNotice(kind, text string) string {
 }
 
 // renderFatal 把终态消息按样式上色（引擎只存语义原文与 style 字符串）。
+// "exit"（/exit 终态）无文案、不再走这里渲染。
 func renderFatal(text, style string) string {
 	if style == "success" {
 		return successText(text)
-	} else if style == "exit" {
-		return exitText(text)
 	} else if style == "error" {
 		return errText(text)
 	} else {

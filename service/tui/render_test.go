@@ -76,14 +76,13 @@ func recJSON(t *testing.T, typ, text string, msg any) string {
 func TestRenderFatalStyles(t *testing.T) {
 	cases := []struct{ style, in string }{
 		{"success", "已创建默认配置"},
-		{"exit", "对话已结束"},
 		{"error", "加载配置文件错误"},
 		{"plain", "原样输出"},
 	}
 	for _, c := range cases {
 		got := renderFatal(c.in, c.style)
 		want := c.in
-		if c.style == "success" || c.style == "exit" {
+		if c.style == "success" {
 			want = successText(c.in)
 		} else if c.style == "error" {
 			want = errText(c.in)

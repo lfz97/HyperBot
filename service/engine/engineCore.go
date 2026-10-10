@@ -65,9 +65,9 @@ func (e *Engine) AgentStart() {
 			for _, toolset := range (*e).mcpToolsets {
 				toolset.Close()
 			}
-			// 置终态并永久驻留：TUI 观察到 Fatal 负责渲染、按键与停循环，
-			// main() 随 Run() 返回而退出——引擎不再知道终端的存在。
-			(*e).parkWithFatal(FatalExit, "对话已结束，感谢使用！后会有期！", false)
+			// 置终态并永久驻留（无文案）：TUI 观察到 fatal 后直接退出，
+			// main() 随 Run() 返回——引擎不再知道终端的存在。
+			(*e).parkWithFatal(FatalExit, "", false)
 
 		} else if (*EndTurn_p).Code == New { //用户开始新对话，重置 SessionID 与错误计数，更新MsgContext为新对话的初始状态
 			// /new 在 agentRunIteratively 的输入分支里是提前 return 的，跑不到

@@ -3,12 +3,12 @@ package tui
 import (
 	"strings"
 
-	"HyperBot/utils/pretty"
-	"github.com/rivo/tview"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // 启动横幅：banner 结构体描述内容（logo / 信息 / 面板三段），方法负责拼版。
-// 拼版方法不读 widget、宽度作参数传入，需要时可以直接对 banner 单测。
+// 拼版方法不读 model、宽度作参数传入，需要时可以直接对 banner 单测。
 
 const (
 	bannerLogoWidth = 12 // logo 点阵宽度，固定不可伸缩
@@ -27,13 +27,13 @@ var bannerLogo = []string{
 	"  ██    ██  ",
 }
 
-// bannerLogoColors 与 bannerLogo 逐行对应，两端取 pretty 调色板常量，中间线性插值。
+// bannerLogoColors 与 bannerLogo 逐行对应，两端 sky/status 色，中间线性插值。
 var bannerLogoColors = []string{
-	"#4FC3F7", // = pretty.TColorSkyBlue
+	"#4FC3F7",
 	"#57C3F1",
 	"#5FC3EB",
 	"#67C3E5",
-	"#6FC3DF", // = pretty.TuiStatusHint
+	"#6FC3DF",
 }
 
 // banner 描述一条启动横幅：左 logo、中信息、右面板。
@@ -74,7 +74,7 @@ func newBanner(infoLines []string) *banner {
 // naturalWidth 面板自然宽度：最长行 + 1 前导空格 + 2 边框，不小于标题行所需。
 func (p bannerPanel) naturalWidth() int {
 	w := blockWidth(p.lines) + 3
-	if min := tview.TaggedStringWidth("─ "+p.title+" ") + 3; w < min {
+	if min := ansi.StringWidth("─ "+p.title+" ") + 3; w < min {
 		w = min
 	}
 	return w
@@ -86,7 +86,7 @@ func (p bannerPanel) render(panelW int) []string {
 
 	title := "─ " + p.title + " "
 	// 顶边框 = 1(╭) + title + dashes + 1(╮) = panelW，反推 dashes；clamp 仅防御
-	dashes := inner - tview.TaggedStringWidth(title)
+	dashes := inner - ansi.StringWidth(title)
 	if dashes < 0 {
 		dashes = 0
 	}
@@ -131,7 +131,7 @@ func (b *banner) composeWide(configW, panelW int) string {
 	info := make([]string, 0, len(b.info))
 	for _, line := range b.info {
 		// 整行一个颜色：Engine 传来的是已拼好的 "label value"，拆开上色不值得
-		info = append(info, pretty.TColoredText(pretty.TuiSubText, fitWidth(line, configW)))
+		info = append(info, subText(fitWidth(line, configW)))
 	}
 
 	panel := b.panel.render(panelW)
@@ -160,27 +160,27 @@ func (b *banner) composeWide(configW, panelW int) string {
 
 // composeStacked 窄终端降级版：纵向堆叠、无方框，只截断不补齐。
 func (b *banner) composeStacked(width int) string {
-	// width <= 0 时不截断，交给 AgentMessage 的 SetWrap(true) 折行
+	// width <= 0 时不截断，交给 viewport 的软换行
 	clamp := func(s string) string {
 		if width <= 0 {
-			return tview.Escape(s)
+			return s
 		}
 		return clampWidth(s, width)
 	}
 
 	var s strings.Builder
 	for i, row := range b.logo {
-		s.WriteString(pretty.TColoredText(b.logoColor[i], row))
+		s.WriteString(colorText(b.logoColor[i], row))
 		s.WriteString("\n")
 	}
 	s.WriteString("\n")
 	for _, line := range b.info {
-		s.WriteString(pretty.TColoredText(pretty.TuiSubText, clamp(line)))
+		s.WriteString(subText(clamp(line)))
 		s.WriteString("\n")
 	}
 	s.WriteString("\n")
 	for _, line := range b.panel.lines {
-		s.WriteString(pretty.TColoredText(pretty.TuiSubText, clamp(line)))
+		s.WriteString(subText(clamp(line)))
 		s.WriteString("\n")
 	}
 	return strings.TrimRight(s.String(), "\n")
@@ -190,19 +190,31 @@ func (b *banner) composeStacked(width int) string {
 func (b *banner) coloredLogo() []string {
 	logo := make([]string, len(b.logo))
 	for i, row := range b.logo {
-		logo[i] = pretty.TColoredText(b.logoColor[i], row)
+		logo[i] = colorText(b.logoColor[i], row)
 	}
 	return logo
 }
 
 // ---------- 字符串拼版辅助（通用，不绑定 banner） ----------
+//
+// ANSI 输出下没有 tview 标签的转义问题（方括号就是字面量），宽度度量
+// 直接用 ansi.StringWidth（显示宽度、宽字符与 ANSI 序列都正确处理）。
 
-// blockWidth 返回一组文本里最宽那行的显示宽度。必须量转义后的文本：
-// 字面 "[CN]" 的 TaggedStringWidth 是 0（被当颜色标签吞掉），转义后才是 4。
+// colorText 前景色包装（hex 或 ANSI 256 色号）。
+func colorText(color, text string) string {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(text)
+}
+
+// subText 次文本色（信息列与面板行）。
+func subText(text string) string {
+	return lipgloss.NewStyle().Foreground(cSub).Render(text)
+}
+
+// blockWidth 返回一组文本里最宽那行的显示宽度。
 func blockWidth(lines []string) int {
 	w := 0
 	for _, s := range lines {
-		if n := tview.TaggedStringWidth(tview.Escape(s)); n > w {
+		if n := ansi.StringWidth(s); n > w {
 			w = n
 		}
 	}
@@ -217,26 +229,25 @@ func lineAt(lines []string, i, w int) string {
 	return strings.Repeat(" ", w)
 }
 
-// fitWidth 转义 + 截断 + 补齐到恰好 w 列。
+// fitWidth 截断 + 补齐到恰好 w 列。
 func fitWidth(s string, w int) string {
 	s = clampWidth(s, w)
-	if pad := w - tview.TaggedStringWidth(s); pad > 0 {
+	if pad := w - ansi.StringWidth(s); pad > 0 {
 		s += strings.Repeat(" ", pad)
 	}
 	return s
 }
 
-// clampWidth 转义并截断到不超过 w 列。必须先 Escape 再度量（原因见 blockWidth）；
-// 末尾按 rune 硬切兜底，保证宽度不变量无条件成立。
+// clampWidth 截断到不超过 w 列（超出时补省略号），w <= 0 返回空串。
 func clampWidth(s string, w int) string {
 	if w <= 0 {
 		return ""
 	}
-	s = tview.Escape(s)
-	if tview.TaggedStringWidth(s) > w {
-		s = truncateToWidth(s, w-1) + "…"
+	if ansi.StringWidth(s) > w {
+		s = ansi.Truncate(s, w-1, "…")
 	}
-	for tview.TaggedStringWidth(s) > w {
+	// ansi.Truncate 保证宽度不超 w，这里只做防御性兜底
+	for ansi.StringWidth(s) > w {
 		runes := []rune(s)
 		if len(runes) == 0 {
 			break
@@ -246,31 +257,10 @@ func clampWidth(s string, w int) string {
 	return s
 }
 
-// truncateToWidth 从尾部逐 rune 回退到显示宽度不超过 w，入参必须已转义。
-func truncateToWidth(s string, w int) string {
-	runes := []rune(s)
-	for len(runes) > 0 && tview.TaggedStringWidth(string(runes)) > w {
-		runes = runes[:len(runes)-1]
-	}
-	return string(runes)
-}
-
-// ---------- TUI 接线 ----------
-
-// contentWidth 返回消息区当前内容宽度。GetInnerRect 无锁读布局字段，
-// 必须在 QueueUpdate 内调；用 QueueUpdate 而非 QueueUpdateDraw——只读值，不触发重绘。
-func (t *Tui) contentWidth() int {
-	var w int
-	t.app.QueueUpdate(func() {
-		_, _, w, _ = t.appLayout.agentMessage.GetInnerRect()
-	})
-	return w
-}
-
-// startupBannerView 组装启动横幅文本（drawLoop 在 StartupInfo 就绪后的第一帧调用一次，
-// 结果进 base——pull 之下不再由引擎推送）。横幅是"死文本"：随对话滚动、resize 不重排，
-// 这是刻意的语义。
-func (t *Tui) startupBannerView(infoLines []string) string {
+// composeBanner 组装启动横幅文本（pull 循环在 StartupInfo 就绪后的第一帧调用一次）。
+// 横幅是"死文本"：写入后随对话滚动、resize 由 viewport 软换行兜底——
+// 这是刻意的语义（启动横幅本来就是一次性历史记录）。
+func composeBanner(infoLines []string, width int) string {
 	b := newBanner(infoLines)
-	return "\n" + b.compose(t.contentWidth()) + "\n\n\n"
+	return "\n" + b.compose(width) + "\n\n\n"
 }

@@ -2,66 +2,290 @@ package tui
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
+	"time"
 
-	"HyperBot/utils/pretty"
+	tea "charm.land/bubbletea/v2"
 	"trpc.group/trpc-go/trpc-agent-go/model"
 )
 
+// fakeEngine 测试用的引擎桩：实现 EngineView 全部方法。
+type fakeEngine struct {
+	version  uint64
+	records  []string
+	runState string
+	todo     string
+	notice   string
+	startup  []string
+	ok       bool
+	helps    string
+
+	rejectSubmit bool
+	submitted    []string
+	interrupts   int
+}
+
+func (f *fakeEngine) Version() uint64               { return f.version }
+func (f *fakeEngine) Records() []string             { return f.records }
+func (f *fakeEngine) RunStateJSON() string          { return f.runState }
+func (f *fakeEngine) TodoText() string              { return f.todo }
+func (f *fakeEngine) NoticeJSON() string            { return f.notice }
+func (f *fakeEngine) StartupInfo() ([]string, bool) { return f.startup, f.ok }
+func (f *fakeEngine) HelpItemsJSON() string         { return f.helps }
+func (f *fakeEngine) SubmitInput(line string) bool {
+	if f.rejectSubmit {
+		return false
+	}
+	f.submitted = append(f.submitted, line)
+	return true
+}
+func (f *fakeEngine) Interrupt() bool {
+	f.interrupts++
+	return true
+}
+
+// keyPress 构造一个按键事件。
+func keyPress(code rune, mod tea.KeyMod) tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: code, Mod: mod}
+}
+
+// recJSON 构造一条 wire 记录。
+func recJSON(t *testing.T, typ, text string, msg any) string {
+	t.Helper()
+	type rec struct {
+		Type string          `json:"type"`
+		Msg  json.RawMessage `json:"msg,omitempty"`
+		Text string          `json:"text,omitempty"`
+	}
+	r := rec{Type: typ, Text: text}
+	if msg != nil {
+		b, err := json.Marshal(msg)
+		if err != nil {
+			t.Fatalf("marshal msg: %v", err)
+		}
+		r.Msg = b
+	}
+	b, err := json.Marshal(r)
+	if err != nil {
+		t.Fatalf("marshal rec: %v", err)
+	}
+	return string(b)
+}
+
 func TestRenderFatalStyles(t *testing.T) {
-	cases := []struct{ style, in, want string }{
-		{"success", "已创建默认配置", pretty.TSuccess("已创建默认配置")},
-		{"exit", "对话已结束", pretty.TExit("对话已结束")},
-		{"error", "加载配置文件错误", pretty.TErrorF("%s", "加载配置文件错误")},
-		{"plain", "原样输出", "原样输出"},
+	cases := []struct{ style, in string }{
+		{"success", "已创建默认配置"},
+		{"exit", "对话已结束"},
+		{"error", "加载配置文件错误"},
+		{"plain", "原样输出"},
 	}
 	for _, c := range cases {
-		if got := renderFatal(c.in, c.style); got != c.want {
-			t.Fatalf("style %q: got %q want %q", c.style, got, c.want)
+		got := renderFatal(c.in, c.style)
+		want := c.in
+		if c.style == "success" || c.style == "exit" {
+			want = successText(c.in)
+		} else if c.style == "error" {
+			want = errText(c.in)
+		}
+		if got != want {
+			t.Fatalf("style %q: got %q want %q", c.style, got, want)
 		}
 	}
 }
 
 func TestRenderNoticeKinds(t *testing.T) {
-	if got := renderNotice("new_conversation", ""); got != pretty.TBarNewConversation() {
-		t.Fatalf("新对话通知不符：%q", got)
+	cases := []struct {
+		kind, text, want string
+	}{
+		{"new_conversation", "", noticeNewConversation()},
+		{"cancelled", "", noticeCancelled()},
+		{"success", "done", noticeSuccess("done")},
+		{"warning", "warn", noticeWarning("warn")},
 	}
-	if got := renderNotice("cancelled", ""); got != pretty.TBarCancelled() {
-		t.Fatalf("取消通知不符：%q", got)
-	}
-	if got := renderNotice("success", "done"); got != pretty.TBarSuccess("done") {
-		t.Fatalf("成功通知不符：%q", got)
-	}
-	if got := renderNotice("warning", "warn"); got != pretty.TBarWarning("warn") {
-		t.Fatalf("警告通知不符：%q", got)
+	for _, c := range cases {
+		if got := renderNotice(c.kind, c.text); got != c.want {
+			t.Fatalf("kind %q: got %q want %q", c.kind, got, c.want)
+		}
 	}
 }
 
-// TestParseWireMsg 锁定跨界 JSON 记录的解析：type 字段承载消息类型，
-// msg 为框架 model.Message 原样（框架自带 json 标签，两端同型收发）。
-func TestParseWireMsg(t *testing.T) {
-	line := `{"type":"delta","msg":{"role":"assistant","content":"hi","reasoning_content":"th"}}`
-	var rec wireRecord
-	if err := json.Unmarshal([]byte(line), &rec); err != nil {
-		t.Fatalf("记录解析失败：%v", err)
+// TestComposeViewReplay 锁定 composeView 的记录重放：用户回显、错误上色、
+// 流式尾段、工具行缓冲匹配。
+func TestComposeViewReplay(t *testing.T) {
+	f := &fakeEngine{
+		records: []string{
+			recJSON(t, "user", "你好", nil),
+			recJSON(t, "message", "", model.Message{Role: "assistant", Content: "定稿"}),
+			recJSON(t, "error", "boom", nil),
+		},
+		runState: `{"running":false,"fatal":null}`,
 	}
-	if rec.Type != "delta" {
-		t.Fatalf("type 字段不符：%q", rec.Type)
+	// delta 记录里的 msg 承载流式增量（ComposeView 只看 Role/Content/ToolCalls 字段）。
+	f.records = append(f.records, recJSON(t, "delta", "", model.Message{Role: "assistant", Content: "流式"}))
+	f.version = uint64(len(f.records))
+
+	tui := NewTui(f)
+	tui.widthAtomic.Store(80)
+	st := &pullState{glamRenderer: &glamourCache{}}
+	got := tui.composeView(st)
+
+	if !strings.Contains(got, "▶ 你好") {
+		t.Fatalf("用户回显缺失: %q", got)
 	}
-	var m model.Message
-	if err := json.Unmarshal(rec.Msg, &m); err != nil {
-		t.Fatalf("msg 解析失败：%v", err)
+	if !strings.Contains(got, "boom") {
+		t.Fatalf("错误文本缺失: %q", got)
 	}
-	if m.Role != model.RoleAssistant || m.Content != "hi" || m.ReasoningContent != "th" {
-		t.Fatalf("message 字段不符：%+v", m)
+	// 流式尾段 live：delta 的 Content 必须出现在渲染结果里
+	if !strings.Contains(got, "流式") {
+		t.Fatalf("流式尾段缺失: %q", got)
+	}
+}
+
+// TestComposeToolLine 工具调用缓冲 → 结果匹配 → 单行工具行。
+func TestComposeToolLine(t *testing.T) {
+	f := &fakeEngine{
+		records: []string{
+			recJSON(t, "message", "", model.Message{
+				Role: "assistant",
+				ToolCalls: []model.ToolCall{{
+					ID: "t1",
+					Function: model.FunctionDefinitionParam{
+						Name:      "ReadFile",
+						Arguments: []byte(`{"path":"a.txt"}`),
+					},
+				}},
+			}),
+			recJSON(t, "message", "", model.Message{
+				Role:    "tool",
+				ToolID:  "t1",
+				Content: "hello",
+			}),
+		},
+		runState: `{"running":false,"fatal":null}`,
+	}
+	tui := NewTui(f)
+	tui.widthAtomic.Store(80)
+	st := &pullState{glamRenderer: &glamourCache{}}
+	got := tui.composeView(st)
+
+	if !strings.Contains(got, "ReadFile") {
+		t.Fatalf("工具行缺失: %q", got)
+	}
+	if !strings.Contains(got, "hello") {
+		t.Fatalf("工具结果缺失: %q", got)
+	}
+}
+
+// TestPullFrameNoticeTTL 通知槽位：TTL 内显示通知、到期回落 hint。
+func TestPullFrameNoticeTTL(t *testing.T) {
+	tui := NewTui(&fakeEngine{runState: `{"running":false,"fatal":null}`})
+	tui.widthAtomic.Store(80)
+	st := &pullState{glamRenderer: &glamourCache{}}
+
+	// 无通知：回落 idle hint
+	frame := tui.pullFrame(st)
+	if frame.notice != composeHint(false) {
+		t.Fatalf("空闲通知不符: %q", frame.notice)
 	}
 
-	// 文本记录：text 字段直出
-	line = `{"type":"user","text":"/exit"}`
-	if err := json.Unmarshal([]byte(line), &rec); err != nil {
-		t.Fatalf("文本记录解析失败：%v", err)
+	// 4.5 秒前设置的通知：已过期 → 仍然回落 hint
+	old := time.Now().Add(-4500 * time.Millisecond).Format(time.RFC3339)
+	tui.engine = &fakeEngine{
+		runState: `{"running":false,"fatal":null}`,
+		notice:   `{"kind":"success","text":"done","setAt":"` + old + `"}`,
 	}
-	if rec.Type != "user" || rec.Text != "/exit" {
-		t.Fatalf("文本记录不符：%+v", rec)
+	frame = tui.pullFrame(st)
+	if frame.notice != composeHint(false) {
+		t.Fatalf("过期通知不符: %q", frame.notice)
+	}
+
+	// 刚设置的通知：正常显示
+	fresh := time.Now().Format(time.RFC3339)
+	tui.engine = &fakeEngine{
+		runState: `{"running":false,"fatal":null}`,
+		notice:   `{"kind":"success","text":"done","setAt":"` + fresh + `"}`,
+	}
+	frame = tui.pullFrame(st)
+	if frame.notice != noticeSuccess("done") {
+		t.Fatalf("新鲜通知不符: %q", frame.notice)
+	}
+}
+
+// TestKeyHandling 按键语义：enter 提交、引擎忙保留输入、esc 中断（仅运行态）。
+func TestKeyHandling(t *testing.T) {
+	f := &fakeEngine{runState: `{"running":false,"fatal":null}`}
+	tui := NewTui(f)
+	tui.Init()
+
+	// 录入文本并提交
+	tui.ta.InsertString("/new")
+	_, _ = tui.Update(keyPress(tea.KeyEnter, 0))
+	if len(f.submitted) != 1 || f.submitted[0] != "/new" {
+		t.Fatalf("提交不符: %v", f.submitted)
+	}
+	if tui.ta.Value() != "" {
+		t.Fatalf("提交后输入框未清空: %q", tui.ta.Value())
+	}
+
+	// 引擎忙：SubmitInput 拒绝时保留输入
+	f.rejectSubmit = true
+	tui.ta.InsertString("保留我")
+	_, _ = tui.Update(keyPress(tea.KeyEnter, 0))
+	if tui.ta.Value() != "保留我" {
+		t.Fatalf("引擎忙时输入被丢弃: %q", tui.ta.Value())
+	}
+	f.rejectSubmit = false
+
+	// esc 非运行态：不中断
+	_, _ = tui.Update(keyPress(tea.KeyEscape, 0))
+	if f.interrupts != 0 {
+		t.Fatalf("非运行态 esc 不应中断: %d", f.interrupts)
+	}
+
+	// 运行态 esc：中断
+	tui.running = true
+	_, _ = tui.Update(keyPress(tea.KeyEscape, 0))
+	if f.interrupts != 1 {
+		t.Fatalf("运行态 esc 应中断: %d", f.interrupts)
+	}
+
+	// ctrl+k：打开浮层；再按关闭
+	_, _ = tui.Update(keyPress('k', tea.ModCtrl))
+	if !tui.helps.isVisible() {
+		t.Fatalf("ctrl+k 应打开帮助浮层")
+	}
+	_, _ = tui.Update(keyPress('k', tea.ModCtrl))
+	if tui.helps.isVisible() {
+		t.Fatalf("ctrl+k 应关闭帮助浮层")
+	}
+
+	// 终态等键：任意键退出（waitingKey 置位后 esc 直接 Quit）
+	tui.waitingKey = true
+	model, _ := tui.Update(keyPress(tea.KeyEscape, 0))
+	if _, ok := model.(*TUI); !ok {
+		t.Fatalf("终态任意键应触发退出模型")
+	}
+}
+
+// TestDrawAndOverlay 整屏拼版不 panic、帮助浮层叠加生效。
+func TestDrawAndOverlay(t *testing.T) {
+	f := &fakeEngine{runState: `{"running":false,"fatal":null}`}
+	tui := NewTui(f)
+	tui.Init()
+	tui.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	tui.applyViewText("hello view")
+
+	out := tui.draw()
+	if !strings.Contains(out, "hello view") {
+		t.Fatalf("视图内容缺失")
+	}
+
+	// 打开帮助浮层
+	tui.helps.refresh(f)
+	tui.helps.toggleVisibility()
+	out = tui.draw()
+	if !strings.Contains(out, "Key Bindings") {
+		t.Fatalf("帮助浮层缺失")
 	}
 }

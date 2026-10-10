@@ -23,7 +23,7 @@ type EngineView interface {
 	TodoText() string
 	NoticeJSON() string
 	StartupInfo() ([]string, bool)
-	HelpItemsJSON() string
+	SkillItemsJSON() string
 	SubmitInput(line string) bool
 	Interrupt() bool
 }
@@ -72,9 +72,9 @@ func (t *TUI) fetchNotice(running bool) string {
 
 // fetchHelpItems 拉取并解析技能帮助项（默认项 /new /exit 由 helps 自持，
 // 引擎只提供技能项）。
-func (t *TUI) fetchHelpItems() []wireHelpItem {
-	var ws []wireHelpItem
-	_ = json.Unmarshal([]byte(t.engine.HelpItemsJSON()), &ws)
+func (t *TUI) fetchSkillItems() []wireSkillItem {
+	var ws []wireSkillItem
+	_ = json.Unmarshal([]byte(t.engine.SkillItemsJSON()), &ws)
 	return ws
 }
 

@@ -11,13 +11,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const (
-	// 连续错误自动重试策略。达到上限后不再自动重试，把控制权交还用户。
-	// 用常量而非 yaml 配置：目前没有按实例调整的需求，将来要配再提升为 Engine 字段。
-	errorMaxTimes = 3
-	errorSleepGap = 3 * time.Second
-)
-
 // GetEngineService 创建引擎实例（轻量：只装配字段，不触盘、不阻塞）。
 // 初始化由调用方在 goroutine 里调 Init()——初始化失败会 parkWithFatal 永久驻留，
 // 若在 TUI 启动前同步执行会卡死整个进程（终态都无从渲染）。
@@ -27,6 +20,7 @@ func GetEngineService(name string) *Engine {
 		inputCh:     make(chan string),
 		interruptCh: make(chan struct{}),
 		notice:      notice{Kind: NoticeNone},
+		errBudget:   newErrorBudget(defaultErrorMaxTimes, defaultErrorSleepGap),
 	}
 }
 
@@ -38,10 +32,11 @@ func (e *Engine) Init() {
 
 // parkWithFatal 置进程终态并永久驻留当前 goroutine。
 // 旧版等价物是 TuiService.ShowXxxAndExit 内部末尾的 select{}，语义必须原样保留：
-//  - 引擎 init 序列打完致命消息后绝不能带着未初始化状态继续往下跑（loadConfig 失败
-//    时 Config_p 仍是 nil，继续走 init 会在别处 panic）；
-//  - 不能在 TUI 回调里 os.Exit——screen.Fini() 在 app.Run() 返回路径上调用，
-//    硬退出会把终端留在 alt-screen + raw mode。
+//   - 引擎 init 序列打完致命消息后绝不能带着未初始化状态继续往下跑（loadConfig 失败
+//     时 Config_p 仍是 nil，继续走 init 会在别处 panic）；
+//   - 不能在 TUI 回调里 os.Exit——screen.Fini() 在 app.Run() 返回路径上调用，
+//     硬退出会把终端留在 alt-screen + raw mode。
+//
 // pull 之后的分工：引擎置终态 + 驻留；渲染、等待按键、停循环由 TUI 完成。
 func (e *Engine) parkWithFatal(style string, text string, waitKey bool) {
 	e.setFatal(style, text, waitKey)
@@ -69,10 +64,9 @@ func (e *Engine) AgentStart() {
 			// main() 随 Run() 返回——引擎不再知道终端的存在。
 			(*e).parkWithFatal(FatalExit, "", false)
 
-		} else if (*EndTurn_p).Code == New { //用户开始新对话，重置 SessionID 与错误计数，更新MsgContext为新对话的初始状态
-			// /new 在 agentRunIteratively 的输入分支里是提前 return 的，跑不到
-			// agentRunOnce 里的归零点，所以必须在这里单独归
-			(*e).errorStreak = 0
+		} else if (*EndTurn_p).Code == New { //用户开始新对话：重置 SessionID，更新MsgContext为新对话的初始状态
+			// 错误计数不在这里归——输入 /new 本身已走过 agentRunIteratively 的
+			// 用户输入充值点，且 New 之后到下一次用户输入之间不存在 fail 路径
 			e.newSessionID()
 			MsgContext = turnInfo{
 				Code:          New,
@@ -81,32 +75,21 @@ func (e *Engine) AgentStart() {
 			}
 
 		} else if (*EndTurn_p).Code == Error { //出错：累加连续错误计数，未达上限则退避后自动重试
-			(*e).errorStreak++
-			if (*e).errorStreak >= errorMaxTimes {
-				// 放弃自动重试，把控制权交还用户。三个要点：
-				// ① Code 保持 Error —— Int 的语义是"用户按了 ESC 中断"，与事实不符，
-				//    不能为了蹭"回到输入循环"这个副作用而填一个假状态码。真正让下一轮
-				//    等用户输入的是 agentRunIteratively 里的 errorStreak < errorMaxTimes 判定。
-				// ② errorStreak 不归零 —— 归零会让下一轮重新满足自动重试条件。它只在
-				//    收到 Response 事件（配置层健康的证据，见 agentRunOnce 注释）/
-				//    新对话/中断时归零；耗尽因此只可能由零输出失败触发。
-				// ③ 整个复用 *EndTurn_p，不新造 literal —— 新建会静默丢掉 Reason 与
-				//    PartialOutput（TerminalError 时后者是真实累积到的部分输出）。
-				(*e).appendTyped("error", fmt.Sprintf("连续 %d 次失败，已停止自动重试。请检查网络/配置后重新输入。", errorMaxTimes))
+			n, exhausted := (*e).errBudget.fail()
+			if exhausted {
+				// 由于此时错误计数已到达上限，agentRunIteratively内将不会自动重试，需要用户输入，这里打印一条提示消息。
+				(*e).appendTyped("error", fmt.Sprintf("连续 %d 次失败，已停止自动重试。请检查网络/配置后重新输入。", n))
 				MsgContext = *EndTurn_p
 				continue
 			}
 			// 必须在 Sleep 之前打：sleep 期间引擎 goroutine 阻塞、不监听 inputChan，
 			// 用户打字没有反应，需要知道程序在等什么。
-			(*e).appendTyped("warn", fmt.Sprintf("%d 秒后重试（第 %d/%d 次）...", errorSleepGap/time.Second, (*e).errorStreak, errorMaxTimes))
-			time.Sleep(errorSleepGap)
+			(*e).appendTyped("warn", fmt.Sprintf("%d 秒后重试（第 %d/%d 次）...", (*e).errBudget.backoff()/time.Second, n, (*e).errBudget.limit()))
+			time.Sleep((*e).errBudget.backoff())
 			MsgContext = *EndTurn_p
 
-		} else { //其他情况（Continue 正常结束 / Int 用户中断），错误链断开、计数归零；继续使用当前的 SessionID 与 UserID，更新MsgContext为当前对话的结束状态，供下一轮对话使用
-			// 归零主力在 agentRunOnce（Ctx.Done / Response 事件两个第一现场分支）；这里
-			// 是对 Continue / Int 的兜底——万一事件流没走完就关闭，Continue 仍能在这里
-			// 断开错误链
-			(*e).errorStreak = 0
+		} else {
+			(*e).errBudget.recharge() //其他任何情况返回，错位计数都归零
 			MsgContext = *EndTurn_p
 			continue
 		}

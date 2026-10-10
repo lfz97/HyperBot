@@ -20,22 +20,22 @@ func (t *TUI) keyMsgHandler(m tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return t, tea.Quit
 	}
 
-	if t.helps.isVisible() {
+	if t.skills.isVisible() {
 		if input == "ctrl+k" || input == "esc" || input == "ctrl+c" {
-			t.helps.toggleVisibility()
+			t.skills.toggleVisibility()
 			return t, nil
 
 		} else if input == "down" {
-			t.helps.moveDown()
+			t.skills.moveDown()
 			return t, nil
 
 		} else if input == "up" {
-			t.helps.moveUp()
+			t.skills.moveUp()
 			return t, nil
 
 		} else if input == "enter" {
-			t.ta.InsertString(t.helps.items[t.helps.index][0] + " ") //把当前选中的命令写入到textarea里面去
-			t.helps.toggleVisibility()
+			t.ta.InsertString(t.skills.items[t.skills.index][0] + " ") //把当前选中的命令写入到textarea里面去
+			t.skills.toggleVisibility()
 			t.recalcComponentSize()
 			return t, nil
 
@@ -60,8 +60,8 @@ func (t *TUI) keyMsgHandler(m tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return t, nil
 
 		} else if input == "ctrl+k" {
-			t.helps.refreshItems(t.fetchHelpItems()) // 每次打开时刷新，确保 skills 等动态项可见
-			t.helps.toggleVisibility()
+			t.skills.Update(t.fetchSkillItems()) // 每次打开时刷新，确保 skills 等动态项可见
+			t.skills.toggleVisibility()
 			return t, nil
 
 		} else if input == "esc" {

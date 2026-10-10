@@ -43,22 +43,9 @@ func (e *Engine) agentRunIteratively(Ctx context.Context, inputContext turnInfo)
 
 	var userPrompt string
 	for {
-		// Error 且还有重试预算：自动构造重试 prompt，不打扰用户。
-		// 其余全部情况（New / Continue / Int / 重试已耗尽）都走 else 回到输入循环等用户。
-		//
-		// 这里刻意用 "Error 优先 + else 兜底"，而不是列举 New||Continue||Int：
-		// ① 原来的写法没有最终 else，而 inputContext 是入参、循环体内从不被重新赋值，
-		//    一旦有未列举的 code 走进来，两个分支都不执行 → 循环体空转、100% CPU。
-		//    今天 Exit 到不了这里只是因为 showMsgAndExit 末尾的 select{} 永久阻塞，
-		//    那是个脆弱前提。
-		// ② 兜底分支是"等用户输入"，比"自动构造 prompt 再打一次 API"安全得多：
-		//    将来新增 turnCode 忘记登记，后果是多等一次用户输入，而不是无上限烧 API。
-		//
-		// 预算判定刻意内联、不抽中间变量：本循环内 errorStreak 从不变化（归零点都在
-		// agentRunOnce 的 Ctx.Done / Response 事件分支与 AgentStart 的 New/else 分支），
-		// 内联与循环外算一次等价。手动输入在这里也刻意不归零（语义见 init.go 字段注释
-		// 与 agentRunOnce 的 Response 分支注释）。
-		if inputContext.Code == Error && (*e).errorStreak < errorMaxTimes {
+		//错误次数未达到上限时，自动重试
+		//错误次数达到上限时，就走else分支需要用户输入了
+		if inputContext.Code == Error && (*e).errBudget.canAutoRetry() {
 			if inputContext.PartialOutput != "" {
 				userPrompt = fmt.Sprintf("之前的对话发生了错误，错误信息是: %s, 之前的输出内容是: %s, 请基于这些信息调整你的回答并继续完成对话", inputContext.Reason, inputContext.PartialOutput)
 			} else {
@@ -69,6 +56,7 @@ func (e *Engine) agentRunIteratively(Ctx context.Context, inputContext turnInfo)
 		} else {
 			select {
 			case userPrompt = <-(*e).inputCh: //用户输入由 TUI 经 Engine.SubmitInput 主动提交进来
+				(*e).errBudget.recharge() //用户输入：重置错误计数
 			}
 			checkprompt := strings.ReplaceAll(userPrompt, "\n", "")
 			checkprompt = strings.ReplaceAll(checkprompt, " ", "")
@@ -196,17 +184,12 @@ func (e *Engine) agentRunOnce(Ctx context.Context, userPrompt string) *AgentErro
 		select {
 		case <-Ctx.Done():
 			(*e).setNotice(NoticeCancelled, "")
-			(*e).errorStreak = 0 //重置错误计数
 			return nil
 		default:
 		}
 		if (*event).Response != nil && len((*(*event).Response).Choices) > 0 {
-			// 收到任何带 Choices 的 Response 事件（含流式部分块）即归零。语义是"配置层
-			// 健康检查"而非"有界重试预算"：能吐 token = key/端点/鉴权/本地网络都通，
-			// 故障只剩传输层抖动（随机、重试期望为正），自动重试到成功为止。
-			// 已知且刻意接受的代价：确定性中途失败（超时、内容过滤）会无限自动重试，
-			// 由人盯着兜底。不要改成"只在 completion 归零"——那会把语义改回有界预算。
-			(*e).errorStreak = 0
+
+			(*e).errBudget.recharge() // 收到任何带 Choices 的 Response 事件（含流式部分块）即归零。
 			for _, choice := range (*(*event).Response).Choices {
 
 				(*e).emitChoice(choice, (*(*event).Response).IsPartial)

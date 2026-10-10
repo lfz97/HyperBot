@@ -67,12 +67,9 @@ type Engine struct {
 	builtinTools        []tool.Tool         //内置function清单，启动时确定，不自动刷新
 	builtinToolsets     []tool.ToolSet      //内置工具集，启动时确定，不自动刷新
 
-	// errorStreak 当前连续错误次数，配合 engineCore.go 的 errorMaxTimes / errorSleepGap
-	// 实现自动重试的上限与退避。归零时机：收到任何带 Choices 的 Response 事件(第一个
-	// token 即归，语义见 engineRun.go 的注释)、/new、用户 ESC 中断(同在 agentRunOnce 归)、
-	// AgentStart 的 else 分支兜底。手动提交输入不归零。
-	// 只有"零输出的自动重试链"内部不归零——那正是要计数的时候。
-	errorStreak int
+	// errBudget 连续错误自动重试预算：策略（max/gap）与状态（streak）同体，
+	// 状态流转见 engineCore.go 的 errorBudget 类型。
+	errBudget errorBudget
 
 	// ── 对上层 UI 暴露的可观察状态（pull 契约，方法见 uistate.go）──
 	mu        sync.Mutex // 串行化引擎各 goroutine 的写入与 UI goroutine 的读取
@@ -83,7 +80,7 @@ type Engine struct {
 	notice    notice
 	startup   []string
 	startupOK bool
-	skills    []HelpItem
+	skills    []SkillItem
 	inputCh   chan string
 
 	interruptCh chan struct{}
@@ -168,7 +165,7 @@ func (e *Engine) newRunner() {
 				llmagent.WithContextCompactionOversizedToolResultMaxTokens(8192),               // Pass 2: 超大 tool result 首尾保留截断
 				llmagent.WithEnableOnDemandSession(true),                                       // 按需加载被压缩的原始数据（session_load）
 				llmagent.WithEnableParallelTools(true),                                         //启用并行工具调用，提升工具调用效率
-				agent.SetBeforeModelStatusCallback(e),                                   //追加beforeModel状态栏
+				agent.SetBeforeModelStatusCallback(e),                                          //追加beforeModel状态栏
 			}
 			// APIType 校验只做一次。ConfigBaseAgent 内部也按同一字段选模型，但它对
 			// 未知类型是静默不设模型（agent 照样建得出来、跑起来才失败），所以这里
@@ -282,21 +279,15 @@ func (e *Engine) loadBuiltinToolsAndToolsets() {
 func (e *Engine) loadSkills() {
 	(*e).SkillRepo, _ = skill.NewFSRepository((*e).SkillFolderPath)
 	summaries := (*e).SkillRepo.Summaries()
-	itms := []HelpItem{}
+	itms := []SkillItem{}
 	for _, s := range summaries {
-
-		des_rune := []rune(s.Description)
-		if len(des_rune) >= 50 {
-			des_rune = des_rune[:50]
-		}
-		des := string(des_rune) + "......"
-
-		itms = append(itms, HelpItem{
+		des := strings.ReplaceAll(s.Description, "\n", " ")
+		itms = append(itms, SkillItem{
 			Cmd:  "/" + s.Name,
 			Desc: des,
 		})
 	}
-	(*e).setSkillHelpItems(itms)
+	(*e).setSkillItems(itms)
 }
 func (e *Engine) initSqliteMemoryService() {
 	service, err := m.NewSQLiteMemoryService(filepath.Join((*e).ConfigFolderPath, memoryDBFileName))

@@ -1,166 +1,124 @@
 package tui
 
 import (
+	"fmt"
+	"strconv"
 	"strings"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
-// 启动横幅：banner 结构体描述内容（logo / 信息 / 面板三段），方法负责拼版。
-// 拼版方法不读 model、宽度作参数传入，需要时可以直接对 banner 单测。
+// 启动横幅：圆角盒双栏布局（参考 Claude Code 欢迎区）——
+// 左栏 Welcome + H 字标 + 模型/目录，右栏 Tips + What's new。
+// 拼版方法不读 model、宽度作参数传入，可以直接对 banner 单测。
 
 const (
-	bannerLogoWidth = 12 // logo 点阵宽度，固定不可伸缩
-	bannerGap       = 1  // 段之间的间隔列
+	// 渐变与品牌色：青 → 紫，与整体 UI 色系一致
+	bannerGradientFrom = "#4FC3F7"
+	bannerGradientTo   = "#A78BFA"
 
-	// bannerConfigMinWidth 信息列压缩下限，低于它就放弃三列改走堆叠
-	bannerConfigMinWidth = 24
+	bannerTitle     = "HyperBot"
+	bannerVersion   = "v1.2.0" //发版时更新；留空则标题不带版本号
+	bannerLogoGap   = 3        // logo 与欢迎语的间隔列（仅窄终端降级版使用）
+	bannerLeftW     = 34       // 左栏列宽（含内边距），信息行超出即截断
+	bannerPadding   = 1        // 盒内左右内边距
+	bannerRightMinW = 24       // 右栏压缩下限，低于它放弃双栏改走紧凑堆叠
 )
 
-// bannerLogo 5 行 H 字标，每行恰好 bannerLogoWidth 个 rune（█ 为 1 cell）。
+// bannerLogo 7 行机器人头像。刻意只用块元素（█▄▀）：制表符（╭─╮ 等）是
+// East Asian Ambiguous 字符，CJK 环境的终端会渲染成 2 列而代码按 1 列
+// 计宽，必然错位；块元素无条件 1 列，任何终端/字体都不会歪。
 var bannerLogo = []string{
-	"  ██    ██  ",
-	" ██      ██ ",
-	" ██████████ ",
-	" ██      ██ ",
-	"  ██    ██  ",
+	" ▄█▄           ▄█▄ ",
+	"███████████████████",
+	"█████  █████  █████",
+	"▀█████████████████▀",
 }
 
-// bannerLogoColors 与 bannerLogo 逐行对应，两端 sky/status 色，中间线性插值。
-var bannerLogoColors = []string{
-	"#4FC3F7",
-	"#57C3F1",
-	"#5FC3EB",
-	"#67C3E5",
-	"#6FC3DF",
-}
-
-// banner 描述一条启动横幅：左 logo、中信息、右面板。
-// 信息行与面板行数相等（各 5 行），三块上下齐平，不需要垂直对齐逻辑。
+// banner 描述一条启动横幅：H 字标 + Engine 的信息行。
 type banner struct {
-	logo      []string // 点阵行
-	logoColor []string // 逐行渐变色
-	info      []string // Engine 拼好的 "label value" 行
-	panel     bannerPanel
+	logo []string // 字标行
+	info []string // Engine 拼好的 "label<pad>value" 行
 }
 
-// bannerPanel 右栏键位提示面板，方框宽度由最长行测出（naturalWidth），加长提示不用改数字。
-type bannerPanel struct {
-	title string
-	lines []string
-}
-
-// defaultBannerPanel 默认面板。刻意保持 3 条：加边框正好 5 行，与 logo、信息列等高。
-var defaultBannerPanel = bannerPanel{
-	title: "getting started",
-	lines: []string{
-		"ctrl+k       slash commands",
-		"esc          interrupt this run",
-		"shift+enter  insert a newline",
-	},
-}
-
-// newBanner 用默认 logo 渐变与面板构造横幅。
+// newBanner 构造横幅。
 func newBanner(infoLines []string) *banner {
 	return &banner{
-		logo:      bannerLogo,
-		logoColor: bannerLogoColors,
-		info:      infoLines,
-		panel:     defaultBannerPanel,
+		logo: bannerLogo,
+		info: infoLines,
 	}
 }
 
-// naturalWidth 面板自然宽度：最长行 + 1 前导空格 + 2 边框，不小于标题行所需。
-func (p bannerPanel) naturalWidth() int {
-	w := blockWidth(p.lines) + 3
-	if min := ansi.StringWidth("─ "+p.title+" ") + 3; w < min {
-		w = min
-	}
-	return w
-}
-
-// render 画面板方框，每行恰好 panelW 列。
-func (p bannerPanel) render(panelW int) []string {
-	inner := panelW - 2
-
-	title := "─ " + p.title + " "
-	// 顶边框 = 1(╭) + title + dashes + 1(╮) = panelW，反推 dashes；clamp 仅防御
-	dashes := inner - ansi.StringWidth(title)
-	if dashes < 0 {
-		dashes = 0
-	}
-
-	lines := make([]string, 0, len(p.lines)+2)
-	lines = append(lines, "╭"+title+strings.Repeat("─", dashes)+"╮")
-	for _, s := range p.lines {
-		lines = append(lines, "│"+fitWidth(" "+s, inner)+"│")
-	}
-	lines = append(lines, "╰"+strings.Repeat("─", inner)+"╯")
-	return lines
-}
-
-// totalWidth 三列完整版的自然总宽，降级判断与列宽计算共用。
-func (b *banner) totalWidth() int {
-	return bannerLogoWidth + bannerGap + blockWidth(b.info) + bannerGap + b.panel.naturalWidth()
-}
-
-// configWidth 信息列自然宽度 = 总宽 - logo - 面板 - 两个间隔列。
-func (b *banner) configWidth() int {
-	return b.totalWidth() - b.panel.naturalWidth() - bannerLogoWidth - 2*bannerGap
-}
-
-// compose 按可用宽度拼出横幅文本（不含首尾换行）。
-// 三段里只有信息列是弹性的（logo 是点阵艺术、面板是固定文案），降级顺序：
-// 放得下 → 三列零截断；放不下 → 压缩信息列保三列；压到下限以下 → 纵向堆叠。
+// compose 按可用宽度拼出横幅文本（不含首尾换行）。终端放不下双栏盒
+// 就降级为紧凑堆叠版。
 func (b *banner) compose(width int) string {
-	panelW := b.panel.naturalWidth()
-	if width >= b.totalWidth() {
-		return b.composeWide(b.configWidth(), panelW)
+	if box := b.composeBox(width); box != "" {
+		return box
 	}
-	if avail := width - bannerLogoWidth - 2*bannerGap - panelW; avail >= bannerConfigMinWidth {
-		return b.composeWide(avail, panelW)
-	}
-	return b.composeStacked(width)
+	return b.composeCompact(width)
 }
 
-// composeWide 三列完整版：logo | 信息 | 面板，每行恰好三段之和列。
-func (b *banner) composeWide(configW, panelW int) string {
-	logo := b.coloredLogo()
-
-	info := make([]string, 0, len(b.info))
+// composeBox 双栏圆角盒，盒宽=终端宽（左右边距对称）。宽度不足（返回
+// 空串）时由 compose 降级。
+func (b *banner) composeBox(width int) string {
+	// 信息按标签索引
+	m := make(map[string]string, len(b.info))
 	for _, line := range b.info {
-		// 整行一个颜色：Engine 传来的是已拼好的 "label value"，拆开上色不值得
-		info = append(info, subText(fitWidth(line, configW)))
+		if label, value := infoParts(line); label != "" {
+			m[label] = value
+		}
 	}
 
-	panel := b.panel.render(panelW)
-
-	rows := len(logo)
-	if len(info) > rows {
-		rows = len(info)
+	inner := width - 2                                  //去掉左右边框后的内容宽
+	rightW := inner - bannerLeftW - 2 - bannerPadding*2 //右栏列宽
+	if rightW < bannerRightMinW {
+		return "" //放不下右栏，降级
 	}
-	if len(panel) > rows {
-		rows = len(panel)
+
+	center := lipgloss.NewStyle().Width(bannerLeftW).Align(lipgloss.Center)
+
+	// 左右两栏内容块在盒内垂直居中：上下各留 1 行呼吸，块高差由居中摊平。
+	// 左栏 = 欢迎语 + 空行 + 猫头像；右栏 = system 标题 + 全部启动信息
+	// （快捷键说明底部提示条已常驻，不再重复）。
+	logo := b.coloredLogo()
+	leftH := 2 + len(logo)
+	stats := make([]string, 0, len(b.info))
+	for _, line := range b.info {
+		if label, _ := infoParts(line); label != "" {
+			stats = append(stats, subText(line))
+		}
+	}
+	rightH := 1 + len(stats)
+	contentRows := max(leftH, rightH)
+	rows := contentRows + 2
+	leftTop := 1 + (contentRows-leftH)/2
+	rightTop := 1 + (contentRows-rightH)/2
+
+	left := make([]string, rows)
+	left[leftTop] = center.Render("Welcome back!")
+	for i, row := range logo {
+		left[leftTop+2+i] = center.Render(row)
+	}
+	right := make([]string, rows)
+	right[rightTop] = brandText("system")
+	for i, s := range stats {
+		right[rightTop+1+i] = s
 	}
 
 	var s strings.Builder
+	//顶边框嵌品牌色标题（同 codebuddy：cliName 放 border text，offset 3）
+	title := "─ " + brandText(bannerTitle+" "+bannerVersion) + " "
+	s.WriteString("╭" + title + strings.Repeat("─", inner-ansi.StringWidth(title)) + "╮\n")
 	for i := 0; i < rows; i++ {
-		s.WriteString(lineAt(logo, i, bannerLogoWidth))
-		s.WriteString(strings.Repeat(" ", bannerGap))
-		s.WriteString(lineAt(info, i, configW))
-		s.WriteString(strings.Repeat(" ", bannerGap))
-		s.WriteString(lineAt(panel, i, panelW))
-		if i < rows-1 {
-			s.WriteString("\n")
-		}
+		s.WriteString("│ " + fitWidth(left[i], bannerLeftW) + "  " + fitWidth(right[i], rightW) + " │\n")
 	}
+	s.WriteString("╰" + strings.Repeat("─", inner) + "╯")
 	return s.String()
 }
 
-// composeStacked 窄终端降级版：纵向堆叠、无方框，只截断不补齐。
-func (b *banner) composeStacked(width int) string {
-	// width <= 0 时不截断，交给 viewport 的软换行
+// composeCompact 窄终端降级版：logo 左、信息行右，无边框。
+func (b *banner) composeCompact(width int) string {
 	clamp := func(s string) string {
 		if width <= 0 {
 			return s
@@ -168,31 +126,112 @@ func (b *banner) composeStacked(width int) string {
 		return clampWidth(s, width)
 	}
 
+	headlines := b.headlines()
+	logo := b.coloredLogo()
+
 	var s strings.Builder
-	for i, row := range b.logo {
-		s.WriteString(colorText(lipgloss.Color(b.logoColor[i]), row))
-		s.WriteString("\n")
+	for i, row := range logo {
+		line := row + strings.Repeat(" ", bannerLogoGap)
+		if i < len(headlines) && headlines[i] != "" {
+			line += headlines[i]
+		}
+		s.WriteString(clamp(line))
+		if i < len(logo)-1 {
+			s.WriteString("\n")
+		}
 	}
-	s.WriteString("\n")
-	for _, line := range b.info {
-		s.WriteString(subText(clamp(line)))
-		s.WriteString("\n")
-	}
-	s.WriteString("\n")
-	for _, line := range b.panel.lines {
-		s.WriteString(subText(clamp(line)))
-		s.WriteString("\n")
-	}
-	return strings.TrimRight(s.String(), "\n")
+	return s.String()
 }
 
-// coloredLogo 逐行套渐变色。
-func (b *banner) coloredLogo() []string {
-	logo := make([]string, len(b.logo))
-	for i, row := range b.logo {
-		logo[i] = colorText(lipgloss.Color(b.logoColor[i]), row)
+// headlines 信息行（与 logo 行数对齐）：产品名 / 模型 · 工具统计 / 工作目录。
+func (b *banner) headlines() []string {
+	m := make(map[string]string, len(b.info))
+	for _, line := range b.info {
+		if label, value := infoParts(line); label != "" {
+			m[label] = value
+		}
 	}
-	return logo
+	line2 := m["model"]
+	if v := m["tools"]; v != "" {
+		//value 以数字开头时补回标签词（tools），否则摘要丢失主语
+		if v[0] >= '0' && v[0] <= '9' {
+			v = "tools " + v
+		}
+		if line2 != "" {
+			line2 += " · "
+		}
+		line2 += v
+	}
+	return []string{bannerTitle, line2, m["cwd"]}
+}
+
+// coloredLogo 逐行纵向渐变（3 行：青 → 紫）。
+func (b *banner) coloredLogo() []string {
+	out := make([]string, len(b.logo))
+	for i, row := range b.logo {
+		t := 0.0
+		if len(b.logo) > 1 {
+			t = float64(i) / float64(len(b.logo)-1)
+		}
+		out[i] = colorText(lipgloss.Color(hexLerp(bannerGradientFrom, bannerGradientTo, t)), row)
+	}
+	return out
+}
+
+// brandText 品牌色文本（右栏标题）。
+func brandText(text string) string {
+	return lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color(bannerGradientFrom)).
+		Render(text)
+}
+
+// infoParts 拆 "label<pad到13列>value" 行：首个连续 2 空格之前是标签
+// （如 model/endpoint），之后是值。
+func infoParts(line string) (label, value string) {
+	i := strings.Index(line, "  ")
+	if i < 0 {
+		return "", strings.TrimSpace(line)
+	}
+	return strings.TrimSpace(line[:i]), strings.TrimLeft(line[i:], " ")
+}
+
+// ---------- 渐变辅助 ----------
+
+// hexLerp 两个 hex 颜色按 t∈[0,1] 线性插值，返回 "#rrggbb"。
+func hexLerp(from, to string, t float64) string {
+	parse := func(c string) (r, g, b float64) {
+		c = strings.TrimPrefix(c, "#")
+		if len(c) != 6 {
+			return 0, 0, 0
+		}
+		rr, _ := strconv.ParseUint(c[0:2], 16, 8)
+		gg, _ := strconv.ParseUint(c[2:4], 16, 8)
+		bb, _ := strconv.ParseUint(c[4:6], 16, 8)
+		return float64(rr), float64(gg), float64(bb)
+	}
+	r1, g1, b1 := parse(from)
+	r2, g2, b2 := parse(to)
+	r := uint8(r1 + (r2-r1)*t)
+	g := uint8(g1 + (g2-g1)*t)
+	b := uint8(b1 + (b2-b1)*t)
+	return fmt.Sprintf("#%02x%02x%02x", r, g, b)
+}
+
+// gradientText 逐字符横向渐变：第 x 个字符取 from→to 插值色（按显示列计 x）。
+// 字形全部为单列宽块元素，无需处理宽字符。
+func gradientText(s, from, to string) string {
+	w := ansi.StringWidth(s)
+	if w <= 1 {
+		return s
+	}
+	var b strings.Builder
+	x := 0
+	for _, r := range s {
+		b.WriteString(colorText(lipgloss.Color(hexLerp(from, to, float64(x)/float64(w-1))), string(r)))
+		x += lipgloss.Width(string(r))
+	}
+	return b.String()
 }
 
 // ---------- 字符串拼版辅助（通用，不绑定 banner） ----------
@@ -200,28 +239,9 @@ func (b *banner) coloredLogo() []string {
 // ANSI 输出下没有 tview 标签的转义问题（方括号就是字面量），宽度度量
 // 直接用 ansi.StringWidth（显示宽度、宽字符与 ANSI 序列都正确处理）。
 
-// subText 次文本色（信息列与面板行）。
+// subText 次文本色（信息行）。
 func subText(text string) string {
 	return lipgloss.NewStyle().Foreground(cSub).Render(text)
-}
-
-// blockWidth 返回一组文本里最宽那行的显示宽度。
-func blockWidth(lines []string) int {
-	w := 0
-	for _, s := range lines {
-		if n := ansi.StringWidth(s); n > w {
-			w = n
-		}
-	}
-	return w
-}
-
-// lineAt 取第 i 行，越界返回 w 个空格。
-func lineAt(lines []string, i, w int) string {
-	if i < len(lines) {
-		return lines[i]
-	}
-	return strings.Repeat(" ", w)
 }
 
 // fitWidth 截断 + 补齐到恰好 w 列。
@@ -257,5 +277,6 @@ func clampWidth(s string, w int) string {
 // 这是刻意的语义（启动横幅本来就是一次性历史记录）。
 func composeBanner(infoLines []string, width int) string {
 	b := newBanner(infoLines)
-	return "\n" + b.compose(width) + "\n\n\n"
+	//banner 与输入框之间只留 1 行空行（对齐 Claude Code 的紧凑观感）
+	return "\n" + b.compose(width) + "\n\n"
 }

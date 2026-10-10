@@ -9,6 +9,20 @@ import (
 	"github.com/lucasb-eyer/go-colorful"
 )
 
+var (
+	defaultDynamicSpinner []string = []string{
+		"■■■■⬝⬝⬝⬝",
+		"⬝■■■■⬝⬝⬝",
+		"⬝⬝■■■■⬝⬝",
+		"⬝⬝⬝■■■■⬝",
+		"⬝⬝⬝⬝■■■■",
+		"■⬝⬝⬝⬝■■■",
+		"■■⬝⬝⬝⬝■■",
+		"■■■⬝⬝⬝⬝■",
+	}
+	defaultStaticSpinner string = "⬝⬝⬝⬝⬝⬝⬝⬝"
+)
+
 const colorSteps = 36 // 色轮切 36 格,一圈约 3 秒
 
 // spinner 方块彩虹 spinner（demo 同款）：■■■■⬝⬝⬝⬝ 帧动画 + HSV 色轮渐变。

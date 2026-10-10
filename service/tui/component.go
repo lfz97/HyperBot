@@ -43,11 +43,11 @@ func NewPrettyTextArea(width int, height int, charLimit int) (textarea.Model, te
 }
 
 // NewPrettyViewport 美化过的展示框（demo 同款）。
-func NewPrettyViewport(width int, height int) (viewport.Model, tea.Cmd) {
+func NewPrettyViewport(width int, height int) viewport.Model {
 	vp := viewport.New()
 	vp.SetHeight(height)
 	vp.SetWidth(width)
-	return vp, nil
+	return vp
 }
 
 // recalcComponentSize 重算所有组件尺寸（demo 范式 + 清单栏）。
@@ -93,29 +93,21 @@ func (t *TUI) draw() string {
 	//水平方向组合padding栏
 	content = lipgloss.JoinHorizontal(lipgloss.Left, leftPaddingView, content, rightPaddingView)
 	//帮助弹窗：官方 Compositor —— 主界面是底层 Layer，帮助盒 X/Y 定位、Z=1 悬浮其上
-	if t.helps.isVisible() {
-		content = t.overlayCentered(content, t.helps.helpContent())
+	if t.skills.isVisible() {
+		content = t.overlayCentered(content, t.skills.View(t.width, t.height))
 	}
 	return content
 }
 
 // overlayCentered 在原内容上增加居中悬浮框（demo 同款：圆角 + 紫色 62）。
+// 盒子样式与尺寸常量统一在 skills.go 定义（skillBoxStyle / skillBoxWidth /
+// skillBoxHeight），此处只夹取、渲染、定位。
 func (t *TUI) overlayCentered(back string, front string) string {
-	// 帮助盒尺寸随条目数伸缩：内边距 1×2、边框 2×2、标题行 + 空行。
-	boxH := len(t.helps.items) + 6
-	boxW := helpBoxWidth
-	// 终端过小就夹到屏幕内（max 兜底，窗口太小宁可挤也不 panic）
-	if boxH > t.height {
-		boxH = t.height
-	}
-	if boxW > t.width {
-		boxW = t.width
-	}
+	boxW := min(skillBoxWidth, t.width) //终端过小就夹到屏幕内
+	//盒高跟内容动态走：vp 实际渲染行数 + 边框/内边距，上限已由 skills.View 夹过
+	boxH := min(lipgloss.Height(front)+skillBoxStyle.GetVerticalFrameSize(), t.height)
 
-	box := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("62")).
-		Padding(1, 2).
+	box := skillBoxStyle.
 		Width(boxW).
 		Height(boxH).
 		Render(front)

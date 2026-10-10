@@ -61,8 +61,8 @@ type RunState struct {
 	Fatal   *Fatal `json:"fatal"` // 非 nil 表示进程应结束
 }
 
-// HelpItem 帮助页的一行（JSON 形状 {"cmd","desc"}）。
-type HelpItem struct {
+// SkillItem 帮助页的一行（JSON 形状 {"cmd","desc"}）。
+type SkillItem struct {
 	Cmd  string `json:"cmd"`
 	Desc string `json:"desc"`
 }
@@ -238,8 +238,8 @@ func (e *Engine) setStartupInfo(lines []string) {
 	e.mu.Unlock()
 }
 
-// HelpItemsJSON 返回技能帮助项 JSON（[{"cmd","desc"}]；默认项 /new /exit 由消费端自持）。
-func (e *Engine) HelpItemsJSON() string {
+// SkillItemsJSON 返回技能帮助项 JSON（[{"cmd","desc"}]；默认项 /new /exit 由消费端自持）。
+func (e *Engine) SkillItemsJSON() string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.skills == nil {
@@ -253,9 +253,9 @@ func (e *Engine) HelpItemsJSON() string {
 }
 
 // setSkillHelpItems 整体替换技能帮助项（loadSkills 每次刷新都重建）。
-func (e *Engine) setSkillHelpItems(items []HelpItem) {
+func (e *Engine) setSkillItems(items []SkillItem) {
 	e.mu.Lock()
-	e.skills = append([]HelpItem(nil), items...)
+	e.skills = append([]SkillItem(nil), items...)
 	e.mu.Unlock()
 }
 

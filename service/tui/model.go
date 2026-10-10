@@ -30,7 +30,7 @@ type wireNotice struct {
 }
 
 // wireHelpItem 帮助页一行。
-type wireHelpItem struct {
+type wireSkillItem struct {
 	Cmd  string `json:"cmd"`
 	Desc string `json:"desc"`
 }

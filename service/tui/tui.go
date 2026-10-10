@@ -38,7 +38,7 @@ type TUI struct {
 	leftPadding  int
 	rightPadding int
 
-	helps  *helps
+	skills *skills
 	bottom *bottom
 
 	// pull 是拉取循环的私有状态（见 pull.go 的 pullState 注释）。
@@ -58,18 +58,10 @@ func NewTui(view EngineView) *TUI {
 	return &TUI{
 		leftPadding:  2,
 		rightPadding: 2,
-		helps:        &helps{items: [][2]string{{"ctrl+k", "显示/关闭帮助"}, {"/new", "开始新对话"}, {"/exit", "退出程序"}}},
+		vp:           NewPrettyViewport(0, 1),
+		skills:       NewHelps(),
 		bottom: &bottom{
-			spinner: NewSpinner([]string{
-				"■■■■⬝⬝⬝⬝",
-				"⬝■■■■⬝⬝⬝",
-				"⬝⬝■■■■⬝⬝",
-				"⬝⬝⬝■■■■⬝",
-				"⬝⬝⬝⬝■■■■",
-				"■⬝⬝⬝⬝■■■",
-				"■■⬝⬝⬝⬝■■",
-				"■■■⬝⬝⬝⬝■",
-			}, "⬝⬝⬝⬝⬝⬝⬝⬝",
+			spinner: NewSpinner(defaultDynamicSpinner, defaultStaticSpinner,
 				60*time.Millisecond),
 		},
 		engine: view,
@@ -81,10 +73,8 @@ func NewTui(view EngineView) *TUI {
 // cmd goroutine 上拉一轮引擎状态、产出 frameMsg 交给框架送进 Update。
 func (t *TUI) Init() tea.Cmd {
 	ta, tacmd := NewPrettyTextArea(0, 1, 0)
-	vp, vpcmd := NewPrettyViewport(0, 1)
 	t.ta = ta
-	t.vp = vp
-	return tea.Batch(tacmd, vpcmd, t.pullCmd())
+	return tea.Batch(tacmd, t.pullCmd())
 }
 
 // Update 事件分发。分支里只要产生了 cmd 就透传出去（多个用 tea.Batch，

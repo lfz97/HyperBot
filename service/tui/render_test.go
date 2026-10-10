@@ -178,8 +178,7 @@ func TestComposeToolLine(t *testing.T) {
 }
 
 // TestPullOnceNoticeTTL 通知槽位：TTL 内显示通知、到期回落 hint。
-// 两个方向都必须触发投递（去重基准是 lastSent）：通知出现 → 帧变化；
-// TTL 过期回落 hint → 帧也变化。
+// 帧恒投递（去重交给框架的 viewEquals），这里只断言帧内容的取舍。
 func TestPullOnceNoticeTTL(t *testing.T) {
 	tui := NewTui(&fakeEngine{runState: `{"running":false,"fatal":null}`})
 	tui.widthAtomic.Store(80)
@@ -190,17 +189,18 @@ func TestPullOnceNoticeTTL(t *testing.T) {
 		t.Fatalf("空闲通知不符: %q ok=%v", frame.notice, ok)
 	}
 
-	// 4.5 秒前设置的通知：已过期 → 仍然回落 hint（与上一帧相同，不投递）
+	// 4.5 秒前设置的通知：已过期 → 仍然回落 hint
 	old := time.Now().Add(-4500 * time.Millisecond).Format(time.RFC3339)
 	tui.engine = &fakeEngine{
 		runState: `{"running":false,"fatal":null}`,
 		notice:   `{"kind":"success","text":"done","setAt":"` + old + `"}`,
 	}
-	if f, ok := tui.pullOnce(); ok && f.notice != composeHint(false) {
-		t.Fatalf("过期通知不符: %q", f.notice)
+	frame, ok = tui.pullOnce()
+	if !ok || frame.notice != composeHint(false) {
+		t.Fatalf("过期通知不符: %q ok=%v", frame.notice, ok)
 	}
 
-	// 刚设置的通知：正常显示（帧变化，必须投递）
+	// 刚设置的通知：正常显示
 	fresh := time.Now().Format(time.RFC3339)
 	tui.engine = &fakeEngine{
 		runState: `{"running":false,"fatal":null}`,
@@ -210,21 +210,11 @@ func TestPullOnceNoticeTTL(t *testing.T) {
 	if !ok || frame.notice != noticeSuccess("done") {
 		t.Fatalf("新鲜通知不符: %q ok=%v", frame.notice, ok)
 	}
-
-	// 通知过期：回落 hint（帧再次变化，必须投递——否则通知永远不消失）
-	tui.engine = &fakeEngine{
-		runState: `{"running":false,"fatal":null}`,
-		notice:   `{"kind":"success","text":"done","setAt":"` + old + `"}`,
-	}
-	frame, ok = tui.pullOnce()
-	if !ok || frame.notice != composeHint(false) {
-		t.Fatalf("TTL 回落不符: %q ok=%v", frame.notice, ok)
-	}
 }
 
-// TestPullDeliversViewChange 帧去重的回归测试：只有 view 变化（流式输出，
-// running/notice/todo 恒定）的帧也必须投递。旧实现把 lastFrame.view 先赋新值
-// 再与组装结果比较，这类帧会被判成"未变化"而永不投递。
+// TestPullDeliversViewChange 流式场景的端到端断言：仅 view 变化（running/
+// notice/todo 恒定）的轮次，重组结果必须反映到帧里——历史上帧去重逻辑
+// 写反时这类帧被静默丢弃（回归防线；去重现已整体移除、交给框架）。
 func TestPullDeliversViewChange(t *testing.T) {
 	f := &fakeEngine{
 		records:  []string{recJSON(t, "user", "第一条", nil)},

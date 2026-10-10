@@ -103,11 +103,17 @@ func (t *TUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // applyFrame 把 pull 链的一帧落到 model 上。
 // 续链的 pullCmd 必须无条件排第一个：任何处理路径漏掉它，拉取链就断了。
+//
+// 帧不做去重，重复帧是常态（30ms 一帧、重组 100ms 节流）——脏活框架做：
+// renderer 的 flush 有 viewEquals 整帧短路 + cell 级 diff。本函数的逐字段比较
+// 才是真正的防线：view/todo/notice 未变时不触碰 viewport、不做布局重算。
 func (t *TUI) applyFrame(m frameMsg) (tea.Model, tea.Cmd) {
 	cmds := []tea.Cmd{t.pullCmd()}
 
+	changed := false
 	if m.running != t.running {
 		t.running = m.running
+		changed = true
 		if m.running {
 			cmds = append(cmds, t.bottom.spinner.Start())
 		} else {
@@ -117,17 +123,22 @@ func (t *TUI) applyFrame(m frameMsg) (tea.Model, tea.Cmd) {
 
 	if m.todo != t.todoText {
 		t.todoText = m.todo
+		changed = true
 	}
 
 	if m.notice != t.bottom.notice {
 		t.bottom.SetNotice(m.notice)
+		changed = true
 	}
 
 	if m.view != t.viewText {
 		t.applyViewText(m.view)
+		changed = true
 	}
 
-	t.recalcComponentSize()
+	if changed {
+		t.recalcComponentSize()
+	}
 
 	// 终态：渲染已随 view 上屏，这里只负责收尾。
 	if m.fatal != nil && !t.fatalHandled {
@@ -234,9 +245,8 @@ type pullState struct {
 	banner       string    // 启动横幅（就绪后进视图头部，只渲染一次）
 	bannerDone   bool
 	lastFatal    *wireFatal
-	view         string   // 最近一次重组的视图全文（与 lastSent 分离：见 pullOnce）
-	lastSent     frameMsg // 最近一次投递的帧（去重依据）
-	width        int      // 本轮重组用的组件宽度（glamour 按此换行）
+	view         string // 最近一次重组的视图全文（帧恒携带，重复帧交给框架去重）
+	width        int    // 本轮重组用的组件宽度（glamour 按此换行）
 	glamRenderer *glamourCache
 	stop         chan struct{} // Run 返回后关闭，收编 pull 链 goroutine
 }
@@ -246,9 +256,9 @@ func newPullState() *pullState {
 }
 
 // pullCmd 是 pull 的 Elm 载体：cmd 在框架的 goroutine 上按 pullInterval 轮询，
-// 聚合出与上一帧不同的状态才返回 frameMsg——由框架送进 Update，Update 处理完
-// 再返回下一个 pullCmd 续链。重活（重组、glamour）都在本 goroutine 上，
-// 事件循环只收轻量帧，按键永不被渲染阻塞。
+// 每轮 return 一帧 frameMsg——由框架送进 Update，Update 处理完再返回下一个
+// pullCmd 续链。重活（重组、glamour）都在本 goroutine 上，事件循环只收轻量帧，
+// 按键永不被渲染阻塞；重复帧的渲染去重交给 renderer（viewEquals + cell diff）。
 func (t *TUI) pullCmd() tea.Cmd {
 	return func() tea.Msg {
 		for {
@@ -264,12 +274,13 @@ func (t *TUI) pullCmd() tea.Cmd {
 	}
 }
 
-// pullOnce 执行一轮拉取：按需重组视图、组装帧；与上一帧相同则返回 false
-// （空闲时 pull 链空转、事件循环零唤醒）。
+// pullOnce 执行一轮拉取：按需重组视图、组装帧并返回。false 仅在
+// RunStateJSON 解析失败时出现（坏帧不致盲：下一轮重拉）。
 //
-// ⚠️ 去重基准是 lastSent 而不是先改后比的 lastFrame：曾把 lastFrame.view
-// 先赋新值再与组装结果比较，导致"只有 view 变化"（流式输出，running/notice/
-// todo 恒定）的帧被判为未变化而永不投递——真实流式输出一个字都刷不出来。
+// 刻意不做帧级去重——重复帧（30ms 一帧、重组 100ms 节流）是常态，脏活
+// 框架做：renderer 的 flush 有 viewEquals 整帧相等短路，内部是 cell 级
+// 双缓冲 diff，重复帧不会产生任何终端 I/O。自己再去重只会引入状态与
+// bug 面（上一版 lastSent 的先赋值后比较曾让流式输出一个字都刷不出来）。
 func (t *TUI) pullOnce() (frameMsg, bool) {
 	st := t.pull
 
@@ -314,18 +325,13 @@ func (t *TUI) pullOnce() (frameMsg, bool) {
 		}
 	}
 
-	frame := frameMsg{
+	return frameMsg{
 		view:    st.view,
 		todo:    todoLines(t.engine.TodoText()),
 		notice:  notice,
 		running: rs.Running,
 		fatal:   rs.Fatal,
-	}
-	if frame == st.lastSent {
-		return frameMsg{}, false
-	}
-	st.lastSent = frame
-	return frame, true
+	}, true
 }
 
 // composeHint 常驻兜底提示。esc to interrupt 只在运行态出现——

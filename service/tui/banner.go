@@ -170,7 +170,7 @@ func (b *banner) composeStacked(width int) string {
 
 	var s strings.Builder
 	for i, row := range b.logo {
-		s.WriteString(colorText(b.logoColor[i], row))
+		s.WriteString(colorText(lipgloss.Color(b.logoColor[i]), row))
 		s.WriteString("\n")
 	}
 	s.WriteString("\n")
@@ -190,7 +190,7 @@ func (b *banner) composeStacked(width int) string {
 func (b *banner) coloredLogo() []string {
 	logo := make([]string, len(b.logo))
 	for i, row := range b.logo {
-		logo[i] = colorText(b.logoColor[i], row)
+		logo[i] = colorText(lipgloss.Color(b.logoColor[i]), row)
 	}
 	return logo
 }
@@ -199,11 +199,6 @@ func (b *banner) coloredLogo() []string {
 //
 // ANSI 输出下没有 tview 标签的转义问题（方括号就是字面量），宽度度量
 // 直接用 ansi.StringWidth（显示宽度、宽字符与 ANSI 序列都正确处理）。
-
-// colorText 前景色包装（hex 或 ANSI 256 色号）。
-func colorText(color, text string) string {
-	return lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(text)
-}
 
 // subText 次文本色（信息列与面板行）。
 func subText(text string) string {

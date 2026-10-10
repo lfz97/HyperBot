@@ -129,11 +129,17 @@ func TestComposeViewReplay(t *testing.T) {
 	st.width = 80
 	got := tui.composeView(st)
 
-	if !strings.Contains(got, "▶ 你好") {
+	if !strings.Contains(got, "你好") {
 		t.Fatalf("用户回显缺失: %q", got)
+	}
+	if !strings.Contains(got, "│") {
+		t.Fatalf("用户消息的 primary 左线缺失: %q", got)
 	}
 	if !strings.Contains(got, "boom") {
 		t.Fatalf("错误文本缺失: %q", got)
+	}
+	if !strings.Contains(got, "ERROR") {
+		t.Fatalf("错误徽章缺失: %q", got)
 	}
 	// 流式尾段 live：delta 的 Content 必须出现在渲染结果里
 	if !strings.Contains(got, "流式") {

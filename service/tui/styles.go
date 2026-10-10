@@ -1,5 +1,15 @@
 package tui
 
+// ── 调色板与消息样式（对齐 crush 的 Charmtone 主题）──────────
+//
+// 消息区视觉语言参考 crush：
+//   用户消息   primary 色左竖线 + 1 列缩进（crush Messages.UserBlurred）
+//   助手消息   纯左缩进 2 列，无边框无前缀（crush Messages.AssistantBlurred）
+//   思考块     极淡底色通栏盒（crush Messages.ThinkingBox，bgLeastVisible）
+//   工具行     状态图标 + info 色工具名 + muted 参数（crush toolHeader）
+//   错误       红底 tag 徽章 + 弱化正文（crush Messages.ErrorTag/ErrorTitle）
+// 颜色取值来自 charmbracelet/x/exp/charmtone（与 crush 默认主题一致）。
+
 import (
 	"fmt"
 	"image/color"
@@ -9,78 +19,134 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// ── 配色 ─────────────────────────────────────────────────
-//
-// 全部样式统一用 charm 生态（lipgloss）定义。颜色语义与旧 tview 版一致：
-// green=成功/正向  red=错误  yellow=警告/推理  cyan=用户/信息  橙=工具名。
-// 边框色沿用 demo 的 "62"（紫），是界面唯一的"装饰色"。
 var (
-	cBorder      = lipgloss.Color("62")      // 输入框/帮助浮层圆角边框（demo 同款）
-	cMain        = lipgloss.Color("#C9D1D9") // 主文本
-	cSub         = lipgloss.Color("#8B949E") // 次文本（hint/横幅信息/todo 头尾行）
-	cRed         = lipgloss.Color("1")       // 错误
-	cGreen       = lipgloss.Color("2")       // 成功/退出/摘要
-	cYellow      = lipgloss.Color("3")       // 警告/中断
-	cCyan        = lipgloss.Color("6")       // 新对话/进行中条目
-	cOrange      = lipgloss.Color("#FFA500") // 通知栏 warning
-	cToolName    = lipgloss.Color("#f7b786") // 工具名（Claude Code 橙）
-	cBadgeFg     = lipgloss.Color("15")      // 用户回显前景（亮白）
-	cBadgeBg     = lipgloss.Color("#696969") // 用户回显底色（暗灰徽章）
-	bannerSky    = lipgloss.Color("#4FC3F7") // 横幅 logo 渐变上端
-	bannerStatus = lipgloss.Color("#6FC3DF") // 横幅 logo 渐变下端
+	cPrimary       = lipgloss.Color("#6B50FF") // Charple：用户左线、品牌色
+	cInfo          = lipgloss.Color("#00A4FF") // Malibu：工具名、链接、标题
+	cSuccess       = lipgloss.Color("#00FFB2") // Julep：工具 ✓、成功
+	cSuccessSubtle = lipgloss.Color("#12C78F") // Guac：链接文本、成功正文
+	cError         = lipgloss.Color("#EB4268") // Sriracha：错误 tag
+	cWarning       = lipgloss.Color("#F5EF34") // Mustard：警告
+	cFgBase        = lipgloss.Color("#ECEBF0") // Sash：正文主色
+	cFgSubtle      = lipgloss.Color("#BFBCC8") // Smoke：markdown 正文、错误标题
+	cFgMuted       = lipgloss.Color("#858392") // Squid：弱化文本、参数、提示
+	cBgSubtle      = lipgloss.Color("#2D2C36") // BBQ：思考块、工具输出底色
+	cBgCode        = lipgloss.Color("#3A3943") // Char：代码块底色
+	cOnPrimary     = lipgloss.Color("#FFFAF1") // Butter：tag 徽章前景
+
+	// 兼容旧引用：边框沿用 demo 的 "62"（输入框/帮助浮层），次文本对齐 Squid。
+	cBorder = lipgloss.Color("62")
+	cSub    = cFgMuted
 )
 
-// ── 样式渲染辅助 ─────────────────────────────────────────
-//
-// 文本换行规则与旧版一致：状态类消息前后各一个空行；通知（bar）类单行无换行。
+// maxTextWidth 消息文本的最大列宽（crush 同款 cap：超宽终端下正文不至于拉满，
+// 保持可读的行长）。
+const maxTextWidth = 120
 
-// userEcho 用户输入回显：▶ 徽章（亮白粗体 + 暗灰底），前后空行。
-func userEcho(text string) string {
-	badge := lipgloss.NewStyle().Foreground(cBadgeFg).Background(cBadgeBg).Bold(true).
-		Render("▶ " + text)
-	return "\n" + badge + "\n"
+// textWidth 块内容的可用列宽。
+func textWidth(w int) int {
+	if w > maxTextWidth {
+		return maxTextWidth
+	}
+	return w
 }
 
-// errText 错误消息（红）。
+// ── 消息块样式 ─────────────────────────────────────────
+
+// msgIndent 助手侧消息块的统一左缩进（crush AssistantBlurred：PaddingLeft(2)，
+// 无边框无前缀符号）。
+var msgIndent = lipgloss.NewStyle().PaddingLeft(2)
+
+// userBar 用户消息：primary 色左竖线 + 1 列缩进（crush UserBlurred）。
+var userBar = lipgloss.NewStyle().
+	PaddingLeft(1).
+	BorderLeft(true).
+	BorderStyle(lipgloss.NormalBorder()).
+	BorderForeground(cPrimary)
+
+// thinkingBox 思考块：极淡底色通栏盒（crush ThinkingBox = Background(bgLeastVisible)）。
+// Width 由调用方按文本宽度传入，负责软换行与整行铺底。
+func thinkingBox(w int) lipgloss.Style {
+	return lipgloss.NewStyle().Background(cBgSubtle).Padding(0, 1).Width(w)
+}
+
+// errorTag 错误徽章：红底浅字（crush Messages.ErrorTag）。
+var errorTag = lipgloss.NewStyle().Padding(0, 1).Background(cError).Foreground(cOnPrimary)
+
+// ── 状态/生命周期消息（无装饰符号，语义由颜色承载——沿用项目规则）──
+
+// errText 错误消息：ERROR 徽章 + 弱化正文。
 func errText(text string) string {
-	return "\n" + lipgloss.NewStyle().Foreground(cRed).Render(text) + "\n"
+	return errorTag.Render("ERROR") + " " + colorText(cFgSubtle, text)
 }
 
-// successText 成功消息（绿）。
+// successText 成功消息（淡绿正文）。
 func successText(text string) string {
-	return "\n" + lipgloss.NewStyle().Foreground(cGreen).Render(text) + "\n"
+	return colorText(cSuccessSubtle, text)
 }
 
 // warnText 警告消息（黄）。
 func warnText(text string) string {
-	return "\n" + lipgloss.NewStyle().Foreground(cYellow).Render(text) + "\n"
+	return colorText(cWarning, text)
 }
 
-// slashEcho 斜杠指令回显（亮绿）。
+// slashEcho 斜杠指令回显（弱化，弱到不抢对话内容的视觉权重）。
 func slashEcho(text string) string {
-	return "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Render(text) + "\n"
+	return colorText(cFgMuted, text)
 }
 
-// summaryText 摘要提示（绿）。
+// summaryText 摘要提示（淡绿）。
 func summaryText(text string) string {
-	return "\n" + lipgloss.NewStyle().Foreground(cGreen).
-		Render("->已生成摘要：\n"+text) + "\n"
+	return colorText(cSuccessSubtle, "已生成摘要：\n"+text)
 }
 
-// reasoningText 推理正文（黄 + 弱化）。流式尾段与定稿共用，观感一致。
-func reasoningText(r string) string {
-	return lipgloss.NewStyle().Foreground(cYellow).Faint(true).Render(r)
+// ── 工具行（crush toolHeader：状态图标 + info 工具名 + muted 参数）──
+
+// toolCompact 工具行渲染：头部一行（✓ name args），有结果时追加缩进的
+// 底色摘要块。参数压缩：去换行、合并空格、截断 80 rune；结果截断 200 rune。
+func toolCompact(name string, args []byte, result string) string {
+	header := toolHeader(name, compactArgs(args))
+
+	summary := ""
+	if result != "" {
+		s := compactLine(result)
+		if len([]rune(s)) > 200 {
+			s = string([]rune(s)[:200]) + "...)"
+		}
+		if s != "" && s != "()" && s != "{}" {
+			summary = s
+		}
+	}
+	if summary == "" {
+		return header
+	}
+	body := lipgloss.NewStyle().
+		Foreground(cFgMuted).
+		Background(cBgSubtle).
+		MarginLeft(2).
+		Padding(0, 1).
+		Render(summary)
+	return header + "\n" + body
 }
 
-// reasoningBlock 思考块渲染：前后各一个空行（纯函数，流式尾段与定稿同型）。
-func reasoningBlock(r string) string {
-	return "\n" + reasoningText(r) + "\n"
+// toolHeader 头部行：✓ 工具名 参数。
+func toolHeader(name, params string) string {
+	icon := colorText(cSuccess, "✓")
+	return fmt.Sprintf("%s %s %s", icon, colorText(cInfo, name), params)
 }
 
-// contentTag 正文前缀标记：加在渲染结果的第一个有可见内容的行上
-// （正文以代码块/表格开头时首行是空的，直接前置会让 ● 独占一行）。
-func contentTag(line string) string {
-	return "● " + line
+// compactArgs 压缩工具参数：空/()/{} 输出空串。
+func compactArgs(args []byte) string {
+	if len(args) == 0 {
+		return ""
+	}
+	s := compactLine(string(args))
+	if len([]rune(s)) > 80 {
+		s = string([]rune(s)[:80]) + "...)"
+	}
+	if s == "()" || s == "{}" {
+		return ""
+	}
+	return colorText(cFgMuted, s)
 }
 
 // compactLine 把多行文本压成单行：去掉 ANSI 转义与回车（命令输出常带 PTY 的
@@ -94,93 +160,56 @@ func compactLine(s string) string {
 	return strings.TrimSpace(s)
 }
 
-// toolCompact 紧凑单行工具渲染：绿点 + 橙色工具名 + 灰色参数/结果概要。
-// 格式: ● name  args ↪ result（result 换行缩进显示）。
-// 参数压缩：去换行、合并空格、截断 80 rune；空/()/{} 不输出。
-func toolCompact(name string, args []byte, result string) string {
-	var compactArgs string
-	if len(args) > 0 {
-		s := compactLine(string(args))
-		if len([]rune(s)) > 80 {
-			s = string([]rune(s)[:80]) + "...)"
-		}
-		if s != "" && s != "()" && s != "{}" {
-			compactArgs = " " + s
-		}
-	}
-
-	var resultSummary string
-	if result != "" {
-		s := compactLine(result)
-		if len([]rune(s)) > 200 {
-			s = string([]rune(s)[:200]) + "...)"
-		}
-		if s != "" && s != "()" && s != "{}" {
-			resultSummary = s
-		}
-	}
-
-	var tail string
-	switch {
-	case compactArgs != "" && resultSummary != "":
-		tail = compactArgs + " \n    ↪ " + resultSummary
-	case compactArgs != "":
-		tail = compactArgs
-	case resultSummary != "":
-		tail = " \n    ↪ " + resultSummary
-	}
-
-	dot := lipgloss.NewStyle().Foreground(cGreen).Render("●")
-	nameStr := lipgloss.NewStyle().Foreground(cToolName).Render(name)
-	tailStr := lipgloss.NewStyle().Foreground(cSub).Render(tail)
-	return fmt.Sprintf("\n  %s %s%s", dot, nameStr, tailStr)
-}
-
 // ── bar 通知（单行、无首尾换行）──────────────────────────
 
-// noticeNewConversation 新对话通知（青）。
+// noticeNewConversation 新对话通知（info）。
 func noticeNewConversation() string {
-	return lipgloss.NewStyle().Foreground(cCyan).Render("new conversation started")
+	return colorText(cInfo, "new conversation started")
 }
 
 // noticeCancelled 取消通知（黄）。
 func noticeCancelled() string {
-	return lipgloss.NewStyle().Foreground(cYellow).Render("session cancelled")
+	return colorText(cWarning, "session cancelled")
 }
 
-// noticeSuccess 成功通知（绿）。
+// noticeSuccess 成功通知（淡绿）。
 func noticeSuccess(text string) string {
-	return lipgloss.NewStyle().Foreground(cGreen).Render(text)
+	return colorText(cSuccessSubtle, text)
 }
 
-// noticeWarning 警告通知（橙，与取消的黄色区分开）。
+// noticeWarning 警告通知（黄）。
 func noticeWarning(text string) string {
-	return lipgloss.NewStyle().Foreground(cOrange).Render(text)
+	return colorText(cWarning, text)
 }
 
-// noticeSub 兜底：次文本色。
+// noticeSub 兜底：弱化文本色。
 func noticeSub(text string) string {
-	return lipgloss.NewStyle().Foreground(cSub).Render(text)
+	return colorText(cFgMuted, text)
 }
 
 // ── todo 清单栏 ─────────────────────────────────────────
 
 // todoLines 把 TodoBar 的多行纯文本逐行上色：
-// [TODO] 头行与 (N done) 计数行暗灰、◐ 进行中青色、☐ 待办正文色。
-// ANSI 输出不需要 tview.Escape 那套转义——方括号就是字面量。
+// [TODO] 头行与 (N done) 计数行弱化、◐ 进行中 info 色、☐ 待办正文色。
+// ANSI 输出下方括号是字面量，无需转义。
 func todoLines(text string) string {
 	colorOf := func(line string) color.Color {
 		if strings.HasPrefix(line, "◐ ") {
-			return cCyan
+			return cInfo
 		} else if strings.HasPrefix(line, "☐ ") {
-			return cMain
+			return cFgBase
 		} else { // [TODO] 头行、计数行
-			return cSub
+			return cFgMuted
 		}
 	}
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
-		lines[i] = lipgloss.NewStyle().Foreground(colorOf(line)).Render(line)
+		lines[i] = colorText(colorOf(line), line)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// colorText 前景色包装。
+func colorText(c color.Color, text string) string {
+	return lipgloss.NewStyle().Foreground(c).Render(text)
 }

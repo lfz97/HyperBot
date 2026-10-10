@@ -68,7 +68,7 @@ type wireToolCall struct {
 // ── 事件循环消息 ─────────────────────────────────────────
 
 // frameMsg 一帧渲染结果（全部为已渲染的最终形态文本）。
-// 由 pullCmd（订阅式 cmd）在框架的 goroutine 上产出、return 交给框架送进
+// 由 pullCmd（tea.Tick）在框架的 cmd goroutine 上产出、return 交给框架送进
 // Update——不经过 program.Send，走标准的 Elm 消息通道。
 type frameMsg struct {
 	view    string // 消息区全文（含横幅/终态，glamour 已渲染、lipgloss 已上色）
@@ -77,3 +77,8 @@ type frameMsg struct {
 	running bool   // agent 是否在运行（spinner 开关依据）
 	fatal   *wireFatal
 }
+
+// pullSkipMsg 坏帧保活消息。pullCmd 的 fn 绝不能返回 nil（nil 不会触发
+// Update 的续链分支，链会静默断掉）——RunStateJSON 解析失败时返回它，
+// Update 收到后什么都不应用、只返回下一个 pullCmd 续链。
+type pullSkipMsg struct{}

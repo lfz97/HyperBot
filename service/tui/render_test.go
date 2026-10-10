@@ -245,6 +245,26 @@ func TestPullDeliversViewChange(t *testing.T) {
 	}
 }
 
+// TestPullChainWiring 锁定续链接线：pullSkipMsg 必须续链，且续链 cmd 执行后
+// 产出的消息绝不能是 nil（nil 不会触发 Update，链会静默断掉）。
+func TestPullChainWiring(t *testing.T) {
+	f := &fakeEngine{runState: `{"running":false,"fatal":null}`}
+	tui := NewTui(f)
+	tui.Init()
+
+	_, cmd := tui.Update(pullSkipMsg{})
+	if cmd == nil {
+		t.Fatalf("pullSkipMsg 必须返回续链 cmd")
+	}
+	msg := cmd() // tea.Tick：等 pullInterval 后执行一轮拉取
+	if msg == nil {
+		t.Fatalf("续链 cmd 产出 nil 消息——链会静默断掉")
+	}
+	if _, ok := msg.(frameMsg); !ok {
+		t.Fatalf("期望 frameMsg，得到 %T", msg)
+	}
+}
+
 // TestKeyHandling 按键语义：enter 提交、引擎忙保留输入、esc 中断（仅运行态）。
 func TestKeyHandling(t *testing.T) {
 	f := &fakeEngine{runState: `{"running":false,"fatal":null}`}

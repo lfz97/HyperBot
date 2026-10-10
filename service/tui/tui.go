@@ -93,6 +93,9 @@ func (t *TUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd := t.bottom.spinner.Update(m)
 		t.recalcComponentSize()
 		return t, cmd
+
+	case pullSkipMsg: // 坏帧保活（见 pullCmd 注释）：什么都不应用，只续链
+		return t, t.pullCmd()
 	}
 	return t, nil
 }
@@ -206,19 +209,21 @@ func NewTui(view EngineView) *TUI {
 }
 
 // Run 启动 bubbletea 事件循环（阻塞到 tea.Quit）。
+// pull 链无需在这里收编：tea.Tick 的 cmd 至多再触发一轮，产出消息被
+// Send 的 ctx.Done 分支丢弃，goroutine 自然结束（框架对 cmd 的退出容忍
+// 见 handleCommands 注释："leak the goroutine until Cmd returns"）。
 func (t *TUI) Run() {
-	defer close(t.pull.stop) // 退出后收编 pull 链的 goroutine（它 select stop）
 	if _, err := tea.NewProgram(t).Run(); err != nil {
 		panic("Error running application: " + err.Error())
 	}
 }
 
-// ── pull 链（订阅式 cmd）────────────────────────────────
+// ── pull 链（tea.Tick 订阅）──────────────────────────────
 //
 // 心跳与旧 drawLoop 相同：固定帧率拉引擎五类状态（横幅一次、消息日志按版本、
-// 运行态、清单、通知）+ 终态观察。与旧版的差别只在交付方式：不 program.Send，
-// 而是作为 cmd 的返回值交给框架——Update 接 frameMsg、处理完返回下一个
-// pullCmd 续链，纯 Elm 语义（与 spinner 的 Tick 续链同构）。
+// 运行态、清单、通知）+ 终态观察。交付方式是 Elm 订阅的自续形式：tea.Tick
+// 到点产出 frameMsg 送进 Update，Update 处理完返回下一个 pullCmd 续链
+// （与 spinner 的 Tick 续链同构），不经过 program.Send。
 
 const (
 	// pullInterval 拉取帧率。既是状态上屏延迟上界，也是通知 TTL 的时钟。
@@ -242,30 +247,27 @@ type pullState struct {
 	view         string // 最近一次重组的视图全文（帧恒携带，重复帧交给框架去重）
 	width        int    // 本轮重组用的组件宽度（glamour 按此换行）
 	glamRenderer *glamourCache
-	stop         chan struct{} // Run 返回后关闭，收编 pull 链 goroutine
 }
 
 func newPullState() *pullState {
-	return &pullState{glamRenderer: &glamourCache{}, stop: make(chan struct{})}
+	return &pullState{glamRenderer: &glamourCache{}}
 }
 
-// pullCmd 是 pull 的 Elm 载体：cmd 在框架的 goroutine 上按 pullInterval 轮询，
-// 每轮 return 一帧 frameMsg——由框架送进 Update，Update 处理完再返回下一个
-// pullCmd 续链。重活（重组、glamour）都在本 goroutine 上，事件循环只收轻量帧，
-// 按键永不被渲染阻塞；重复帧的渲染去重交给 renderer（viewEquals + cell diff）。
+// pullCmd 是 pull 链的 Elm 载体：tea.Tick 到点后在 cmd goroutine 上执行一轮
+// 拉取、产出 frameMsg 送进 Update；Update 处理完返回下一个 pullCmd 续链
+// （与 spinner 的 Tick 续链同构）。重活（重组、glamour）都在 cmd 的 goroutine
+// 上，事件循环只收轻量帧，按键永不被渲染阻塞；重复帧的渲染去重交给 renderer
+// （viewEquals + cell diff）。
+//
+// ⚠️ fn 绝不能返回 nil：nil 不会触发 Update 的续链分支，链就静默断掉。
+// 坏帧（RunStateJSON 解析失败，理论死路的防御性兜底）用 pullSkipMsg 保活。
 func (t *TUI) pullCmd() tea.Cmd {
-	return func() tea.Msg {
-		for {
-			select {
-			case <-t.pull.stop:
-				return nil
-			case <-time.After(pullInterval):
-			}
-			if frame, ok := t.pullOnce(); ok {
-				return frameMsg(frame)
-			}
+	return tea.Tick(pullInterval, func(time.Time) tea.Msg {
+		if frame, ok := t.pullOnce(); ok {
+			return frameMsg(frame)
 		}
-	}
+		return pullSkipMsg{}
+	})
 }
 
 // pullOnce 执行一轮拉取：按需重组视图、组装帧并返回。false 仅在

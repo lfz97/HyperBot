@@ -29,8 +29,9 @@ var (
 	cFgBase        = lipgloss.Color("#ECEBF0") // Sash：正文主色
 	cFgSubtle      = lipgloss.Color("#BFBCC8") // Smoke：markdown 正文、错误标题
 	cFgMuted       = lipgloss.Color("#858392") // Squid：弱化文本、参数、提示
-	cBgSubtle      = lipgloss.Color("#2D2C36") // BBQ：思考块、工具输出底色
-	cBgCode        = lipgloss.Color("#3A3943") // Char：代码块底色
+	cFgMostSubtle  = lipgloss.Color("#605F6B") // Oyster：思考块左线
+	cCodeBg        = lipgloss.Color("#333333") // 行内代码底色（纯中性灰）
+	cCodeBlockBg   = lipgloss.Color("#262626") // 代码块底色（纯中性灰）
 	cOnPrimary     = lipgloss.Color("#FFFAF1") // Butter：tag 徽章前景
 
 	// 兼容旧引用：边框沿用 demo 的 "62"（输入框/帮助浮层），次文本对齐 Squid。
@@ -63,10 +64,17 @@ var userBar = lipgloss.NewStyle().
 	BorderStyle(lipgloss.NormalBorder()).
 	BorderForeground(cPrimary)
 
-// thinkingBox 思考块：极淡底色通栏盒（crush ThinkingBox = Background(bgLeastVisible)）。
-// Width 由调用方按文本宽度传入，负责软换行与整行铺底。
-func thinkingBox(w int) lipgloss.Style {
-	return lipgloss.NewStyle().Background(cBgSubtle).Padding(0, 1).Width(w)
+// thinkingQuote 思考块：弱化左竖线 + 缩进（crush ThinkingBox 的无底色变体——
+// 大面积底色洗在黑底终端上会被读成色块，蓝紫调的尤其难看，弃用）。
+// Width 由调用方按文本宽度传入，负责软换行。
+func thinkingQuote(w int) lipgloss.Style {
+	return lipgloss.NewStyle().
+		Foreground(cFgMuted).
+		PaddingLeft(1).
+		Width(w - 1). // 减去 border 一列
+		BorderLeft(true).
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(cFgMostSubtle)
 }
 
 // errorTag 错误徽章：红底浅字（crush Messages.ErrorTag）。
@@ -119,12 +127,7 @@ func toolCompact(name string, args []byte, result string) string {
 	if summary == "" {
 		return header
 	}
-	body := lipgloss.NewStyle().
-		Foreground(cFgMuted).
-		Background(cBgSubtle).
-		MarginLeft(2).
-		Padding(0, 1).
-		Render(summary)
+	body := "  " + colorText(cFgMuted, "↪ "+summary)
 	return header + "\n" + body
 }
 

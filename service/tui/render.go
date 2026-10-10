@@ -140,12 +140,12 @@ func renderToolResult(m *model.Message, toolBuf map[string]*wireToolCall) string
 	return msgIndent.Render(toolCompact(entry.name, []byte(entry.args), m.Content))
 }
 
-// renderThinking 思考块：弱化文本 + 极淡底色通栏盒（crush ThinkingBox）。
+// renderThinking 思考块：弱化左竖线 + 弱化文本（quote 风格，无底色）。
 // 纯函数，流式尾段与定稿同型，观感一致。reasoning 是模型的思考散文，
 // 不走 glamour（结构化 markdown 对它没有增益，纯文本渲染在长思考流式
-// 重放下的成本也低一个量级）；盒子的 Width 负责软换行与整行铺底。
+// 重放下的成本也低一个量级）；样式的 Width 负责软换行。
 func renderThinking(r string, w int) string {
-	return msgIndent.Render(thinkingBox(w - msgIndentW).Render(colorText(cFgMuted, r)))
+	return msgIndent.Render(thinkingQuote(w - msgIndentW).Render(r))
 }
 
 // flushTail 渲染流式尾段并清空累积，返回值作为边界记录（user/slash/warn/
@@ -337,11 +337,9 @@ func markdownStyle() ansi.StyleConfig {
 		},
 		H1: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
-				Prefix:          " ",
-				Suffix:          " ",
-				Color:           hexOf("#E8FE96"),
-				BackgroundColor: hexOf("#6B50FF"),
-				Bold:            new(bool(true)),
+				Prefix: "# ",
+				Color:  hexOf("#6B50FF"),
+				Bold:   new(bool(true)),
 			},
 		},
 		H2: ansi.StyleBlock{StylePrimitive: ansi.StylePrimitive{Prefix: "## "}},
@@ -381,7 +379,7 @@ func markdownStyle() ansi.StyleConfig {
 				Prefix:          " ",
 				Suffix:          " ",
 				Color:           hexOf("#EB4268"),
-				BackgroundColor: hexOf("#3A3943"),
+				BackgroundColor: hexOf("#333333"), // 纯中性灰——蓝紫调底色在黑底终端上会被读成蓝色块
 			},
 		},
 		CodeBlock: ansi.StyleCodeBlock{
@@ -408,7 +406,7 @@ func markdownStyle() ansi.StyleConfig {
 				NameFunction:    ansi.StylePrimitive{Color: hexOf("#12C78F")},
 				LiteralNumber:   ansi.StylePrimitive{Color: hexOf("#00FFB2")},
 				LiteralString:   ansi.StylePrimitive{Color: hexOf("#E8FE96")},
-				Background:      ansi.StylePrimitive{BackgroundColor: hexOf("#3A3943")},
+				Background:      ansi.StylePrimitive{BackgroundColor: hexOf("#262626")}, // 纯中性灰
 			},
 		},
 		Table: ansi.StyleTable{

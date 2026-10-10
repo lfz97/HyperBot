@@ -1,12 +1,10 @@
 package engine
 
 import (
-	"context"
 	"fmt"
 	"net/url"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 )
@@ -24,10 +22,41 @@ func GetEngineService(name string) *Engine {
 	}
 }
 
-// Init 完成 preCheckLoad 与 newRunner。
+// Init 完成环境检查与资产装配（bootstrap），随后构造 runner。
+// 检查器只返回错误与产物；致命呈现（parkWithFatal）是 Engine 的职责。
 func (e *Engine) Init() {
-	(*e).preCheckLoad()
-	(*e).newRunner()
+	env, err := Check(e.Agentname, e)
+	if err != nil {
+		e.parkWithFatal(FatalError, err.Error(), true)
+		return
+	}
+	if env.NeedRestart {
+		// 首跑创建了默认配置文件：须改完配置重启，本次启动到此为止。
+		e.parkWithFatal(FatalSuccess, "检查到配置文件不存在，已创建默认配置文件。请根据实际情况修改配置文件后重新启动程序！", true)
+		return
+	}
+	e.absorb(env)
+	e.newRunner()
+}
+
+// absorb 把 bootstrap 产物拷入引擎字段，并上屏启动期收集的非致命提示。
+func (e *Engine) absorb(env *BootEnv) {
+	e.CWD = env.CWD
+	e.ConfigFolderPath = env.ConfigFolderPath
+	e.HyperBotConfigPath = env.HyperBotConfigPath
+	e.SkillFolderPath = env.SkillFolderPath
+	e.FrameworkLogFile_p = env.LogFile
+	e.Config_p = env.Config
+	e.Systemprompt = env.Systemprompt
+	e.SessionService_p = env.SessionService
+	e.SqliteMemoryService = env.MemoryService
+	e.builtinTools = env.BuiltinTools
+	e.builtinToolsets = env.BuiltinToolsets
+	e.SkillRepo = env.SkillRepo
+	e.publishSkillItems()
+	for _, n := range env.Notices {
+		e.setNotice(n.Kind, n.Text)
+	}
 }
 
 // parkWithFatal 置进程终态并永久驻留当前 goroutine。
@@ -43,18 +72,19 @@ func (e *Engine) parkWithFatal(style string, text string, waitKey bool) {
 	select {}
 }
 
+// AgentStart 启动引擎主循环：读用户输入、分类分发，直到退出。
+// 一轮对话在 turn 里跑（含自动重试）；错误预算的状态流转见 errorBudget。
 func (e *Engine) AgentStart() {
-	// 初始用 Startup 而不是 New：程序刚启动时并不存在"上一轮对话"，
-	// 推一条"新对话已开始"到 NoticeBar 是噪音。New 只留给用户真的敲 /new 的场合。
-	MsgContext := turnInfo{
-		Code:          Startup,
-		Reason:        "程序启动",
-		PartialOutput: "",
-	}
 	e.newSessionID()
+	// 启动横幅只在此组装一次（bootstrap/newRunner 均已完成）。
+	(*e).setStartupInfo((*e).startupInfoLines())
 	for {
-		EndTurn_p := e.agentRunIteratively(context.Background(), MsgContext)
-		if (*EndTurn_p).Code == Exit { //用户主动结束对话，退出程序
+		cmd := parseInput(<-(*e).inputCh)
+		(*e).errBudget.recharge() //任何用户输入都充值（斜杠/空输入也是，无害）
+
+		switch cmd.Kind {
+		case cmdExit: //用户主动结束对话：释放资源，置终态并永久驻留
+			(*e).appendTyped("slash", cmd.Prompt)
 			//关闭AgentRunner，释放资源
 			(*(*e).AgentRunner_p).Runner.Close()
 			for _, toolset := range (*e).mcpToolsets {
@@ -64,36 +94,17 @@ func (e *Engine) AgentStart() {
 			// main() 随 Run() 返回——引擎不再知道终端的存在。
 			(*e).parkWithFatal(FatalExit, "", false)
 
-		} else if (*EndTurn_p).Code == New { //用户开始新对话：重置 SessionID，更新MsgContext为新对话的初始状态
-			// 错误计数不在这里归——输入 /new 本身已走过 agentRunIteratively 的
-			// 用户输入充值点，且 New 之后到下一次用户输入之间不存在 fail 路径
+		case cmdNew: //用户开始新对话：重置 SessionID
+			(*e).appendTyped("slash", cmd.Prompt)
 			e.newSessionID()
-			MsgContext = turnInfo{
-				Code:          New,
-				Reason:        "新对话",
-				PartialOutput: "",
-			}
+			(*e).setNotice(NoticeNewConversation, "")
 
-		} else if (*EndTurn_p).Code == Error { //出错：累加连续错误计数，未达上限则退避后自动重试
-			n, exhausted := (*e).errBudget.fail()
-			if exhausted {
-				// 由于此时错误计数已到达上限，agentRunIteratively内将不会自动重试，需要用户输入，这里打印一条提示消息。
-				(*e).appendTyped("error", fmt.Sprintf("连续 %d 次失败，已停止自动重试。请检查网络/配置后重新输入。", n))
-				MsgContext = *EndTurn_p
-				continue
-			}
-			// 必须在 Sleep 之前打：sleep 期间引擎 goroutine 阻塞、不监听 inputChan，
-			// 用户打字没有反应，需要知道程序在等什么。
-			(*e).appendTyped("warn", fmt.Sprintf("%d 秒后重试（第 %d/%d 次）...", (*e).errBudget.backoff()/time.Second, n, (*e).errBudget.limit()))
-			time.Sleep((*e).errBudget.backoff())
-			MsgContext = *EndTurn_p
+		case cmdPrompt: //普通对话输入
+			(*e).appendTyped("user", cmd.Prompt)
+			e.turn(cmd.Prompt)
 
-		} else {
-			(*e).errBudget.recharge() //其他任何情况返回，错位计数都归零
-			MsgContext = *EndTurn_p
-			continue
+		case cmdEmpty: //空输入，重新等待
 		}
-
 	}
 }
 
@@ -103,7 +114,7 @@ func (e *Engine) newSessionID() {
 }
 
 // startupInfoLines 拼出启动横幅的信息行（label 补齐到 13 列），宽度截断交给 TUI。
-// 调用时机在 AgentStart 第一轮，此时 preCheckLoad/newRunner/newSessionID 均已完成。
+// 调用时机在 AgentStart 第一轮，此时 bootstrap/newRunner/newSessionID 均已完成。
 func (e *Engine) startupInfoLines() []string {
 	cfg := (*e).Config_p.Model
 	cwd := (*e).CWD

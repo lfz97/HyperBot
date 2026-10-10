@@ -3,51 +3,22 @@ package engine
 import (
 	"HyperBot/service/engine/agent"
 	"HyperBot/service/engine/config"
-	m "HyperBot/service/engine/memory"
-	s "HyperBot/service/engine/session"
-	functionTools "HyperBot/service/engine/tools/functions"
 	"HyperBot/service/engine/tools/toolsets"
-	"HyperBot/service/engine/tools/toolsets/cronagent"
-	"HyperBot/service/engine/tools/toolsets/localexec"
 	"context"
-	"embed"
 	"errors"
 	"fmt"
-	stdlog "log"
 	"os"
-	"os/user"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
-	"time"
 
-	"github.com/google/uuid"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 	ag "trpc.group/trpc-go/trpc-agent-go/agent"
 	"trpc.group/trpc-go/trpc-agent-go/agent/llmagent"
-	"trpc.group/trpc-go/trpc-agent-go/log"
 	"trpc.group/trpc-go/trpc-agent-go/memory"
 	"trpc.group/trpc-go/trpc-agent-go/model"
 	"trpc.group/trpc-go/trpc-agent-go/runner"
 	"trpc.group/trpc-go/trpc-agent-go/session"
 	"trpc.group/trpc-go/trpc-agent-go/skill"
 	"trpc.group/trpc-go/trpc-agent-go/tool"
-	mcp "trpc.group/trpc-go/trpc-mcp-go"
-)
-
-//go:embed prompt/*
-var fs embed.FS
-
-// 定义配置文件夹中的各种配置文件名称
-const (
-	HyperBotConfigFolder string = ".hyperbot"
-	HyperBotConfig       string = "hyperbot.yaml"
-	SkillsFolder         string = "skills"
-	HyperBotLogFile      string = "hyperbot.log"
-	memoryDBFileName     string = "memory.db"
-	outputDir            string = "output"
 )
 
 type Engine struct {
@@ -68,7 +39,7 @@ type Engine struct {
 	builtinToolsets     []tool.ToolSet      //内置工具集，启动时确定，不自动刷新
 
 	// errBudget 连续错误自动重试预算：策略（max/gap）与状态（streak）同体，
-	// 状态流转见 engineCore.go 的 errorBudget 类型。
+	// 状态流转见 errorBudget.go 的 errorBudget 类型。
 	errBudget errorBudget
 
 	// ── 对上层 UI 暴露的可观察状态（pull 契约，方法见 uistate.go）──
@@ -85,47 +56,11 @@ type Engine struct {
 
 	interruptCh chan struct{}
 }
+
 type Agentrunner struct {
 	Runner    runner.Runner
 	Stream    bool
 	SessionId string
-}
-
-func (e *Engine) preCheckLoad() {
-
-	//获取Agent可执行文件所在的目录路径
-	e.getcwd()
-
-	//检查配置文件夹
-	e.checkConfigFolder()
-
-	//检查配置文件是否存在，不存在则创建一个默认的配置文件
-	e.checkConfig()
-
-	//检查skills文件夹是否存在
-	e.checkSkillsFolder()
-
-	// 将框架日志重定向到文件，避免输出到终端干扰 TUI显示
-	e.redirectFrameworkLog()
-
-	//设置系统提示词
-	e.configSystemPrompt()
-
-	//加载配置文件
-	e.loadConfig()
-
-	//初始化内存会话服务
-	e.initInMemorySessionService()
-
-	//初始化sqlite记忆服务
-	e.initSqliteMemoryService()
-
-	//加载内置工具和工具集
-	e.loadBuiltinToolsAndToolsets()
-
-	//加载skillrepo
-	e.loadSkills()
-
 }
 
 func (e *Engine) newRunner() {
@@ -197,6 +132,15 @@ func (e *Engine) refresh() {
 	e.loadSkills()
 }
 
+func (e *Engine) loadConfig() {
+	//加载配置文件
+	c, err := config.LoadConfig((*e).HyperBotConfigPath)
+	if err != nil {
+		(*e).parkWithFatal(FatalError, fmt.Sprintf("加载配置文件错误: %v,按任意键退出", err), true)
+	}
+	(*e).Config_p = c
+}
+
 func (e *Engine) loadMCPFromConfig() {
 	idx := 0
 	if len((*(*e).Config_p).HttpMcp) != 0 {
@@ -215,7 +159,7 @@ func (e *Engine) loadMCPFromConfig() {
 		}
 	}
 	if len((*(*e).Config_p).StdinMcp) != 0 {
-		//读取配置文件中的 StdinMCP 配置，创建 StdinMCP ToolSet 并添加到 Toolsets 中
+		//读取配置文件中的 StdinMcp 配置，创建 StdinMCP ToolSet 并添加到 Toolsets 中
 		for _, stdinMcpConfig := range (*(*e).Config_p).StdinMcp {
 			if stdinMcpConfig.Enabled == true {
 				if stdinMcpConfig.Name == "" {
@@ -238,46 +182,19 @@ func (e *Engine) refreshMCPFromConfig() {
 	}
 
 	e.loadMCPFromConfig() //重新组装工具集
+}
 
-}
-func (e *Engine) loadBuiltinToolsets() {
-	(*e).builtinToolsets = append((*e).builtinToolsets, localexec.LocalExec())
-
-	// 用独立的 agent 名，避免遥测里 cron 的自主运行和主对话混在同一个 (app, agent) 对下
-	cronToolset, err := cronagent.CronAgent(
-		(*e).Agentname+"_cron",
-		(*e).Config_p,
-		(*e).Systemprompt,
-		(*e).SkillFolderPath,
-		(*e).ConfigFolderPath,
-	)
-	if err != nil {
-		(*e).parkWithFatal(FatalError, fmt.Sprintf("初始化cron agent错误: %v", err), true)
-		return
-	}
-	// 存档加载失败是非致命的：坏文件已被挪到 .fix<时间戳>，空集合可以正常启动
-	if loadErr := cronToolset.LoadError(); loadErr != nil {
-		stdlog.Printf("cron agent 存档加载失败: %v", loadErr)
-		(*e).setNotice(NoticeWarning, "cron agent config broken, moved to .fix")
-	}
-	(*e).builtinToolsets = append((*e).builtinToolsets, cronToolset)
-}
-func (e *Engine) loadBuiltinTools() {
-	fileopstools := functionTools.GetFileOperationsTools()
-	fileSystemTools := functionTools.GetFileSystemTools()
-	dateTools := functionTools.GetDateTools()
-	todoTools := functionTools.GetTodoTools() // 框架内置 todo_write：任务清单，状态存 session，跨轮持久化
-	(*e).builtinTools = append((*e).builtinTools, fileopstools...)
-	(*e).builtinTools = append((*e).builtinTools, fileSystemTools...)
-	(*e).builtinTools = append((*e).builtinTools, dateTools...)
-	(*e).builtinTools = append((*e).builtinTools, todoTools...)
-}
-func (e *Engine) loadBuiltinToolsAndToolsets() {
-	e.loadBuiltinToolsets()
-	e.loadBuiltinTools()
-}
+// loadSkills 重建技能仓库并发布技能清单（refresh 每回合调用）。
 func (e *Engine) loadSkills() {
 	(*e).SkillRepo, _ = skill.NewFSRepository((*e).SkillFolderPath)
+	e.publishSkillItems()
+}
+
+// publishSkillItems 把技能仓库摘要发布到可观察状态。
+func (e *Engine) publishSkillItems() {
+	if (*e).SkillRepo == nil {
+		return
+	}
 	summaries := (*e).SkillRepo.Summaries()
 	itms := []SkillItem{}
 	for _, s := range summaries {
@@ -288,185 +205,4 @@ func (e *Engine) loadSkills() {
 		})
 	}
 	(*e).setSkillItems(itms)
-}
-func (e *Engine) initSqliteMemoryService() {
-	service, err := m.NewSQLiteMemoryService(filepath.Join((*e).ConfigFolderPath, memoryDBFileName))
-	if err != nil {
-		(*e).parkWithFatal(FatalError, fmt.Sprintf("初始化sqlite记忆服务错误: %v", err), true)
-	}
-	(*e).SqliteMemoryService = service
-}
-func (e *Engine) loadConfig() {
-	//加载配置文件
-	c, err := config.LoadConfig((*e).HyperBotConfigPath)
-	if err != nil {
-		(*e).parkWithFatal(FatalError, fmt.Sprintf("加载配置文件错误: %v,按任意键退出", err), true)
-	}
-	(*e).Config_p = c
-}
-func (e *Engine) initInMemorySessionService() {
-	(*e).SessionService_p = s.NewMemorySessionService((*e).Config_p.Model, e)
-}
-
-// 配置系统提示词，替换其中的占位符
-func (e *Engine) configSystemPrompt() {
-	systemprompt_b, _ := fs.ReadFile("prompt/systemprompt.md")
-	(*e).Systemprompt = string(systemprompt_b)
-	//Agent名称
-	(*e).Systemprompt = strings.ReplaceAll((*e).Systemprompt, "{{NAME}}", (*e).Agentname)
-
-	//当前日期（已由 BeforeModel 状态栏 TIMENOW 提供，每次调用刷新）
-	//(*e).Systemprompt = strings.ReplaceAll((*e).Systemprompt, "{{DATE}}", time.Now().Format("2006-01-02 15:04:05 (Mon)"))
-
-	//当前时区
-	zone, _ := time.Now().Zone()
-	(*e).Systemprompt = strings.ReplaceAll((*e).Systemprompt, "{{TIMEZONE}}", fmt.Sprintf("%s (%s)", time.Now().Location().String(), zone))
-
-	//操作系统
-	(*e).Systemprompt = strings.ReplaceAll((*e).Systemprompt, "{{OSTYPE}}", runtime.GOOS)
-
-	//CPU架构
-	(*e).Systemprompt = strings.ReplaceAll((*e).Systemprompt, "{{AARCH}}", runtime.GOARCH)
-
-	//主目录
-	homeDir, _ := os.UserHomeDir()
-	(*e).Systemprompt = strings.ReplaceAll((*e).Systemprompt, "{{HOME}}", homeDir)
-
-	//临时目录
-	(*e).Systemprompt = strings.ReplaceAll((*e).Systemprompt, "{{TMPDIR}}", os.TempDir())
-
-	//当前用户
-	u, _ := user.Current()
-	(*e).Systemprompt = strings.ReplaceAll((*e).Systemprompt, "{{CURRENTUSER}}", u.Username)
-
-	//主机名
-	hostName, _ := os.Hostname()
-	(*e).Systemprompt = strings.ReplaceAll((*e).Systemprompt, "{{HOSTNAME}}", hostName)
-
-	//运行目录（已由 BeforeModel 状态栏 CWD 提供）
-	//(*e).Systemprompt = strings.ReplaceAll((*e).Systemprompt, "{{CWD}}", (*e).CWD)
-
-	//配置目录
-	(*e).Systemprompt = strings.ReplaceAll((*e).Systemprompt, "{{CONFIGPATH}}", (*e).ConfigFolderPath)
-
-	//配置文件
-	(*e).Systemprompt = strings.ReplaceAll((*e).Systemprompt, "{{HyperBotConfig}}", HyperBotConfig)
-	(*e).Systemprompt = strings.ReplaceAll((*e).Systemprompt, "{{SkillsFolder}}", SkillsFolder)
-	(*e).Systemprompt = strings.ReplaceAll((*e).Systemprompt, "{{HyperBotLogFile}}", HyperBotLogFile)
-	//输出目录
-	outputPath := filepath.Join((*e).CWD, outputDir)
-	(*e).Systemprompt = strings.ReplaceAll((*e).Systemprompt, "{{OUTPUTDIR}}", outputPath)
-
-	//todo_write 工具使用说明（框架 tool/todo.DefaultToolPrompt，随框架版本走，不在提示词里硬编码）
-	(*e).Systemprompt = strings.ReplaceAll((*e).Systemprompt, "{{TODO_PROMPT}}", functionTools.GetTodoToolPrompt())
-}
-
-// redirectFrameworkLog 将框架的日志输出从 stdout 重定向到可执行文件同目录下的 hyperbot.log 文件-created by copilot
-func (e *Engine) redirectFrameworkLog() {
-	logPath := filepath.Join((*e).ConfigFolderPath, HyperBotLogFile)
-	var err error
-	(*e).FrameworkLogFile_p, err = os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return
-	}
-	encoderCfg := zapcore.EncoderConfig{
-		TimeKey:        "ts",
-		LevelKey:       "lvl",
-		NameKey:        "name",
-		CallerKey:      "caller",
-		MessageKey:     "message",
-		StacktraceKey:  "stacktrace",
-		LineEnding:     zapcore.DefaultLineEnding,
-		EncodeLevel:    zapcore.CapitalLevelEncoder,
-		EncodeTime:     zapcore.RFC3339TimeEncoder,
-		EncodeDuration: zapcore.SecondsDurationEncoder,
-		EncodeCaller:   zapcore.ShortCallerEncoder,
-	}
-	core := zapcore.NewCore(
-		zapcore.NewConsoleEncoder(encoderCfg),
-		zapcore.AddSync((*e).FrameworkLogFile_p),
-		zapcore.DebugLevel,
-	)
-	fileLogger := zap.New(core, zap.AddCaller(), zap.AddCallerSkip(1)).Sugar()
-	//定向trpc-agent-go的日志输出到文件
-	log.Default = fileLogger
-	log.ContextDefault = fileLogger
-
-	//定向trpc-mcp-go的日志输出到文件
-	mcp.SetDefaultLogger(fileLogger)
-
-	//重定向标准库 log 到文件（避免 gse 等第三方库的日志污染终端）
-	if (*e).FrameworkLogFile_p != nil {
-		stdlog.SetOutput((*e).FrameworkLogFile_p)
-	}
-}
-
-func (e *Engine) checkSkillsFolder() {
-	(*e).SkillFolderPath = filepath.Join((*e).ConfigFolderPath, SkillsFolder)
-	_, err := os.Stat((*e).SkillFolderPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			//skills 文件夹不存在，创建一个默认的 skills 文件夹
-			err := os.MkdirAll((*e).SkillFolderPath, os.ModePerm)
-			if err != nil {
-				(*e).parkWithFatal(FatalError, fmt.Sprintf("创建默认skills文件夹错误：%v", err), true)
-			}
-			(*e).setNotice(NoticeSuccess, "skills folder not found, created default")
-		} else {
-			(*e).parkWithFatal(FatalError, fmt.Sprintf("检查skills文件夹错误：%v", err), true)
-		}
-	}
-
-}
-func (e *Engine) getcwd() {
-	exePath, err := os.Executable() // 获取当前可执行文件的路径
-	if err != nil {
-		(*e).parkWithFatal(FatalError, fmt.Sprintf("获取可执行文件目录错误: %v,按任意键退出", err), true)
-	}
-	(*e).CWD = filepath.Dir(exePath) // 获取当前可执行文件的目录路径（不包含程序名）
-}
-
-func (e *Engine) checkConfigFolder() {
-	(*e).ConfigFolderPath = filepath.Join((*e).CWD, HyperBotConfigFolder)
-	_, err := os.Stat((*e).ConfigFolderPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			//config 文件夹不存在，创建一个默认的 config 文件夹
-			err := os.MkdirAll((*e).ConfigFolderPath, os.ModePerm)
-			if err != nil {
-				(*e).parkWithFatal(FatalError, fmt.Sprintf("创建默认config文件夹错误：%v", err), true)
-			}
-			(*e).setNotice(NoticeSuccess, "config folder not found, created default")
-		} else {
-			(*e).parkWithFatal(FatalError, fmt.Sprintf("检查config文件夹错误：%v", err), true)
-		}
-	}
-
-}
-
-// 检查配置文件是否存在，不存在则创建一个默认的配置文件
-func (e *Engine) checkConfig() {
-	(*e).HyperBotConfigPath = filepath.Join((*e).ConfigFolderPath, HyperBotConfig)
-	// TODO: 读取并解析 configPath 中的 YAML 配置
-	_, err := os.Stat((*e).HyperBotConfigPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// 文件不存在，创建一个默认的 config.yaml
-			fd, err := os.OpenFile((*e).HyperBotConfigPath, os.O_RDWR|os.O_CREATE, 0644)
-			if err != nil {
-				(*e).parkWithFatal(FatalError, fmt.Sprintf("创建默认配置文件错误：%v", err), true)
-			}
-			defer fd.Close()
-			//生成一个随机的用户ID，替换掉配置文件中的占位符
-			cfg := strings.ReplaceAll(config.Template, "{USERID}", uuid.New().String())
-			_, err = fd.WriteString(cfg)
-			if err != nil {
-				(*e).parkWithFatal(FatalError, fmt.Sprintf("写入默认配置文件错误：%v,按任意键退出", err), true)
-			}
-			(*e).parkWithFatal(FatalSuccess, "检查到配置文件不存在，已创建默认配置文件。请根据实际情况修改配置文件后重新启动程序！", true)
-		} else {
-			(*e).parkWithFatal(FatalError, fmt.Sprintf("检查配置文件错误：%v", err), true)
-		}
-	}
-
 }

@@ -129,9 +129,6 @@ func (t *TUI) View() tea.View {
 }
 
 // Run 启动 bubbletea 事件循环（阻塞到 tea.Quit）。
-// pull 链无需在这里收编：tea.Tick 的 cmd 至多再触发一轮，产出消息被
-// Send 的 ctx.Done 分支丢弃，goroutine 自然结束（框架对 cmd 的退出容忍
-// 见 handleCommands 注释："leak the goroutine until Cmd returns"）。
 func (t *TUI) Run() {
 	if _, err := tea.NewProgram(t).Run(); err != nil {
 		panic("Error running application: " + err.Error())

@@ -19,7 +19,7 @@ const (
 	bannerGradientTo   = "#A78BFA"
 
 	bannerTitle     = "HyperBot"
-	bannerVersion   = "v1.2.0" //发版时更新；留空则标题不带版本号
+	bannerVersion   = "v3" //大版本号，发版时更新
 	bannerLogoGap   = 3        // logo 与欢迎语的间隔列（仅窄终端降级版使用）
 	bannerLeftW     = 34       // 左栏列宽（含内边距），信息行超出即截断
 	bannerPadding   = 1        // 盒内左右内边距

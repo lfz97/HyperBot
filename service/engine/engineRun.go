@@ -4,91 +4,62 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"trpc.group/trpc-go/trpc-agent-go/agent"
 	"trpc.group/trpc-go/trpc-agent-go/model"
 )
 
-type turnInfo struct {
-	Code          turnCode
-	Reason        string
-	PartialOutput string
-}
-type turnCode int
+// ---------- 输入识别层 ----------
 
-// turnCode 一轮对话的结束状态，决定下一轮 agentRunIteratively 的行为。
-// Startup 刻意取 0：turnInfo 的零值就是它，未显式设置 Code 时会落到最安静、
-// 最安全的默认行为（不推通知、等用户输入）。
+// inputCmdKind 用户输入的类别。
+type inputCmdKind int
+
 const (
-	Startup  turnCode = 0 //程序启动，尚未有任何一轮对话
-	New      turnCode = 1 //新对话（用户敲 /new）
-	Int      turnCode = 2 //用户中断
-	Error    turnCode = 3 //错误
-	Exit     turnCode = 4 //用户退出
-	Continue turnCode = 5 //继续对话
+	cmdPrompt inputCmdKind = iota //普通对话输入
+	cmdExit                       //退出程序
+	cmdNew                        //开始新对话
+	cmdEmpty                      //空输入
 )
 
-// 交互式对话
-func (e *Engine) agentRunIteratively(Ctx context.Context, inputContext turnInfo) *turnInfo {
-	Ctx, cancel := context.WithCancel(Ctx)
-	defer cancel()
-	//Startup 只在启动那一轮出现且不会被本函数返回，横幅必然只打印一次；
-	//New（用户敲 /new）才推"新对话已开始"，刚启动时没有"上一轮对话"，推了是噪音。
-	//Error 与 Int 不在这里打印——各自已在 agentRunOnce 里打过，再打就是重复。
-	if inputContext.Code == Startup {
-		(*e).setStartupInfo((*e).startupInfoLines())
-	} else if inputContext.Code == New {
-		(*e).setNotice(NoticeNewConversation, "")
+type inputCmd struct {
+	Kind   inputCmdKind
+	Prompt string //普通输入的原文；斜杠命令时是规范化后的命令文本
+}
+
+// parseInput 把原始输入归类为引擎指令。斜杠命令是引擎的输入协议
+// （无头场景同样适用），识别集中在此处。纯函数，可直接单测。
+func parseInput(raw string) inputCmd {
+	check := strings.ReplaceAll(raw, "\n", "")
+	check = strings.ReplaceAll(check, " ", "")
+	switch check {
+	case "/exit":
+		return inputCmd{Kind: cmdExit, Prompt: check}
+	case "/new":
+		return inputCmd{Kind: cmdNew, Prompt: check}
+	case "":
+		return inputCmd{Kind: cmdEmpty}
 	}
+	return inputCmd{Kind: cmdPrompt, Prompt: raw}
+}
 
-	var userPrompt string
-	for {
-		//错误次数未达到上限时，自动重试
-		//错误次数达到上限时，就走else分支需要用户输入了
-		if inputContext.Code == Error && (*e).errBudget.canAutoRetry() {
-			if inputContext.PartialOutput != "" {
-				userPrompt = fmt.Sprintf("之前的对话发生了错误，错误信息是: %s, 之前的输出内容是: %s, 请基于这些信息调整你的回答并继续完成对话", inputContext.Reason, inputContext.PartialOutput)
-			} else {
-				userPrompt = fmt.Sprintf("之前的对话发生了错误，错误信息是: %s, 请基于这个信息调整你的回答并继续完成对话", inputContext.Reason)
-			}
-			break
+// ---------- 一轮对话 ----------
 
-		} else {
-			select {
-			case userPrompt = <-(*e).inputCh: //用户输入由 TUI 经 Engine.SubmitInput 主动提交进来
-				(*e).errBudget.recharge() //用户输入：重置错误计数
-			}
-			checkprompt := strings.ReplaceAll(userPrompt, "\n", "")
-			checkprompt = strings.ReplaceAll(checkprompt, " ", "")
-			if checkprompt == "/exit" {
-				(*e).appendTyped("slash", checkprompt)
-				return &turnInfo{
-					Code:          Exit,
-					Reason:        "用户主动结束对话",
-					PartialOutput: "",
-				}
+type AgentError struct {
+	Error         error
+	ErrorType     string
+	PartialOutput string
+}
 
-			} else if checkprompt == "/new" {
-				(*e).appendTyped("slash", checkprompt)
-				return &turnInfo{
-					Code:   New,
-					Reason: "用户主动开始新对话",
-				}
-
-			} else if checkprompt == "" {
-				continue //如果用户输入为空，重新开始本轮循环，等待用户输入
-
-			} else {
-				(*e).appendTyped("user", userPrompt)
-				break //正常输入，继续执行后续逻辑
-			}
-
-		}
-	}
-
+// turn 跑一轮对话：调 runner 流式执行，失败时按错误预算自动重试——
+// 纠正 prompt + 退避；预算耗尽则交还用户（Run 循环回到等输入，下一次
+// 用户提交输入时充值）。中断（Esc）不充值：预算保留到下一次输入。
+func (e *Engine) turn(prompt string) {
 	// 中断桥接：前端 Esc → Interrupt() → 中断通道 → 本 goroutine 读取后取消当前轮
 	// （框架流式只认 ctx，通道信号在这里转成 ctx 取消）。runDone 在回合结束时 close，
 	// 桥接随之退出——无缓冲通道保证信号不会跨回合残留。
+	Ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	runDone := make(chan struct{})
 	defer close(runDone)
 	go func() {
@@ -99,47 +70,39 @@ func (e *Engine) agentRunIteratively(Ctx context.Context, inputContext turnInfo)
 		}
 	}()
 
-	// AgentRunOnce返回的消息包含本次对话输入输出的所有消息。
-	// 运行指示器的开关紧贴这次调用：用 defer 复位是为了 panic 安全——agentRunOnce
-	// 内部跑的是框架代码，panic 时指示器会永远转下去。
-	// 不要挂到本函数开头那个 Ctx 上：那个 ctx 的生命周期包含前面等用户输入的阶段，
-	// 挂上去 spinner 会在用户还没打字时就转起来。
+	// 运行指示器的开关紧贴 runOnce：defer 复位是 panic 安全——runOnce 内部
+	// 跑的是框架代码，panic 时指示器会永远转下去。
 	(*e).setRunning(true)
 	defer (*e).setRunning(false)
-	AgentError_p := e.agentRunOnce(Ctx, userPrompt)
-	if AgentError_p != nil { //如果运行过程中发生错误
-		return &turnInfo{
-			Code:          Error,
-			Reason:        fmt.Sprintf("对话过程中发生错误: %v", (*AgentError_p).Error),
-			PartialOutput: (*AgentError_p).PartialOutput,
+
+	for {
+		err := e.agentRunOnce(Ctx, prompt)
+		if err == nil { //正常结束，或被用户取消（"会话已取消"提示已由 runOnce 打过）
+			return
+		}
+		n, exhausted := (*e).errBudget.fail()
+		if exhausted {
+			// 放弃自动重试，把控制权交还用户：Run 循环回到等输入，下一次提交
+			// 用户输入时充值。预算不在这里充值——耗尽只可能由零输出失败触发。
+			(*e).appendTyped("error", fmt.Sprintf("连续 %d 次失败，已停止自动重试。请检查网络/配置后重新输入。", n))
+			return
+		}
+		// 必须在 Sleep 之前打：sleep 期间引擎不收输入，用户需要知道程序在等什么。
+		(*e).appendTyped("warn", fmt.Sprintf("%d 秒后重试（第 %d/%d 次）...", (*e).errBudget.backoff()/time.Second, n, (*e).errBudget.limit()))
+		time.Sleep((*e).errBudget.backoff())
+		// 纠正 prompt：把错误与已产出的部分输出喂回去，让模型调整后续输出。
+		if err.PartialOutput != "" {
+			prompt = fmt.Sprintf("之前的对话发生了错误，错误信息是: %s, 之前的输出内容是: %s, 请基于这些信息调整你的回答并继续完成对话", err.Error, err.PartialOutput)
+		} else {
+			prompt = fmt.Sprintf("之前的对话发生了错误，错误信息是: %s, 请基于这个信息调整你的回答并继续完成对话", err.Error)
 		}
 	}
-
-	//如果ctx被取消，则设置结束状态为中断。
-	//提示语已由 agentRunOnce 的 Ctx.Done 分支打过（"会话已取消"），这里不再重复。
-	select {
-	case <-Ctx.Done():
-		return &turnInfo{
-			Code:   Int,
-			Reason: "会话已取消，停止接收输入",
-		}
-	default:
-	}
-
-	//单轮对话正常结束，设置状态为continue，session自动维护历史
-	return &turnInfo{
-		Code:   Continue,
-		Reason: "单轮对话正常结束",
-	}
-
 }
 
-type AgentError struct {
-	Error         error
-	ErrorType     string
-	PartialOutput string
-}
+// ---------- runner 桥接 ----------
 
+// agentRunOnce 把一个 prompt 交给 runner 执行：流式事件转发给 TUI、
+// 处理取消、收集失败前的部分输出。返回 nil 表示成功或被取消。
 func (e *Engine) agentRunOnce(Ctx context.Context, userPrompt string) *AgentError {
 	eventChan, err := (*(*e).AgentRunner_p).Runner.Run(
 		Ctx,
@@ -154,8 +117,6 @@ func (e *Engine) agentRunOnce(Ctx context.Context, userPrompt string) *AgentErro
 	if err != nil {
 		err = fmt.Errorf("AgentRunner.Run发生错误: %v", err)
 		// 在源头打印，与下面的 TerminalError 分支保持一致：每类错误只打一次。
-		// 改前这里不打，只靠 agentRunIteratively 循环顶部打一次，与 TerminalError
-		// 打两次的行为不一致。
 		(*e).appendTyped("error", err.Error())
 		return &AgentError{
 			Error:         err,

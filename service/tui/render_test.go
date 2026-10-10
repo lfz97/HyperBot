@@ -125,8 +125,8 @@ func TestComposeViewReplay(t *testing.T) {
 	f.version = uint64(len(f.records))
 
 	tui := NewTui(f)
-	tui.widthAtomic.Store(80)
 	st := newPullState()
+	st.width = 80
 	got := tui.composeView(st)
 
 	if !strings.Contains(got, "▶ 你好") {
@@ -164,8 +164,8 @@ func TestComposeToolLine(t *testing.T) {
 		runState: `{"running":false,"fatal":null}`,
 	}
 	tui := NewTui(f)
-	tui.widthAtomic.Store(80)
 	st := newPullState()
+	st.width = 80
 	got := tui.composeView(st)
 
 	if !strings.Contains(got, "ReadFile") {
@@ -180,10 +180,9 @@ func TestComposeToolLine(t *testing.T) {
 // 帧恒投递（去重交给框架的 viewEquals），这里只断言帧内容的取舍。
 func TestPullOnceNoticeTTL(t *testing.T) {
 	tui := NewTui(&fakeEngine{runState: `{"running":false,"fatal":null}`})
-	tui.widthAtomic.Store(80)
 
 	// 无通知：回落 idle hint
-	frame, ok := tui.pullOnce()
+	frame, ok := tui.pullOnce(80)
 	if !ok || frame.notice != composeHint(false) {
 		t.Fatalf("空闲通知不符: %q ok=%v", frame.notice, ok)
 	}
@@ -194,7 +193,7 @@ func TestPullOnceNoticeTTL(t *testing.T) {
 		runState: `{"running":false,"fatal":null}`,
 		notice:   `{"kind":"success","text":"done","setAt":"` + old + `"}`,
 	}
-	frame, ok = tui.pullOnce()
+	frame, ok = tui.pullOnce(80)
 	if !ok || frame.notice != composeHint(false) {
 		t.Fatalf("过期通知不符: %q ok=%v", frame.notice, ok)
 	}
@@ -205,7 +204,7 @@ func TestPullOnceNoticeTTL(t *testing.T) {
 		runState: `{"running":false,"fatal":null}`,
 		notice:   `{"kind":"success","text":"done","setAt":"` + fresh + `"}`,
 	}
-	frame, ok = tui.pullOnce()
+	frame, ok = tui.pullOnce(80)
 	if !ok || frame.notice != noticeSuccess("done") {
 		t.Fatalf("新鲜通知不符: %q ok=%v", frame.notice, ok)
 	}
@@ -221,9 +220,8 @@ func TestPullDeliversViewChange(t *testing.T) {
 		runState: `{"running":true,"fatal":null}`,
 	}
 	tui := NewTui(f)
-	tui.widthAtomic.Store(80)
 
-	frame1, ok := tui.pullOnce()
+	frame1, ok := tui.pullOnce(80)
 	if !ok || !strings.Contains(frame1.view, "第一条") {
 		t.Fatalf("第一帧不符: ok=%v view=%q", ok, frame1.view)
 	}
@@ -233,7 +231,7 @@ func TestPullDeliversViewChange(t *testing.T) {
 	f.version = 2
 	tui.pull.lastCompose = time.Now().Add(-time.Second) // 绕过 100ms 节流
 
-	frame2, ok := tui.pullOnce()
+	frame2, ok := tui.pullOnce(80)
 	if !ok {
 		t.Fatalf("仅 view 变化的帧必须投递（流式更新的回归测试）")
 	}
@@ -335,7 +333,7 @@ func TestDrawAndOverlay(t *testing.T) {
 	}
 
 	// 打开帮助浮层
-	tui.helps.refresh(f)
+	tui.helps.refreshItems(tui.fetchHelpItems())
 	tui.helps.toggleVisibility()
 	out = tui.draw()
 	if !strings.Contains(out, "Key Bindings") {

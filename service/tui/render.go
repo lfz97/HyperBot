@@ -14,8 +14,8 @@ import (
 // 正确性不依赖任何记账）。每次重组都对全部记录重放状态机（流式尾段、工具缓冲）
 // 并重新渲染，运行在 pull 循环的 goroutine 上。
 func (t *TUI) composeView(st *pullState) string {
-	st.width = int(t.widthAtomic.Load())
-	recs := t.engine.Records()
+	// 宽度来自 pullOnce 的参数（pullCmd 续链时的快照），glamour/截断按此工作
+	recs := t.fetchRecords()
 	var b strings.Builder
 	if st.bannerDone {
 		b.WriteString(st.banner)
@@ -115,6 +115,15 @@ func renderNotice(kind, text string) string {
 	} else {
 		return noticeSub(text)
 	}
+}
+
+// composeHint 常驻兜底提示。esc to interrupt 只在运行态出现——
+// ESC 中断仅在 agent 运行期间有效，平时显示它是噪音。
+func composeHint(running bool) string {
+	if running {
+		return noticeSub("esc to interrupt · ctrl+k for help")
+	}
+	return noticeSub("ctrl+k for help")
 }
 
 // renderFatal 把终态消息按样式上色（引擎只存语义原文与 style 字符串）。

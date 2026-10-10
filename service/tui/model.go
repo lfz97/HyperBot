@@ -1,29 +1,14 @@
 package tui
 
+// wire JSON 形状（与引擎侧 uistate.go 的 schema 对齐）+ 事件循环消息。
+// demo 的 model/model.go 同位物：跨 goroutine 传递的消息类型与 JSON 契约
+// 集中在本文件；引擎访问的封装在 engine.go，事件循环在 tui.go。
+
 import (
 	"encoding/json"
 )
 
-// EngineView 是 TUI 对引擎的全部依赖（消费方定义的接口）。
-// 上下游零 import：跨界只有 stdlib 类型与 JSON 文本，消息类型放在 JSON 的
-// type/style/kind 字段上；引擎侧的 *Engine 天然满足本接口。
-// 控制权全部在 TUI：状态由 TUI 按帧拉取，输入/取消由 TUI 主动调用。
-type EngineView interface {
-	Version() uint64
-	Records() []string // 消息日志全量（每条一行 JSON，type 字段承载消息类型）
-	RunStateJSON() string
-	TodoText() string
-	NoticeJSON() string
-	StartupInfo() ([]string, bool)
-	HelpItemsJSON() string
-	SubmitInput(line string) bool
-	Interrupt() bool
-}
-
 // ── 跨界 JSON 形状（与引擎侧 uistate.go 的 wire schema 对齐）──────────
-//
-// demo 的 model.ThirdpartMessage 同位物：跨 goroutine 传递的消息类型
-// 与 JSON 契约集中在本文件，事件循环（tui.go）与渲染（render.go）只消费。
 
 // wireFatal / wireRunState 运行状态快照。
 type wireFatal struct {
@@ -51,7 +36,7 @@ type wireHelpItem struct {
 }
 
 // wireRecord 消息日志记录：type 承载消息类型。
-//   - delta / message：msg 为框架 model.Message 原样（框架自带 json 签签，两端同型收发）
+//   - delta / message：msg 为框架 model.Message 原样（框架自带 json 标签，两端同型收发）
 //   - user / slash / warn / error / summary：text 为语义原文
 type wireRecord struct {
 	Type string          `json:"type"`

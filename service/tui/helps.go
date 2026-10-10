@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -12,8 +11,8 @@ import (
 const helpBoxWidth = 44
 
 // helps 帮助浮层（demo 同款：居中圆角盒、上下选择、enter 插入指令）。
-// 默认项 TUI 自持；技能项每次打开时从引擎状态拉取——loadSkills 在 init/refresh
-// 序列里随时可能重建列表，拉取式天然拿到最新版。
+// 默认项自持；技能项由调用方传入（每次打开时从引擎拉取——loadSkills 在
+// init/refresh 序列里随时可能重建列表，拉取式天然拿到最新版）。
 type helps struct {
 	items   [][2]string
 	index   int
@@ -50,19 +49,16 @@ func (h *helps) moveDown() {
 	h.index = (h.index + 1) % len(h.items)
 }
 
-// refresh 重建帮助条目：默认项 + 引擎拉取的技能项（每次打开时调用）。
-func (h *helps) refresh(e EngineView) {
-	items := [][2]string{
+// refreshItems 重建帮助条目：默认项 + 引擎拉取的技能项（每次打开时调用，
+// 技能项由 engine.go 的 fetchHelpItems 解析好传入）。
+func (h *helps) refreshItems(items []wireHelpItem) {
+	h.items = [][2]string{
 		{"ctrl+k", "显示/关闭帮助"},
 		{"/new", "开始新对话"},
 		{"/exit", "退出程序"},
 	}
-	var ws []wireHelpItem
-	if err := json.Unmarshal([]byte(e.HelpItemsJSON()), &ws); err == nil {
-		for _, it := range ws {
-			items = append(items, [2]string{it.Cmd, it.Desc})
-		}
+	for _, it := range items {
+		h.items = append(h.items, [2]string{it.Cmd, it.Desc})
 	}
-	h.items = items
 	h.index = 0
 }

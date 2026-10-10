@@ -48,18 +48,19 @@ func (t *TUI) keyMsgHandler(m tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return t, tea.Quit
 
 		} else if input == "enter" {
-			//获取输入文本，主动提交给引擎（Engine.SubmitInput 内部 select/default，
-			//非阻塞）。引擎忙（无人接收）时提交失败、保留输入框内容，用户输入不丢失。
-			//空输入引擎侧会忽略（engineRun 的 checkprompt == "" 分支），无需特判。
+			//获取输入文本，主动提交给引擎（submitInput 内部 select-default，
+			//非阻塞）。引擎忙（无人接收）时提交失败、保留输入框内容，用户输入
+			//不丢失。空输入引擎侧会忽略（engineRun 的 checkprompt == "" 分支），
+			//无需特判。
 			text := t.ta.Value()
-			if t.engine.SubmitInput(text) {
+			if t.submitInput(text) {
 				t.ta.Reset()
 			}
 			t.recalcComponentSize()
 			return t, nil
 
 		} else if input == "ctrl+k" {
-			t.helps.refresh(t.engine) // 每次打开时刷新，确保 skills 等动态项可见
+			t.helps.refreshItems(t.fetchHelpItems()) // 每次打开时刷新，确保 skills 等动态项可见
 			t.helps.toggleVisibility()
 			return t, nil
 
@@ -67,7 +68,7 @@ func (t *TUI) keyMsgHandler(m tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			// esc 优先级：浮层开着上面已处理；运行期 → 中断 agent。
 			// 非运行期无操作（放行给 textarea 也无绑定，等价 no-op）。
 			if t.running {
-				t.engine.Interrupt()
+				t.interrupt()
 			}
 			return t, nil
 

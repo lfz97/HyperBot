@@ -61,7 +61,7 @@ func (t *TUI) recalcComponentSize() {
 	componentWidth := t.componentWidth()
 	t.ta.SetWidth(componentWidth) // textarea在 v2 里 SetWidth 之后，组件会按新宽度把当前文本重新软换行一遍，数出总共占多少显示行，然后自动把高度设成这个行数。
 	t.vp.SetWidth(componentWidth)
-	t.bottom.UpdateGap(componentWidth - lipgloss.Width(t.bottom.spinnerView()) - lipgloss.Width(t.noticeText))
+	t.bottom.UpdateGap(componentWidth - lipgloss.Width(t.bottom.spinnerView()) - lipgloss.Width(t.bottom.notice))
 
 	bottomHeight := lipgloss.Height(t.bottom.View())
 	todoHeight := lipgloss.Height(t.todoText)

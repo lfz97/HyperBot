@@ -127,7 +127,7 @@ func TestComposeViewReplay(t *testing.T) {
 
 	tui := NewTui(f)
 	tui.widthAtomic.Store(80)
-	st := &pullState{glamRenderer: &glamourCache{}}
+	st := newPullState()
 	got := tui.composeView(st)
 
 	if !strings.Contains(got, "▶ 你好") {
@@ -166,7 +166,7 @@ func TestComposeToolLine(t *testing.T) {
 	}
 	tui := NewTui(f)
 	tui.widthAtomic.Store(80)
-	st := &pullState{glamRenderer: &glamourCache{}}
+	st := newPullState()
 	got := tui.composeView(st)
 
 	if !strings.Contains(got, "ReadFile") {
@@ -177,38 +177,82 @@ func TestComposeToolLine(t *testing.T) {
 	}
 }
 
-// TestPullFrameNoticeTTL 通知槽位：TTL 内显示通知、到期回落 hint。
-func TestPullFrameNoticeTTL(t *testing.T) {
+// TestPullOnceNoticeTTL 通知槽位：TTL 内显示通知、到期回落 hint。
+// 两个方向都必须触发投递（去重基准是 lastSent）：通知出现 → 帧变化；
+// TTL 过期回落 hint → 帧也变化。
+func TestPullOnceNoticeTTL(t *testing.T) {
 	tui := NewTui(&fakeEngine{runState: `{"running":false,"fatal":null}`})
 	tui.widthAtomic.Store(80)
-	st := &pullState{glamRenderer: &glamourCache{}}
 
 	// 无通知：回落 idle hint
-	frame := tui.pullFrame(st)
-	if frame.notice != composeHint(false) {
-		t.Fatalf("空闲通知不符: %q", frame.notice)
+	frame, ok := tui.pullOnce()
+	if !ok || frame.notice != composeHint(false) {
+		t.Fatalf("空闲通知不符: %q ok=%v", frame.notice, ok)
 	}
 
-	// 4.5 秒前设置的通知：已过期 → 仍然回落 hint
+	// 4.5 秒前设置的通知：已过期 → 仍然回落 hint（与上一帧相同，不投递）
 	old := time.Now().Add(-4500 * time.Millisecond).Format(time.RFC3339)
 	tui.engine = &fakeEngine{
 		runState: `{"running":false,"fatal":null}`,
 		notice:   `{"kind":"success","text":"done","setAt":"` + old + `"}`,
 	}
-	frame = tui.pullFrame(st)
-	if frame.notice != composeHint(false) {
-		t.Fatalf("过期通知不符: %q", frame.notice)
+	if f, ok := tui.pullOnce(); ok && f.notice != composeHint(false) {
+		t.Fatalf("过期通知不符: %q", f.notice)
 	}
 
-	// 刚设置的通知：正常显示
+	// 刚设置的通知：正常显示（帧变化，必须投递）
 	fresh := time.Now().Format(time.RFC3339)
 	tui.engine = &fakeEngine{
 		runState: `{"running":false,"fatal":null}`,
 		notice:   `{"kind":"success","text":"done","setAt":"` + fresh + `"}`,
 	}
-	frame = tui.pullFrame(st)
-	if frame.notice != noticeSuccess("done") {
-		t.Fatalf("新鲜通知不符: %q", frame.notice)
+	frame, ok = tui.pullOnce()
+	if !ok || frame.notice != noticeSuccess("done") {
+		t.Fatalf("新鲜通知不符: %q ok=%v", frame.notice, ok)
+	}
+
+	// 通知过期：回落 hint（帧再次变化，必须投递——否则通知永远不消失）
+	tui.engine = &fakeEngine{
+		runState: `{"running":false,"fatal":null}`,
+		notice:   `{"kind":"success","text":"done","setAt":"` + old + `"}`,
+	}
+	frame, ok = tui.pullOnce()
+	if !ok || frame.notice != composeHint(false) {
+		t.Fatalf("TTL 回落不符: %q ok=%v", frame.notice, ok)
+	}
+}
+
+// TestPullDeliversViewChange 帧去重的回归测试：只有 view 变化（流式输出，
+// running/notice/todo 恒定）的帧也必须投递。旧实现把 lastFrame.view 先赋新值
+// 再与组装结果比较，这类帧会被判成"未变化"而永不投递。
+func TestPullDeliversViewChange(t *testing.T) {
+	f := &fakeEngine{
+		records:  []string{recJSON(t, "user", "第一条", nil)},
+		version:  1,
+		runState: `{"running":true,"fatal":null}`,
+	}
+	tui := NewTui(f)
+	tui.widthAtomic.Store(80)
+
+	frame1, ok := tui.pullOnce()
+	if !ok || !strings.Contains(frame1.view, "第一条") {
+		t.Fatalf("第一帧不符: ok=%v view=%q", ok, frame1.view)
+	}
+
+	// 引擎追加新记录，其余状态全部不变（模拟流式 delta）
+	f.records = append(f.records, recJSON(t, "delta", "", model.Message{Role: "assistant", Content: "流式增量"}))
+	f.version = 2
+	tui.pull.lastCompose = time.Now().Add(-time.Second) // 绕过 100ms 节流
+
+	frame2, ok := tui.pullOnce()
+	if !ok {
+		t.Fatalf("仅 view 变化的帧必须投递（流式更新的回归测试）")
+	}
+	if frame2.view == frame1.view {
+		t.Fatalf("第二帧视图未更新: %q", frame2.view)
+	}
+	if !strings.Contains(frame2.view, "流式增量") {
+		t.Fatalf("第二帧缺少新内容: %q", frame2.view)
 	}
 }
 

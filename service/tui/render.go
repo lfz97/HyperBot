@@ -100,6 +100,35 @@ func (t *TUI) composeView(st *pullState) string {
 	return b.String()
 }
 
+// renderNotice 把通知槽位翻译成带色文本（文案配色在 TUI 侧，
+// 引擎只存 kind 与原文；无文本的固定文案也由本侧拼装）。
+func renderNotice(kind, text string) string {
+	if kind == "new_conversation" {
+		return noticeNewConversation()
+	} else if kind == "cancelled" {
+		return noticeCancelled()
+	} else if kind == "success" {
+		return noticeSuccess(text)
+	} else if kind == "warning" {
+		return noticeWarning(text)
+	} else {
+		return noticeSub(text)
+	}
+}
+
+// renderFatal 把终态消息按样式上色（引擎只存语义原文与 style 字符串）。
+func renderFatal(text, style string) string {
+	if style == "success" {
+		return successText(text)
+	} else if style == "exit" {
+		return exitText(text)
+	} else if style == "error" {
+		return errText(text)
+	} else {
+		return text
+	}
+}
+
 // bufferToolCalls 缓冲工具调用（等结果到达后拼工具行）。
 // provider 可能把一次调用拆成多个增量片段：同 ID 合并、无 ID 按 index 兜底、
 // 名字非空才覆盖、参数按字节续接——完整调用与分片调用两种形态都稳。

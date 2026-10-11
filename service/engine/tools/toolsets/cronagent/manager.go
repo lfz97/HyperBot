@@ -20,6 +20,7 @@ import (
 	"github.com/robfig/cron/v3"
 	ag "trpc.group/trpc-go/trpc-agent-go/agent"
 	"trpc.group/trpc-go/trpc-agent-go/agent/llmagent"
+	"trpc.group/trpc-go/trpc-agent-go/model/tiktoken"
 	"trpc.group/trpc-go/trpc-agent-go/model"
 	"trpc.group/trpc-go/trpc-agent-go/runner"
 	"trpc.group/trpc-go/trpc-agent-go/skill"
@@ -300,6 +301,7 @@ func NewManager(agentname string, cfg *config.Config, systemprompt string, Skill
 			tools := []tool.Tool{}
 			toolsets = append(toolsets, localexec.LocalExec())
 			tools = append(tools, builtinTools...)
+			counter, _ := tiktoken.New((*cfg).Model.Model) //tiktoken 计数器：compaction 阈值判定与 max_tokens 钳制共用；失败为 nil，各自 fail-open
 			opts := []llmagent.Option{
 				llmagent.WithGenerationConfig(model.GenerationConfig{
 					MaxTokens:       &(*cfg).Model.MaxTokens, // 最大生成 token 数，来自配置 maxtokens 字段
@@ -322,8 +324,13 @@ func NewManager(agentname string, cfg *config.Config, systemprompt string, Skill
 				llmagent.WithEnableContextCompaction(true),                                     // 启用 tool result 压缩（Pass 1+2）
 				llmagent.WithContextCompactionOversizedToolResultMaxTokens(8192),               // Pass 2: 超大 tool result 首尾保留截断
 				llmagent.WithEnableOnDemandSession(true),                                       // 按需加载被压缩的原始数据（session_load）
+				llmagent.WithContextCompactionTokenCounter(counter),                            //裁剪阈值判定用精确计数：默认 rune/4 对中文低估 3~4 倍，会漏裁
 				llmagent.WithEnableParallelTools(true),                                         //启用并行工具调用，提升工具调用效率
-				agent.SetBeforeModelStatusCallback(nil),                                        //追加beforeModel状态栏
+				agent.SetBeforeModelStatusCallback(nil, &agent.TokenClampConfig{
+					Counter:       counter,
+					ContextWindow: (*cfg).Model.ContextWindow,
+					CfgMaxTokens:  (*cfg).Model.MaxTokens,
+				}), //追加beforeModel状态栏 + 动态max_tokens钳制（公式见 agent/maxtokens.go）
 			}
 			// APIType 校验只做一次。ConfigBaseAgent 内部也按同一字段选模型，但它对
 			// 未知类型是静默不设模型（agent 照样建得出来、跑起来才失败），所以这里

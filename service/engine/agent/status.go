@@ -39,7 +39,12 @@ type Display interface {
 // 使用本功能必须关闭框架的 system 前置重排（openai.WithOptimizeForCache），否则
 // 尾部状态栏会被框架挪回头部、缓存收益失效；关闭位置：service/engine/models/openai.go。
 // 状态栏不进 session（仅存在于当次请求副本），不污染摘要/上下文压缩。
-func SetBeforeModelStatusCallback(display Display) llmagent.Option {
+//
+// clamp 非 nil 时，在状态栏注入之后做动态 max_tokens 钳制（实现见 maxtokens.go）。
+// 两个动作必须注册在同一个 *model.Callbacks 上：RegisterBeforeModel 是 append 语义，
+// 而 llmagent.WithModelCallbacks 是整体覆盖语义——拆成两个 Option 会互相顶掉。
+// 钳制排在状态栏注入之后：状态栏消息也计入输入。
+func SetBeforeModelStatusCallback(display Display, clamp *TokenClampConfig) llmagent.Option {
 
 	modelCallbacks := model.NewCallbacks().RegisterBeforeModel(
 		func(ctx context.Context, args *model.BeforeModelArgs) (*model.BeforeModelResult, error) {
@@ -49,6 +54,7 @@ func SetBeforeModelStatusCallback(display Display) llmagent.Option {
 			injectMemoryStatus(ctx, args.Request.Messages, &status)
 
 			args.Request.Messages = append(args.Request.Messages, model.NewSystemMessage(status)) //在末尾追加状态栏
+			clampMaxTokens(ctx, args.Request, clamp) //钳制在状态栏注入之后：状态栏消息也计入输入
 			return nil, nil
 		},
 	)

@@ -13,10 +13,10 @@ const (
 	// clampSummaryReserveTokens 摘要调用自身的输出预留。WithMaxSummaryWords(5000 词)
 	// 约 7500~10000 token，按上限取。钳制最坏落点为 窗口-此值，保证摘要请求
 	// （input=全量上下文）始终有输出空间，消除"满窗后摘要请求发不出去"的死锁。
-	clampSummaryReserveTokens = 10_000
+	clampSummaryReserveTokens = 10000
 	// clampBufferTokens 输入估算误差缓冲：tiktoken 对非 OpenAI 模型以 cl100k
 	// 逼近（中文 ±30%）、消息结构/分隔符开销、状态栏等尾部注入的波动。
-	clampBufferTokens = 2_000
+	clampBufferTokens = 2000
 	// clampMinViableTokens 钳制下限：低于此值输出已无意义，保持下限由
 	// provider 截断（finish_reason=length），消息照常入库，下一跳由
 	// 阈值压缩（Pass 1/2、摘要）接管，而非放弃输出。
@@ -59,14 +59,13 @@ func clampMaxTokens(ctx context.Context, req *model.Request, cfg *TokenClampConf
 	inputTokens += countToolSchemaTokens(ctx, cfg.Counter, req.Tools)
 
 	ceiling := cfg.ContextWindow - inputTokens - clampSummaryReserveTokens - clampBufferTokens
-	switch {
-	case ceiling < clampMinViableTokens:
+	if ceiling < clampMinViableTokens {
 		// 输入已逼近窗口（正常情况下压缩 Pass 1/2 与摘要应在更低水位消化掉）：
 		// 保持下限，由 provider 截断，不放大也不报错。
 		log.Printf("[MAXTOKENS] input %d near window %d, clamp to floor %d",
 			inputTokens, cfg.ContextWindow, clampMinViableTokens)
 		ceiling = clampMinViableTokens
-	case cfg.CfgMaxTokens > 0 && ceiling > cfg.CfgMaxTokens:
+	} else if cfg.CfgMaxTokens > 0 && ceiling > cfg.CfgMaxTokens {
 		ceiling = cfg.CfgMaxTokens
 	}
 	mt := ceiling

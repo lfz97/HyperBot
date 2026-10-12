@@ -98,7 +98,9 @@ func (e *Engine) AgentStart() {
 			(*e).appendTyped("slash", cmd.Prompt)
 			e.newSessionID()
 			(*e).setNotice(NoticeNewConversation, "")
-
+		case cmdClear: //清除历史消息：记录全部丢弃（连本条 /clear 也不留痕），通知栏提示
+			(*e).clearRecords()
+			(*e).setNotice(NoticeClear, "")
 		case cmdPrompt: //普通对话输入
 			(*e).appendTyped("user", cmd.Prompt)
 			e.turn(cmd.Prompt)

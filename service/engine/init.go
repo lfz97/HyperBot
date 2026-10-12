@@ -13,9 +13,9 @@ import (
 
 	ag "trpc.group/trpc-go/trpc-agent-go/agent"
 	"trpc.group/trpc-go/trpc-agent-go/agent/llmagent"
-	"trpc.group/trpc-go/trpc-agent-go/model/tiktoken"
 	"trpc.group/trpc-go/trpc-agent-go/memory"
 	"trpc.group/trpc-go/trpc-agent-go/model"
+	"trpc.group/trpc-go/trpc-agent-go/model/tiktoken"
 	"trpc.group/trpc-go/trpc-agent-go/runner"
 	"trpc.group/trpc-go/trpc-agent-go/session"
 	"trpc.group/trpc-go/trpc-agent-go/skill"
@@ -78,7 +78,7 @@ func (e *Engine) newRunner() {
 			toolsets = append(toolsets, (*e).mcpToolsets...)
 			tools = append(tools, (*e).builtinTools...)
 			tools = append(tools, (*e).SqliteMemoryService.Tools()...) //将SqliteMemoryService的工具添加到全局工具列表中，使得Agent能够调用记忆相关的工具
-			counter, _ := tiktoken.New((*(*e).Config_p).Model.Model) //tiktoken 计数器：compaction 阈值判定与 max_tokens 钳制共用；失败为 nil，各自 fail-open
+			counter, _ := tiktoken.New((*(*e).Config_p).Model.Model)   //tiktoken 计数器：compaction 阈值判定与 max_tokens 钳制共用；失败为 nil，各自 fail-open
 			opts := []llmagent.Option{
 				llmagent.WithGenerationConfig(model.GenerationConfig{
 					MaxTokens:       &(*(*e).Config_p).Model.MaxTokens, // 最大生成 token 数，来自配置 maxtokens 字段
@@ -148,7 +148,8 @@ func (e *Engine) loadConfig() {
 	(*e).Config_p = c
 }
 
-func (e *Engine) loadMCPFromConfig() {
+func (e *Engine) loadMCPFromConfig() []tool.ToolSet {
+	latestmcps := []tool.ToolSet{}
 	idx := 0
 	if len((*(*e).Config_p).HttpMcp) != 0 {
 		//读取配置文件中的 MCP 配置，创建 MCP ToolSet 并添加到 Toolsets 中
@@ -159,7 +160,7 @@ func (e *Engine) loadMCPFromConfig() {
 					mcpConfig.Name = fmt.Sprintf("mcp_%d", idx)
 				}
 				mcpToolSet := toolsets.HttpMCP(mcpConfig)
-				(*e).mcpToolsets = append((*e).mcpToolsets, mcpToolSet)
+				latestmcps = append(latestmcps, mcpToolSet)
 				idx++
 			}
 
@@ -173,22 +174,75 @@ func (e *Engine) loadMCPFromConfig() {
 					stdinMcpConfig.Name = fmt.Sprintf("mcp_%d", idx)
 				}
 				stdinMcpToolSet := toolsets.StdinMCP(stdinMcpConfig)
-				(*e).mcpToolsets = append((*e).mcpToolsets, stdinMcpToolSet)
+				latestmcps = append(latestmcps, stdinMcpToolSet)
 				idx++
 			}
 		}
 	}
+	return latestmcps
+}
+
+// diffMCPtoolsets 增量对齐 MCP 工具集：同名复用（stdio 子进程/HTTP 连接不重启）、
+// 新增启用、消失关闭。不比较配置内容——同 name 改 endpoint/args 不生效，
+// 需改名或先禁用再启用触发重启（行为契约由 mcp_test.go 锁定）。
+func (e *Engine) diffMCPtoolsets(latestmcps []tool.ToolSet) {
+
+	common := []tool.ToolSet{}
+	new := []tool.ToolSet{}
+	//先取新旧的共同清单
+	for _, latestItem := range latestmcps {
+		for _, runningItem := range (*e).mcpToolsets {
+			if runningItem.Name() == latestItem.Name() {
+				common = append(common, runningItem)
+			}
+		}
+	}
+
+	//如果无共同清单，直接以新的清单为准，当前的全关闭
+	//注意 if/else 互斥不能省：common 为空时下面两段循环体一次都不会执行
+	//（Close 永不发生 → 泄漏；new 组装不出任何东西 → 空清单）
+	if len(common) == 0 {
+		for _, ts := range (*e).mcpToolsets {
+			ts.Close()
+		}
+		(*e).mcpToolsets = latestmcps
+
+		//有共同清单的情况
+	} else {
+		//用当前的清单和共同清单做对比，匹配到同名的就break；遍历到最后都没匹配上，
+		//说明是当前清单独有的，直接关闭
+		for _, running := range (*e).mcpToolsets {
+			for i := 0; i < len(common); i++ {
+				if common[i].Name() == running.Name() {
+					break
+				}
+				if i == len(common)-1 {
+					running.Close()
+				}
+			}
+		}
+		//用最新的清单和共同清单做对比，匹配到同名的就break；遍历到最后都没匹配上，
+		//说明是新增的，追加到new
+		for _, latest := range latestmcps {
+			for i := 0; i < len(common); i++ {
+				if common[i].Name() == latest.Name() {
+					break
+				}
+				if i == len(common)-1 {
+					new = append(new, latest)
+				}
+			}
+		}
+		new = append(new, common...)
+		(*e).mcpToolsets = new
+	}
+
 }
 
 func (e *Engine) refreshMCPFromConfig() {
-	if len((*e).mcpToolsets) != 0 {
-		for _, toolset := range (*e).mcpToolsets { //先关闭当前工具集里面的工具，目的是如果有stdin_mcp，要关闭子进程
-			toolset.Close()
-		}
-		(*e).mcpToolsets = []tool.ToolSet{} //清空工具集
-	}
-
-	e.loadMCPFromConfig() //重新组装工具集
+	//loadMCPFromConfig 新造的实例全是惰性的（未连接），diff 中未被启用的
+	//直接丢弃即可，无需 Close；Close 只发生在旧实例离开的分支。
+	e.diffMCPtoolsets(e.loadMCPFromConfig())
 }
 
 // loadSkills 重建技能仓库并发布技能清单（refresh 每回合调用）。

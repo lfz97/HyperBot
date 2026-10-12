@@ -10,8 +10,7 @@ import (
 )
 
 // GetEngineService 创建引擎实例（轻量：只装配字段，不触盘、不阻塞）。
-// 初始化由调用方在 goroutine 里调 Init()——初始化失败会 parkWithFatal 永久驻留，
-// 若在 TUI 启动前同步执行会卡死整个进程（终态都无从渲染）。
+// 生命周期统一由 Run 驱动（见 Run 的注释），调用方不再自行编排初始化序列。
 func GetEngineService(name string) *Engine {
 	return &Engine{
 		Agentname:   name,
@@ -37,6 +36,15 @@ func (e *Engine) Init() {
 	}
 	e.absorb(env)
 	e.newRunner()
+}
+
+// Run 启动引擎的完整生命周期：先同步完成初始化（Init），再启动主循环
+// （AgentStart）。主循环的 goroutine 由 AgentStart 内部负责，正常路径下
+// Run 返回时引擎已在后台自主运行；仅当 Init 走到致命终态（parkWithFatal）
+// 时才驻留当前 goroutine。
+func (e *Engine) Run() {
+	e.Init()
+	e.AgentStart()
 }
 
 // absorb 把 bootstrap 产物拷入引擎字段，并上屏启动期收集的非致命提示。
@@ -72,9 +80,15 @@ func (e *Engine) parkWithFatal(style string, text string, waitKey bool) {
 	select {}
 }
 
-// AgentStart 启动引擎主循环：读用户输入、分类分发，直到退出。
-// 一轮对话在 turn 里跑（含自动重试）；错误预算的状态流转见 errorBudget。
+// AgentStart 启动引擎主循环：goroutine 内读用户输入、分类分发，直到退出。
+// 阻塞语义收敛在引擎内部，调用方无需自行起 goroutine；一轮对话在 turn 里跑
+// （含自动重试），错误预算的状态流转见 errorBudget。
 func (e *Engine) AgentStart() {
+	go e.agentLoop()
+}
+
+// agentLoop 主循环本体：读用户输入、分类分发，直到退出。
+func (e *Engine) agentLoop() {
 	e.newSessionID()
 	// 启动横幅只在此组装一次（bootstrap/newRunner 均已完成）。
 	(*e).setStartupInfo((*e).startupInfoLines())

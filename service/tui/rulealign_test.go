@@ -1,9 +1,8 @@
 package tui
 
-// 表格规则线对齐回归测试：glamour 排版宽度必须扣掉 msgIndent 的 2 列，
-// 否则整行超 viewport 被 wrapViewText 硬断时，无空格的行（表格规则线）
-// 触发 reflow 硬断丢行首缩进——规则线 ┼ 与正文行 │ 错位 2 列。
-// （历史 bug：renderBody 按 w 排版再叠 msgIndent，超宽 2 列。）
+// 表格规则线对齐回归测试：glamour 排版宽度扣掉 msgIndent 的 2 列
+// （含预算的历史 bug：按 w 排版再叠缩进导致行超宽，被已删除的
+// wrapViewText 重排层硬断丢行首缩进，规则线 ┼ 与正文行 │ 错位 2 列）。
 
 import (
 	"strings"
@@ -22,8 +21,8 @@ const ruleMisalignMD = `| 检查项 | 状态 | 结果 |
 
 func TestTableRuleAlignment(t *testing.T) {
 	st := &pullState{glamRenderer: &glamourCache{}}
-	// 生产路径：renderBody（含 msgIndent 预算）→ wrapViewText
-	final := wrapViewText(renderBody(st, ruleMisalignMD, 116), 116)
+	// 生产路径：renderBody（含 msgIndent 预算），applyViewText 不再改写
+	final := renderBody(st, ruleMisalignMD, 116)
 
 	var pos [][]int
 	for i, ln := range strings.Split(final, "\n") {

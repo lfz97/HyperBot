@@ -3,7 +3,6 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"strings"
 
 	"charm.land/glamour/v2"
@@ -145,8 +144,7 @@ func renderToolResult(m *model.Message, toolBuf map[string]*wireToolCall, w int,
 // 纯函数，流式尾段与定稿同型，观感一致。reasoning 是模型的思考散文，
 // 不走 glamour（结构化 markdown 对它没有增益，纯文本渲染在长思考流式
 // 重放下的成本也低一个量级）；样式的 Width 负责软换行。
-// 宽度预算：w = msgIndent(2) + 边框(1) + 内边距(1) + 内容 —— 各层扣足，
-// 否则整行超 viewport 被 wrapViewText 硬断时会丢行首缩进。
+// 宽度预算：w = msgIndent(2) + 边框(1) + 内边距(1) + 内容，行宽不超 viewport。
 func renderThinking(r string, w int) string {
 	gw := w - msgIndentW - thinkingFrameW
 	if gw < 10 {
@@ -175,8 +173,8 @@ func flushTail(st *pullState, tailReasoning, tailContent *strings.Builder, w int
 
 // userBlock 用户消息：primary 左线 + markdown 渲染（crush UserBlurred +
 // UserMarkdownRenderer——用户输入在 textarea 里手打，保留换行，避免渲染后
-// 和输入时看到的不一样）。宽度预算扣 userBar 的边框+内边距，防止整行
-// 超 viewport 被 wrapViewText 硬断丢缩进。
+// 和输入时看到的不一样）。宽度预算扣 userBar 的边框+内边距，
+// 行宽不超 viewport。
 func userBlock(st *pullState, text string, w int) string {
 	gw := w - userBarFrameW
 	if gw < 10 {
@@ -201,17 +199,11 @@ const thinkingFrameW = 2
 // userBarFrameW 用户消息左线占宽：边框(1) + 内边距(1)。
 const userBarFrameW = 2
 
-// glamourTailPad 匹配行尾的"空白 + ANSI 序列"混合填充。glamour 会把标题、表格、
-// 代码块的每一行都补满整行宽度，每个空格还裹一层 SGR：实测 153B 的 markdown
-// 渲染后是 12.7KB，其中 92% 是这种填充。消息区每帧全量重绘、每次重组都要扫
-// 一遍整个 buffer，所以必须剥掉。
-var glamourTailPad = regexp.MustCompile(`(?:\x1b\[[0-9;]*m|[ \t])+$`)
-
 // renderBody 用 glamour 渲染助手正文（crush Markdown StyleConfig）。ANSI 输出
 // 直接进 viewport——bubbletea 渲染器本身就是 ANSI 消费者。
-// 宽度预算扣 msgIndent 的 2 列：glamour 按 w-2 排版，加缩进正好 w——若按
-// w 排版再叠缩进会超 viewport，wrapViewText 重排时无空格的行（表格规则线）
-// 触发 reflow 硬断丢行首缩进，表格竖线整体错位（规则线左偏 2 列的根因）。
+// 宽度预算扣 msgIndent 的 2 列：glamour 按 w-2 排版，加缩进正好 w——
+// 行宽不超 viewport，避免终端在屏幕边缘自行硬换行（预算差几列只影响
+// 排版观感，不再有内容改写层放大它）。
 func renderBody(st *pullState, content string, w int) string {
 	gw := w - msgIndentW
 	if gw < 10 {
@@ -225,19 +217,13 @@ func renderBody(st *pullState, content string, w int) string {
 	return msgIndent.Render(strings.TrimRight(out, "\n"))
 }
 
-// stripGlamourPad 剥掉 glamour 输出的首尾换行与行尾填充，并补回行尾 reset
-// （剥填充会连带剥掉闭合样式的 SGR，不补则颜色泄漏到后续行）。
+// stripGlamourPad 剥掉 glamour 输出首尾的空行（块级 trim）。
+// 不再剥行尾填充：那是为"帧扫描成本"做的投机优化（92% 填充的估算从未
+// 实测），正则剥填充反而连带剥掉闭合 SGR、再手工补 reset——改写内容的
+// 层就是 bug 的产地（规则线错位的教训）。glamour 的行尾填充是不可见的
+// 空格，直接放行；真出现性能瓶颈再按实测数据优化。
 func stripGlamourPad(out string) string {
-	out = strings.TrimRight(strings.TrimLeft(out, "\n\r"), "\n\r ")
-	lines := strings.Split(out, "\n")
-	for i, l := range lines {
-		l = glamourTailPad.ReplaceAllString(l, "")
-		if l != "" && !strings.HasSuffix(l, "\x1b[m") {
-			l += "\x1b[m"
-		}
-		lines[i] = l
-	}
-	return strings.Join(lines, "\n")
+	return strings.Trim(out, "\n\r")
 }
 
 // renderNotice 见 engine.go/notice 相关：把通知槽位翻译成带色文本（文案配色

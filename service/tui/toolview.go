@@ -26,10 +26,16 @@ const (
 )
 
 // codeArgFields 工具参数中的"代码内容"字段：渲染为高亮代码块而非截断值行
-// （write_file 的写入内容）。渲染知识留在 UI 层（同 crush per-tool
+// （WriteFile 的写入内容）。渲染知识留在 UI 层（同 crush per-tool
 // renderer 思路），工具本身零改动。
 var codeArgFields = map[string]string{
-	"write_file": "Content",
+	"WriteFile": "Content",
+}
+
+// codeResultFields 工具结果中的"代码内容"字段（响应侧优先于参数侧——
+// 展示实际写入的内容）。WriteFile 响应携带小写 content。
+var codeResultFields = map[string]string{
+	"WriteFile": "content",
 }
 
 // argPath 工具调用参数中的目标文件路径（选 lexer 用）。
@@ -40,6 +46,16 @@ func argPath(obj map[string]any) string {
 		}
 	}
 	return ""
+}
+
+// resultObjectOf 结果对象解析（sidecar meta 优先），非对象返回 nil。
+func resultObjectOf(result, meta string) map[string]any {
+	raw := result
+	if m := sidecarResult(meta); m != "" {
+		raw = m
+	}
+	obj, _ := decodeJSONObject([]byte(strings.TrimSpace(raw)))
+	return obj
 }
 
 // paramMappers 工具名 → 字段登记，包级一次性索引（查询 O(1)）。
@@ -201,9 +217,10 @@ func padRight(s string, w int) string {
 
 // ── 结果路由 ────────────────────────────────────────────
 
-// resultParts 结果解析：JSON 对象按 mapper.Out 顺序提取字段——标量成 ↪ 行、
+// resultParts 结果解析：JSON 对象按 mapper.Out 顺序提取字段——标量成行、
 // 多行内容成块；非对象结果（JSON 字符串或原文）整体按内容类型路由。
-// 空/()/{} 无输出。
+// 空/()/{} 无输出。meta 为引擎 sidecar 旁路元数据时其 result 优先
+// （对模型侧结果压缩免疫）。
 func resultParts(name string, result string, meta string) ([]kvRow, []textBlock) {
 	if raw := sidecarResult(meta); raw != "" {
 		result = raw
@@ -213,9 +230,13 @@ func resultParts(name string, result string, meta string) ([]kvRow, []textBlock)
 		return nil, nil
 	}
 	if obj, ok := decodeJSONObject([]byte(s)); ok {
+		skip := codeResultFields[name] // 代码内容字段由 toolView 渲染为代码块，不重复
 		var rows []kvRow
 		var blocks []textBlock
 		for _, k := range orderedKeys(name, obj, false) {
+			if skip != "" && k == skip {
+				continue
+			}
 			v, exists := obj[k]
 			if !exists || v == nil {
 				continue
@@ -333,6 +354,23 @@ func cleanBlock(s string) string {
 
 // ── 组装与块渲染 ────────────────────────────────────────
 
+// toolBodyBgSGR 工具块体区（参数+结果）的浅底色 SGR：#262626 纯中性灰，
+// 与代码块底色同族（styles.go 的 cCodeBlockBg）。浅底色成块是工具体的
+// 视觉语言（对应思考块的左竖线），亮度差与纯灰调保证黑底终端上不读成色块。
+var toolBodyBgSGR = "\x1b[48;2;38;38;38m"
+
+// bgWrap 给体区行加底色并铺满 fill 列宽：chroma/lipgloss 的逐 token reset
+// （\x1b[0m / \x1b[m）会清掉底色，必须每个 reset 后重发；行尾在底色活跃
+// 状态下补空格铺满（补的空格即带底色），最后统一收尾 reset。
+func bgWrap(line string, fill int) string {
+	s := strings.ReplaceAll(line, "\x1b[0m", "\x1b[0m"+toolBodyBgSGR)
+	s = strings.ReplaceAll(s, "\x1b[m", "\x1b[m"+toolBodyBgSGR)
+	if pad := fill - ansi.StringWidth(line); pad > 0 {
+		s += strings.Repeat(" ", pad)
+	}
+	return toolBodyBgSGR + s + "\x1b[0m"
+}
+
 // toolView 工具块总装：头部行（✓ name）→ 参数字段行（most-subtle，最暗）→
 // 空行分段 → 结果标量行 + 多行内容块（muted，亮一档）。参数与结果行同列
 // 对齐，仅靠空行与明暗区分段。w 为块可用总宽（msgIndent 的缩进已扣）。
@@ -349,21 +387,34 @@ func toolView(name string, args []byte, result string, w int, meta string) strin
 	argRowList := argRows(name, args)
 	resRows, blocks := resultParts(name, result, meta)
 
-	// 代码内容参数（write_file 的写入内容）：从参数行里摘出来，渲染为
-	// 高亮代码块——40 rune 截断值行对代码内容没有意义。
+	// 代码内容：响应侧（WriteFile 的 content）优先——展示实际写入的内容；
+	// 参数侧（写入参数 Content）作无响应内容时的兜底。
 	var codeLines []string
-	codeField := codeArgFields[name]
-	if codeField != "" {
-		if content, isStr := argsObj[codeField].(string); isStr && strings.TrimSpace(content) != "" {
-			rows := argRowList[:0]
-			for _, r := range argRowList {
-				if r.key != codeField {
-					rows = append(rows, r)
-				}
+	codeInResult := false
+	if resCode := codeResultFields[name]; resCode != "" {
+		if obj := resultObjectOf(result, meta); obj != nil {
+			if s, ok := obj[resCode].(string); ok && strings.TrimSpace(s) != "" {
+				codeLines = codeBlockLines(path, s, avail)
+				codeInResult = true
 			}
-			argRowList = rows
-			codeLines = codeBlockLines(path, content, avail)
 		}
+	}
+	if !codeInResult {
+		if codeArg := codeArgFields[name]; codeArg != "" {
+			if s, ok := argsObj[codeArg].(string); ok && strings.TrimSpace(s) != "" {
+				codeLines = codeBlockLines(path, s, avail)
+			}
+		}
+	}
+	// 参数行摘除代码内容字段（无论哪侧渲染，同一数据不重复展示）
+	if codeArg := codeArgFields[name]; codeArg != "" {
+		rows := argRowList[:0]
+		for _, r := range argRowList {
+			if r.key != codeArg {
+				rows = append(rows, r)
+			}
+		}
+		argRowList = rows
 	}
 
 	all := make([]kvRow, 0, len(argRowList)+len(resRows))
@@ -380,25 +431,39 @@ func toolView(name string, args []byte, result string, w int, meta string) strin
 		}
 	}
 
-	lines := []string{toolHeader(name, "")}
+	// 体区（头部行之外的所有行）：参数行 → 代码块（参数侧兜底时）→ 空行 →
+	// 结果行/内容块 → 代码块（响应侧时）
+	var bodyLines []string
 	for _, r := range argRowList {
-		lines = append(lines, kvRowLines(r, kw, avail, cFgMostSubtle)...)
+		bodyLines = append(bodyLines, kvRowLines(r, kw, avail, cFgMostSubtle)...)
 	}
-	// 代码块属于参数区（展示"写了什么"）：与参数行之间空行分隔
-	if len(codeLines) > 0 && len(argRowList) > 0 {
-		lines = append(lines, "")
+	if !codeInResult && len(codeLines) > 0 && len(argRowList) > 0 {
+		bodyLines = append(bodyLines, "")
 	}
-	lines = append(lines, codeLines...)
+	if !codeInResult {
+		bodyLines = append(bodyLines, codeLines...)
+	}
 	// 空行仅在两段都存在时出现（无参工具不凭空多空行）
 	hasInput := len(argRowList) > 0 || len(codeLines) > 0
-	if hasInput && (len(resRows) > 0 || len(blocks) > 0) {
-		lines = append(lines, "")
+	if hasInput && (len(resRows) > 0 || len(blocks) > 0 || codeInResult) {
+		bodyLines = append(bodyLines, "")
 	}
 	for _, r := range resRows {
-		lines = append(lines, kvRowLines(r, kw, avail, cFgMuted)...)
+		bodyLines = append(bodyLines, kvRowLines(r, kw, avail, cFgMuted)...)
 	}
 	for _, b := range blocks {
-		lines = append(lines, renderBlock(b, avail, path)...)
+		bodyLines = append(bodyLines, renderBlock(b, avail, path)...)
+	}
+	if codeInResult {
+		bodyLines = append(bodyLines, codeLines...)
+	}
+
+	// 头部行 + 体区浅底色（逐行包裹并铺满块宽，视觉上成块）
+	lines := make([]string, 0, len(bodyLines)+1)
+	lines = append(lines, toolHeader(name, ""))
+	bodyW := w - msgIndentW
+	for _, l := range bodyLines {
+		lines = append(lines, bgWrap(l, bodyW))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -457,60 +522,91 @@ func renderBlock(b textBlock, avail int, path string) []string {
 // diffHunkHeader 匹配 unified diff hunk 头，提取 old/new 起始行号。
 var diffHunkHeader = regexp.MustCompile(`^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@`)
 
-// renderDiffBlock unified diff 块：行号列（@@ 头解析并逐行推进，add/del
-// 行各自只占一侧）+ 行内语法高亮（lexer 取自 path）+ +/- 前缀染色。
+// renderDiffBlock unified diff 块：行号列（@@ 头解析并逐行推进，add/del 行
+// 各自只占一侧）+ 行内语法高亮（lexer 取自 path）+ +/- 前缀染色。
 // 语法色与 diff 色分层：前缀承载 +/- 红绿，内容承载 chroma 语法色。
+// 原始 diff 头行（---/+++/@@）不渲染——行号与染色已是完整信息，原始
+// hunk 语法是噪音；多 hunk 之间以弱化 … 行示意行号跳变；截断只计内容行。
 func renderDiffBlock(b textBlock, path string, avail int) []string {
 	if avail < 10 {
 		avail = 10
 	}
 	all := strings.Split(cleanBlock(b.text), "\n")
-	total := len(all)
-	if total > blockMaxLines {
-		all = all[:blockMaxLines]
-	}
 
-	// 第一遍：推进行号，算 old/new 列宽
+	// 第一遍：解析为内容条目。头行只推进行号计数不产出。
+	type diffEntry struct {
+		o, n    int
+		kind    string // add | del | ctx | gap
+		content string
+	}
+	var entries []diffEntry
 	oldLine, newLine := 0, 0
-	maxOld, maxNew := 0, 0
 	for _, l := range all {
 		if m := diffHunkHeader.FindStringSubmatch(l); m != nil {
 			oldLine, _ = strconv.Atoi(m[1])
 			newLine, _ = strconv.Atoi(m[2])
+			if len(entries) > 0 {
+				entries = append(entries, diffEntry{kind: "gap"})
+			}
+			continue
+		}
+		if strings.HasPrefix(l, "---") || strings.HasPrefix(l, "+++") ||
+			strings.HasPrefix(l, "diff --git") {
 			continue
 		}
 		switch {
-		case strings.HasPrefix(l, "-") && !strings.HasPrefix(l, "---"):
-			if oldLine > maxOld {
-				maxOld = oldLine
-			}
+		case strings.HasPrefix(l, "-"):
+			entries = append(entries, diffEntry{o: oldLine, kind: "del", content: l[1:]})
 			oldLine++
-		case strings.HasPrefix(l, "+") && !strings.HasPrefix(l, "+++"):
-			if newLine > maxNew {
-				maxNew = newLine
-			}
+		case strings.HasPrefix(l, "+"):
+			entries = append(entries, diffEntry{n: newLine, kind: "add", content: l[1:]})
 			newLine++
 		case strings.HasPrefix(l, " ") || strings.HasPrefix(l, "\\"):
-			if oldLine > maxOld {
-				maxOld = oldLine
-			}
-			if newLine > maxNew {
-				maxNew = newLine
-			}
+			entries = append(entries, diffEntry{o: oldLine, n: newLine, kind: "ctx", content: strings.TrimPrefix(l, " ")})
 			oldLine++
 			newLine++
 		}
 	}
-	oldW := len(fmt.Sprintf("%d", max(maxOld, 1)))
-	newW := len(fmt.Sprintf("%d", max(maxNew, 1)))
+
+	// 截断：只计内容行（gap 不计），保留前 blockMaxLines 个内容行及其伴随 gap
+	contentTotal := 0
+	for _, e := range entries {
+		if e.kind != "gap" {
+			contentTotal++
+		}
+	}
+	shown := entries
+	if contentTotal > blockMaxLines {
+		kept, n := make([]diffEntry, 0, len(entries)), 0
+		for _, e := range entries {
+			if e.kind != "gap" {
+				if n == blockMaxLines {
+					break
+				}
+				n++
+			}
+			kept = append(kept, e)
+		}
+		shown = kept
+	}
+
+	// 列宽
+	maxOld, maxNew := 1, 1
+	for _, e := range shown {
+		if e.o > maxOld {
+			maxOld = e.o
+		}
+		if e.n > maxNew {
+			maxNew = e.n
+		}
+	}
+	oldW := len(fmt.Sprintf("%d", maxOld))
+	newW := len(fmt.Sprintf("%d", maxNew))
 	numCol := oldW + 1 + newW + 1
 
-	// 第二遍：渲染
-	oldLine, newLine = 0, 0
 	renderNums := func(o, n int) string {
-		blank := strings.Repeat(" ", oldW+1+newW+1)
 		if o == 0 && n == 0 {
-			return colorText(cFgMostSubtle, blank)
+			return colorText(cFgMostSubtle, strings.Repeat(" ", numCol))
 		}
 		var ob, nb string
 		if o > 0 {
@@ -525,50 +621,34 @@ func renderDiffBlock(b textBlock, path string, avail int) []string {
 		}
 		return colorText(cFgMostSubtle, ob+" "+nb+" ")
 	}
+	diffPrefix := func(kind string) string {
+		switch kind {
+		case "add":
+			return "+"
+		case "del":
+			return "-"
+		default:
+			return " "
+		}
+	}
 
 	limit := avail - numCol - 2
 	if limit < 4 {
 		limit = 4
 	}
-	out := make([]string, 0, len(all)+1)
-	for _, l := range all {
-		if m := diffHunkHeader.FindStringSubmatch(l); m != nil {
-			oldLine, _ = strconv.Atoi(m[1])
-			newLine, _ = strconv.Atoi(m[2])
-			out = append(out, renderNums(0, 0)+colorText(cFgMostSubtle, l))
-			continue
-		}
-		var (
-			o, n        int
-			prefix      string
-			kind        string
-			content     string
-		)
-		switch {
-		case strings.HasPrefix(l, "-") && !strings.HasPrefix(l, "---"):
-			o = oldLine
-			oldLine++
-			prefix, kind, content = "-", "del", l[1:]
-		case strings.HasPrefix(l, "+") && !strings.HasPrefix(l, "+++"):
-			n = newLine
-			newLine++
-			prefix, kind, content = "+", "add", l[1:]
-		case strings.HasPrefix(l, " "):
-			o, n = oldLine, newLine
-			oldLine++
-			newLine++
-			prefix, kind, content = " ", "ctx", l[1:]
-		default: // ---/+++/其他头行
-			out = append(out, renderNums(0, 0)+colorText(cFgMostSubtle, l))
+	out := make([]string, 0, len(shown)+1)
+	for _, e := range shown {
+		if e.kind == "gap" {
+			out = append(out, renderNums(0, 0)+colorText(cFgMostSubtle, "…"))
 			continue
 		}
 		if path == "" {
-			// 无文件上下文（如 diff 工具的裸 diff）：整行按 kind 染色，
+			// 无文件上下文（如 Diff 工具的裸 diff）：整行按 kind 染色，
 			// 折行后每个 chunk 独立染色（kind 贯穿整逻辑行）
-			lineColor := diffKindColor(kind)
-			for i, chunk := range hardWrapIf(prefix+content, limit) {
+			lineColor := diffKindColor(e.kind)
+			for i, chunk := range hardWrapIf(diffPrefix(e.kind)+e.content, limit) {
 				if i == 0 {
-					out = append(out, renderNums(o, n)+colorText(lineColor, chunk))
+					out = append(out, renderNums(e.o, e.n)+colorText(lineColor, chunk))
 				} else {
 					out = append(out, colorText(cFgMostSubtle, strings.Repeat(" ", numCol))+colorText(lineColor, chunk))
 				}
@@ -576,18 +656,18 @@ func renderDiffBlock(b textBlock, path string, avail int) []string {
 			continue
 		}
 		// 有文件路径：语法色打底、+/- 前缀承载 diff kind（crush 分层同型）
-		hl := highlightCode(content, path)
+		hl := highlightCode(e.content, path)
 		chunks := hardWrapIf(hl, limit)
 		for i, chunk := range chunks {
 			if i == 0 {
-				out = append(out, renderNums(o, n)+colorText(diffKindColor(kind), prefix+" ")+chunk)
+				out = append(out, renderNums(e.o, e.n)+colorText(diffKindColor(e.kind), diffPrefix(e.kind)+" ")+chunk)
 			} else {
 				out = append(out, colorText(cFgMostSubtle, strings.Repeat(" ", numCol+2))+chunk)
 			}
 		}
 	}
-	if total > blockMaxLines {
-		note := fmt.Sprintf("… 共 %d 行，显示前 %d 行", total, blockMaxLines)
+	if contentTotal > blockMaxLines {
+		note := fmt.Sprintf("… 共 %d 行，显示前 %d 行", contentTotal, blockMaxLines)
 		for _, chunk := range hardWrapIf(note, limit) {
 			out = append(out, colorText(cFgMostSubtle, strings.Repeat(" ", numCol+2)+chunk))
 		}

@@ -85,10 +85,10 @@ func TestCodeBlockLines(t *testing.T) {
 
 func TestToolViewWriteFileContent(t *testing.T) {
 	withMappers(t, map[string]*tools.ParamMapper{
-		"write_file": {Name: "write_file", In: []string{"Path", "Content"}, Out: []string{"BytesWritten"}},
+		"WriteFile": {Name: "WriteFile", In: []string{"Path", "Content"}, Out: []string{"BytesWritten"}},
 	})
 	args := []byte(`{"Path":"x.go","Content":"func main() {\n\treturn 42\n}\n"}`)
-	out := toolView("write_file", args, `{"BytesWritten":44}`, 120, "")
+	out := toolView("WriteFile", args, `{"BytesWritten":44}`, 120, "")
 	lines := strings.Split(out, "\n")
 	// header + Path 行 + 空行 + 3 行代码 + 空行 + 1 结果行 = 8
 	if len(lines) != 8 {
@@ -116,11 +116,17 @@ func TestToolViewWriteFileContent(t *testing.T) {
 func TestRenderDiffBlockLineNumbers(t *testing.T) {
 	diff := "--- a/x.go\n+++ b/x.go\n@@ -10,3 +10,4 @@\n ctx\n-old\n+new\n+new2\n"
 	lines := renderDiffBlock(textBlock{text: diff, isDiff: true}, "x.go", 120)
-	// 3 行内容（hunk 头不计入截断尾注前）+ hunk 头 + 头部两行 = 7 行
-	if len(lines) != 7 {
-		t.Fatalf("want 7 lines, got %d:\n%s", len(lines), strings.Join(lines, "\n"))
+	// 4 行内容（---/+++/@@ 头行不渲染）
+	if len(lines) != 4 {
+		t.Fatalf("want 4 lines, got %d:\n%s", len(lines), strings.Join(lines, "\n"))
 	}
 	flat := ansi.Strip(strings.Join(lines, "\n"))
+	// 原始 diff 头不出现
+	for _, noise := range []string{"--- a/x.go", "+++", "@@"} {
+		if strings.Contains(flat, noise) {
+			t.Errorf("raw diff header leaked: %q\n%s", noise, flat)
+		}
+	}
 	// 行号：ctx 行 = old 10 / new 10；-old = old 11；+new2 = new 12
 	for _, want := range []string{"10 10", "11", "12"} {
 		if !strings.Contains(flat, want) {
@@ -131,24 +137,80 @@ func TestRenderDiffBlockLineNumbers(t *testing.T) {
 	if !strings.Contains(flat, "- old") || !strings.Contains(flat, "+ new") {
 		t.Errorf("diff content missing:\n%s", flat)
 	}
-	for _, l := range lines {
-		s := ansi.Strip(l)
-		if strings.HasPrefix(s, "-") || strings.Contains(s, " -old") {
-			if !strings.Contains(l, "38;2;235;66;104") { // cError
-				t.Errorf("del line not red: %q", l)
-			}
-		}
-	}
-	// 行内语法高亮存在（ctx 行内容 "ctx" 无 Go 关键字，看 +new 行染绿之外还有 chroma 色）
-	hasChroma := false
-	for _, l := range lines {
-		s := ansi.Strip(l)
-		if strings.Contains(s, "+new") && strings.Count(l, "\x1b[38;2;") >= 1 {
-			hasChroma = true
-		}
-	}
-	_ = hasChroma // +new 的绿色即 chroma/diff 叠加，弱断言：整块至少有一个 24-bit 色
 	if strings.Count(strings.Join(lines, "\n"), "\x1b[38;2;") == 0 {
 		t.Errorf("no 24-bit color in diff block")
+	}
+}
+
+func TestRenderDiffBlockHunkGap(t *testing.T) {
+	// 两个 hunk：中间插入弱化 … 行示意行号跳变
+	diff := "@@ -1,2 +1,2 @@\n a\n-b\n@@ -10,2 +10,2 @@\n c\n+d\n"
+	lines := renderDiffBlock(textBlock{text: diff, isDiff: true}, "x.go", 120)
+	flat := ansi.Strip(strings.Join(lines, "\n"))
+	if strings.Count(flat, "…") != 1 {
+		t.Errorf("want exactly one hunk gap:\n%s", flat)
+	}
+	if !strings.Contains(flat, "- b") || !strings.Contains(flat, "+ d") {
+		t.Errorf("hunk content missing:\n%s", flat)
+	}
+}
+
+func TestRenderDiffBlockTruncationCountsContent(t *testing.T) {
+	// 3 头行 + 12 内容行：截断计数只算内容行
+	var b strings.Builder
+	b.WriteString("--- a/x.go\n+++ b/x.go\n@@ -1,12 +1,12 @@\n")
+	for i := 0; i < 12; i++ {
+		b.WriteString(" ctx\n")
+	}
+	lines := renderDiffBlock(textBlock{text: b.String(), isDiff: true}, "x.go", 120)
+	if len(lines) != 11 { // 10 内容行 + 尾注
+		t.Fatalf("want 11 lines, got %d", len(lines))
+	}
+	last := ansi.Strip(lines[len(lines)-1])
+	if !strings.Contains(last, "共 12 行") {
+		t.Errorf("truncation note should count content lines only: %q", last)
+	}
+}
+
+func TestToolViewWriteFileResultContent(t *testing.T) {
+	withMappers(t, map[string]*tools.ParamMapper{
+		"WriteFile": {Name: "WriteFile", In: []string{"Path", "Content"}, Out: []string{"BytesWritten"}},
+	})
+	// 响应携带 content（用户改造后的 WriteFile）：渲染为代码块，
+	// 结果行不重复展示 content 截断值
+	args := []byte(`{"Path":"x.py","Content":"print(1)\nprint(2)\n"}`)
+	result := `{"BytesWritten":20,"content":"print(1)\nprint(2)\n"}`
+	out := toolView("WriteFile", args, result, 120, `{"result":{"BytesWritten":20,"content":"print(1)\nprint(2)\n"}}`)
+	flat := ansi.Strip(out)
+	if !strings.Contains(flat, "print(1)") || !strings.Contains(flat, "print(2)") {
+		t.Errorf("result content not rendered as code block:\n%s", flat)
+	}
+	if !strings.Contains(flat, "BytesWritten") || !strings.Contains(flat, "20") {
+		t.Errorf("BytesWritten row missing:\n%s", flat)
+	}
+	// content 只出现一次（代码块），不出现第二次（值行）
+	if n := strings.Count(flat, "print(1)"); n != 1 {
+		t.Errorf("content duplicated (%d occurrences)", n)
+	}
+}
+
+func TestToolViewBodyBackground(t *testing.T) {
+	withMappers(t, map[string]*tools.ParamMapper{
+		"CD": {Name: "CD", In: []string{"Path"}, Out: []string{"CwdNow"}},
+	})
+	out := toolView("CD", []byte(`{"Path":"/tmp"}`), `{"CwdNow":"/home/x"}`, 120, "")
+	lines := strings.Split(out, "\n")
+	// 头部行无底色
+	if strings.Contains(lines[0], "48;2;") {
+		t.Errorf("header should not carry background: %q", lines[0])
+	}
+	// 体区行全部带底色（#262626 = 38;38;38）并铺满块宽（118 = 120 - msgIndent 2）
+	for i, l := range lines[1:] {
+		if !strings.Contains(l, "48;2;38;38;38") {
+			t.Errorf("body line %d missing background: %q", i+1, l)
+		}
+		if w := ansi.StringWidth(l); w != 118 {
+			t.Errorf("body line %d not padded to block width (got %d): %q", i+1, w, ansi.Strip(l))
+		}
 	}
 }

@@ -199,25 +199,29 @@ func TestCleanBlock(t *testing.T) {
 
 func TestToolViewAssembly(t *testing.T) {
 	withMappers(t, map[string]*tools.ParamMapper{
-		"edit_file": {Name: "edit_file", In: []string{"Path"}, Out: []string{"Diff"}},
+		"EditFile": {Name: "EditFile", In: []string{"Path"}, Out: []string{"Diff"}},
 	})
 	args := []byte(`{"Path":"service/tui/render.go"}`)
-	out := toolView("edit_file", args, `{"Diff":"--- a/x.go\n+++ b/x.go\n@@ -1 +1 @@\n-old\n+new"}`, 120, "")
+	out := toolView("EditFile", args, `{"Diff":"--- a/x.go\n+++ b/x.go\n@@ -1 +1 @@\n-old\n+new"}`, 120, "")
 	lines := strings.Split(out, "\n")
-	if len(lines) != 8 { // header + param + 空行 + 5 行 diff
-		t.Fatalf("want 8 lines, got %d:\n%s", len(lines), out)
+	// header + param + 空行 + 2 行内容（diff 头行不渲染）
+	if len(lines) != 5 {
+		t.Fatalf("want 5 lines, got %d:\n%s", len(lines), out)
 	}
-	if !strings.Contains(lines[0], "edit_file") {
+	if !strings.Contains(lines[0], "EditFile") {
 		t.Errorf("header missing tool name: %q", lines[0])
 	}
 	if !strings.Contains(lines[1], "Path") || !strings.Contains(lines[1], "render.go") {
 		t.Errorf("param line broken: %q", lines[1])
 	}
-	if lines[2] != "" {
+	if strings.TrimSpace(ansi.Strip(lines[2])) != "" {
 		t.Errorf("want blank separator line, got %q", lines[2])
 	}
-	if !strings.Contains(lines[3], "--- a/x.go") {
-		t.Errorf("diff first line missing: %q", lines[3])
+	// diff 头行剥离：不出现原始 hunk 语法
+	for _, noise := range []string{"--- a/x.go", "+++", "@@"} {
+		if strings.Contains(ansi.Strip(out), noise) {
+			t.Errorf("raw diff header leaked: %q\n%s", noise, ansi.Strip(out))
+		}
 	}
 	// + 行染绿、- 行染红（语法色分层：前缀承载 diff 色，内容承载 chroma 色。
 	// 断言须剥 ANSI：前缀与内容之间隔着 SGR 转义码）
@@ -266,25 +270,35 @@ func TestToolViewSectionBrightness(t *testing.T) {
 }
 
 func TestToolViewBlankLineOnlyBetweenSections(t *testing.T) {
+	// 空行判定按视觉：底色包裹后的空行是"ANSI + 空白"，须剥色后判断
+	visBlanks := func(out string) int {
+		n := 0
+		for _, l := range strings.Split(out, "\n") {
+			if strings.TrimSpace(ansi.Strip(l)) == "" {
+				n++
+			}
+		}
+		return n
+	}
 	// 只有参数：无空行
 	withMappers(t, map[string]*tools.ParamMapper{
 		"p": {Name: "p", In: []string{"K"}, Out: nil},
 	})
-	if out := toolView("p", []byte(`{"K":"v"}`), "", 120, ""); strings.Contains(out, "\n\n") {
+	if out := toolView("p", []byte(`{"K":"v"}`), "", 120, ""); visBlanks(out) != 0 {
 		t.Errorf("unexpected blank line (params only):\n%s", out)
 	}
 	// 只有结果：无空行
 	withMappers(t, map[string]*tools.ParamMapper{
 		"r": {Name: "r", In: nil, Out: []string{"R"}},
 	})
-	if out := toolView("r", nil, `{"R":"v"}`, 120, ""); strings.Contains(out, "\n\n") {
+	if out := toolView("r", nil, `{"R":"v"}`, 120, ""); visBlanks(out) != 0 {
 		t.Errorf("unexpected blank line (result only):\n%s", out)
 	}
 	// 都有：恰一行空行
 	withMappers(t, map[string]*tools.ParamMapper{
 		"b": {Name: "b", In: []string{"K"}, Out: []string{"R"}},
 	})
-	if out := toolView("b", []byte(`{"K":"v"}`), `{"R":"v"}`, 120, ""); strings.Count(out, "\n\n") != 1 {
+	if out := toolView("b", []byte(`{"K":"v"}`), `{"R":"v"}`, 120, ""); visBlanks(out) != 1 {
 		t.Errorf("want exactly one blank separator:\n%s", out)
 	}
 }

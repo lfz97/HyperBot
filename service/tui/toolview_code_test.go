@@ -88,7 +88,7 @@ func TestToolViewWriteFileContent(t *testing.T) {
 		"write_file": {Name: "write_file", In: []string{"Path", "Content"}, Out: []string{"BytesWritten"}},
 	})
 	args := []byte(`{"Path":"x.go","Content":"func main() {\n\treturn 42\n}\n"}`)
-	out := toolView("write_file", args, `{"BytesWritten":44}`, 120)
+	out := toolView("write_file", args, `{"BytesWritten":44}`, 120, "")
 	lines := strings.Split(out, "\n")
 	// header + Path 行 + 空行 + 3 行代码 + 空行 + 1 结果行 = 8
 	if len(lines) != 8 {

@@ -262,3 +262,84 @@ func TestToolViewEmptyArgsResult(t *testing.T) {
 		t.Fatalf("want header only, got:\n%s", out)
 	}
 }
+
+func TestOrderedKeysNumericSort(t *testing.T) {
+	withMappers(t, map[string]*tools.ParamMapper{})
+	obj := map[string]any{"10": "a", "2": "b", "0": "c", "1": "d"}
+	got := orderedKeys("unregistered", obj, false)
+	want := []string{"0", "1", "2", "10"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("numeric sort broken: got %v, want %v", got, want)
+	}
+}
+
+func TestExpandJSONList(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+		ok   bool
+	}{
+		{`["a.go","b.go"]`, "a.go\nb.go", true},
+		{`[{"A":1},{"B":2}]`, "{\"A\":1}\n{\"B\":2}", true},
+		{`[]`, "", false},
+		{`{"k":"v"}`, "", false},
+		{`plain text`, "", false},
+	}
+	for _, c := range cases {
+		got, ok := expandJSONList(c.in)
+		if ok != c.ok || got != c.want {
+			t.Errorf("expandJSONList(%q) = (%q,%v), want (%q,%v)", c.in, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+func TestResultPartsListExpansion(t *testing.T) {
+	withMappers(t, map[string]*tools.ParamMapper{
+		"glob": {Name: "glob", In: []string{"Regex"}, Out: []string{"Matches"}},
+	})
+	rows, blocks := resultParts("glob", `{"Matches":"[\"a.go\",\"b.go\",\"c.go\"]"}`)
+	if len(rows) != 0 || len(blocks) != 1 {
+		t.Fatalf("want 0 rows 1 block, got rows=%#v blocks=%#v", rows, blocks)
+	}
+	if blocks[0].isDiff {
+		t.Fatalf("list block misdetected as diff")
+	}
+	lines := strings.Split(cleanBlock(blocks[0].text), "\n")
+	if len(lines) != 3 || lines[0] != "a.go" || lines[2] != "c.go" {
+		t.Fatalf("list expansion broken: %#v", lines)
+	}
+}
+
+func TestArgRowsSkipEmptyValues(t *testing.T) {
+	withMappers(t, map[string]*tools.ParamMapper{
+		"status": {Name: "status", In: []string{"Id", "WaitSeconds"}, Out: nil},
+	})
+	rows := argRows("status", []byte(`{"Id":"","WaitSeconds":0}`))
+	if len(rows) != 1 || rows[0].key != "WaitSeconds" {
+		t.Fatalf("want empty-string value skipped, got %#v", rows)
+	}
+	// 数值 0 不是空值，应保留
+	if rows[0].val != "0" {
+		t.Fatalf("numeric zero should be kept, got %q", rows[0].val)
+	}
+}
+
+func TestToolViewSearchInFileFallback(t *testing.T) {
+	// search_in_file 形态：Out 无登记（nil）→ 数字键自然排序，每条匹配一行
+	withMappers(t, map[string]*tools.ParamMapper{
+		"search_in_file": {Name: "search_in_file", In: []string{"Path", "Regex"}, Out: nil},
+	})
+	res := `{"10":"m10","2":"m2","0":"m0"}`
+	out := toolView("search_in_file", []byte(`{"Path":"x.go","Regex":"foo"}`), res)
+	lines := strings.Split(out, "\n")
+	// header + 2 参数行 + 3 结果行
+	if len(lines) != 6 {
+		t.Fatalf("want 6 lines, got %d:\n%s", len(lines), out)
+	}
+	if !strings.Contains(lines[5], "m10") {
+		t.Errorf("numeric order broken, last row: %q", lines[5])
+	}
+	if !strings.Contains(lines[3], "m0") {
+		t.Errorf("numeric order broken, first result row: %q", lines[3])
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
@@ -66,7 +67,8 @@ func argRows(name string, args []byte) []kvRow {
 	return []kvRow{{key: "args", val: s}}
 }
 
-// rowsFromKeys 从 JSON 对象按键序提取键值行（值折叠多行、截断）。
+// rowsFromKeys 从 JSON 对象按键序提取键值行（值折叠多行、截断；空字符串值
+// 跳过——传了但为空的字段（如 Id:""）显示成空尾巴是噪音）。
 func rowsFromKeys(obj map[string]any, keys []string) []kvRow {
 	var rows []kvRow
 	for _, k := range keys {
@@ -74,16 +76,18 @@ func rowsFromKeys(obj map[string]any, keys []string) []kvRow {
 		if !ok || v == nil {
 			continue
 		}
-		rows = append(rows, kvRow{
-			key: k,
-			val: truncateRunes(compactLine(stringValue(v)), argValueMaxRunes),
-		})
+		s := truncateRunes(compactLine(stringValue(v)), argValueMaxRunes)
+		if s == "" {
+			continue
+		}
+		rows = append(rows, kvRow{key: k, val: s})
 	}
 	return rows
 }
 
 // orderedKeys 键序：有 mapper 登记按登记顺序（登记为空切片则无行），
-// 无登记（MCP/未知工具）字典序兜底。
+// 无登记（MCP/未知工具）字典序兜底；纯数字键（search_in_file 的 "0"~"N"）
+// 按数值排序——字典序会把 "10" 排在 "2" 前面。
 func orderedKeys(name string, obj map[string]any, in bool) []string {
 	var registered []string
 	if m := paramMappers[name]; m != nil {
@@ -101,7 +105,27 @@ func orderedKeys(name string, obj map[string]any, in bool) []string {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
+	if allDigits(keys) {
+		sort.Slice(keys, func(i, j int) bool {
+			a, _ := strconv.Atoi(keys[i])
+			b, _ := strconv.Atoi(keys[j])
+			return a < b
+		})
+	}
 	return keys
+}
+
+// allDigits 全部键均为纯数字（≥1 个）。
+func allDigits(keys []string) bool {
+	if len(keys) == 0 {
+		return false
+	}
+	for _, k := range keys {
+		if _, err := strconv.Atoi(k); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 // ── 值与 JSON 工具函数 ───────────────────────────────────
@@ -175,13 +199,19 @@ func resultParts(name string, result string) ([]kvRow, []textBlock) {
 				continue
 			}
 			str := stringValue(v)
+			if expanded, ok := expandJSONList(str); ok {
+				// 值本身是 JSON 数组（ls/glob 的"JSON 套 JSON"形态）：展开成
+				// 每元素一行，走多行块渲染
+				blocks = append(blocks, textBlock{text: expanded})
+				continue
+			}
 			if isMultiline(str) {
 				blocks = append(blocks, textBlock{text: str, isDiff: isDiff(str)})
 			} else {
-				rows = append(rows, kvRow{
-					key: k,
-					val: truncateRunes(compactLine(str), argValueMaxRunes),
-				})
+				s := truncateRunes(compactLine(str), argValueMaxRunes)
+				if s != "" { // 空字符串值（如 Error:""）不出行
+					rows = append(rows, kvRow{key: k, val: s})
+				}
 			}
 		}
 		return rows, blocks
@@ -208,6 +238,32 @@ func isDiff(s string) bool {
 	return strings.HasPrefix(t, "--- ") ||
 		strings.HasPrefix(t, "diff --git") ||
 		strings.HasPrefix(t, "@@ ")
+}
+
+// expandJSONList 结果值本身是 JSON 数组字符串（工具返回 map[string]string 装
+// 序列化好的列表——ls 的 Files、glob 的 Matches）时展开成每元素一行的文本：
+// 标量元素取裸值（glob 的路径列表去引号），其余紧凑序列化（ls 的文件对象）。
+// 非数组/空数组/解析失败返回 false，走原渲染路径。
+func expandJSONList(s string) (string, bool) {
+	t := strings.TrimSpace(s)
+	if len(t) < 2 || t[0] != '[' {
+		return "", false
+	}
+	var arr []any
+	if err := json.Unmarshal([]byte(t), &arr); err != nil || len(arr) == 0 {
+		return "", false
+	}
+	parts := make([]string, 0, len(arr))
+	for _, e := range arr {
+		if str, ok := e.(string); ok {
+			parts = append(parts, str)
+		} else if b, err := json.Marshal(e); err == nil {
+			parts = append(parts, string(b))
+		} else {
+			return "", false
+		}
+	}
+	return strings.Join(parts, "\n"), true
 }
 
 // diffLineKind diff 行分类：add(+)/del(-)/ctx(其余，含 --- +++ @@ 与上下文)。

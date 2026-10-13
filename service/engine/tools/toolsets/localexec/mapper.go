@@ -19,10 +19,13 @@ type Mappers interface {
 // InjectMapper 注册 localexec 各工具的参数/结果提取字段。工具名为框架加前缀后的实际名。
 func InjectMapper(m Mappers) {
 	prefix := localExecToolSetName + "_"
-	// Id 放在 Output 前：结果整体截断 200 rune，长输出会把尾部的 Id 挤掉
-	m.AddMapping(prefix+runToolName, []string{"Process", "Args"}, []string{"Id", "Output"})
-	m.AddMapping(prefix+statusToolName, []string{"Id"}, []string{"Status"})
-	m.AddMapping(prefix+outputToolName, []string{"Id"}, []string{})
+	// run：标量字段在前、Output 块殿后（渲染层块独立于标量行，旧的
+	// "Id 放前防截断"考量已不适用）
+	m.AddMapping(prefix+runToolName, []string{"Process", "Args"}, []string{"Status", "ExitCode", "Id", "Output"})
+	m.AddMapping(prefix+statusToolName, []string{"Id"}, []string{"Status", "ExitCode", "Id", "Pid", "StatusAll"})
+	// output：工具的本体就是取输出，Out 必须含 Output；落盘超阈值时
+	// Note/OutputFile 告知 agent 完整内容的位置
+	m.AddMapping(prefix+outputToolName, []string{"Id", "Stream"}, []string{"Id", "Output", "Note", "OutputFile"})
 	m.AddMapping(prefix+interveneToolName, []string{"Id", "Signal"}, []string{"Msg"})
 	m.AddMapping(prefix+killToolName, []string{"Id"}, []string{"Status"})
 }

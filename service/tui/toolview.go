@@ -419,7 +419,7 @@ func toolView(name string, args []byte, result string, w int, meta string) strin
 	all = append(all, argRowList...)
 	all = append(all, resRows...)
 	if len(all) == 0 && len(blocks) == 0 && len(codeLines) == 0 {
-		return toolHeader(name, "")
+		return toolHeader(name)
 	}
 
 	kw := 0
@@ -466,7 +466,7 @@ func toolView(name string, args []byte, result string, w int, meta string) strin
 	outLines = append(outLines, codeLines...)
 
 	lines := make([]string, 0, len(inLines)+len(outLines)+2)
-	lines = append(lines, toolHeader(name, ""))
+	lines = append(lines, toolHeader(name))
 	for _, l := range inLines {
 		lines = append(lines, lineWrap(l, cToolLineIn))
 	}

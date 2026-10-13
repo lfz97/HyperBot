@@ -30,13 +30,10 @@ var (
 	cFgSubtle      = lipgloss.Color("#BFBCC8") // Smoke：markdown 正文、错误标题
 	cFgMuted       = lipgloss.Color("#858392") // Squid：弱化文本、参数、提示
 	cFgMostSubtle  = lipgloss.Color("#605F6B") // Oyster：思考块左线
-	cCodeBg        = lipgloss.Color("#333333") // 行内代码底色（纯中性灰）
-	cCodeBlockBg   = lipgloss.Color("#262626") // 代码块底色（纯中性灰）
 	cOnPrimary     = lipgloss.Color("#FFFAF1") // Butter：tag 徽章前景
 
-	// 兼容旧引用：边框沿用 demo 的 "62"（输入框/帮助浮层），次文本对齐 Squid。
-	cBorder = lipgloss.Color("62")
-	cSub    = cFgMuted
+	// 兼容旧引用：次文本对齐 Squid。
+	cSub = cFgMuted
 
 	// 工具块体区竖线：与用户消息（primary 线）、思考块（faint 线）同款视觉
 	// 语言。参数区暗灰（输入=既定上下文，Oyster）、结果区淡绿（输出=产出，
@@ -116,13 +113,9 @@ func summaryText(text string) string {
 // ── 工具块头部行（crush toolHeader：状态图标 + info 工具名）──
 // 参数行/结果行/内容块由 toolview.go 的 toolView 负责。
 
-// toolHeader 头部行：✓ 工具名（params 预留扩展，空串不出尾随空格）。
-func toolHeader(name, params string) string {
-	icon := colorText(cSuccess, "✓")
-	if params == "" {
-		return fmt.Sprintf("%s %s", icon, colorText(cInfo, name))
-	}
-	return fmt.Sprintf("%s %s %s", icon, colorText(cInfo, name), params)
+// toolHeader 头部行：✓ 工具名。
+func toolHeader(name string) string {
+	return fmt.Sprintf("%s %s", colorText(cSuccess, "✓"), colorText(cInfo, name))
 }
 
 // compactLine 把多行文本压成单行：去掉 ANSI 转义与回车（命令输出常带 PTY 的

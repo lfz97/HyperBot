@@ -45,7 +45,7 @@ func main() {
 	cal("省略", strings.Repeat("…", 30))                     // 同上
 	cal("箭头", strings.Repeat("→", 30))                     // 同上
 	cal("框线", strings.Repeat("─", 30))                     // 同上
-	cal("混排", "检查项：Linux / amd64，用户 lfz（测试）") // 真实形态混合
+	cal("混排", "项：Linux，lfz（测试）") // 真实形态混合（≤30列）
 
 	fmt.Println()
 	fmt.Println("=== 真实表格复现（glamour 同款配置）===")

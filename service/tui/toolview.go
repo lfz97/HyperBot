@@ -9,6 +9,7 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
+	"image/color"
 	"sort"
 	"strconv"
 	"strings"
@@ -289,10 +290,15 @@ func cleanBlock(s string) string {
 
 // ── 组装与块渲染 ────────────────────────────────────────
 
-// toolView 工具块总装：头部行（✓ name）→ 参数字段行（4 空格缩进）→
-// 结果标量行（↪ 前缀）→ 多行内容块（首行 ↪、续行 4 空格缩进）。
-// 参数与结果行共用同一 key 列宽。
-func toolView(name string, args []byte, result string) string {
+// toolView 工具块总装：头部行（✓ name）→ 参数字段行（most-subtle，最暗）→
+// 空行分段 → 结果标量行 + 多行内容块（muted，亮一档）。参数与结果行同列
+// 对齐，仅靠空行与明暗区分段。w 为块可用总宽（msgIndent 的缩进已扣）。
+func toolView(name string, args []byte, result string, w int) string {
+	avail := w - msgIndentW - 4 // 扣 msgIndent(2) 与块内容 4 空格缩进
+	if avail < 10 {
+		avail = 10
+	}
+
 	argRowList := argRows(name, args)
 	resRows, blocks := resultParts(name, result)
 
@@ -312,48 +318,78 @@ func toolView(name string, args []byte, result string) string {
 
 	lines := []string{toolHeader(name, "")}
 	for _, r := range argRowList {
-		lines = append(lines, colorText(cFgMuted,
-			"    "+padRight(r.key, kw)+"  "+r.val))
+		lines = append(lines, kvRowLines(r, kw, avail, cFgMostSubtle)...)
+	}
+	// 空行仅在两段都存在时出现（无参工具不凭空多空行）
+	if len(argRowList) > 0 && (len(resRows) > 0 || len(blocks) > 0) {
+		lines = append(lines, "")
 	}
 	for _, r := range resRows {
-		lines = append(lines, colorText(cFgMuted,
-			"  ↪ "+padRight(r.key, kw)+"  "+r.val))
+		lines = append(lines, kvRowLines(r, kw, avail, cFgMuted)...)
 	}
 	for _, b := range blocks {
-		lines = append(lines, renderBlock(b)...)
+		lines = append(lines, renderBlock(b, avail)...)
 	}
 	return strings.Join(lines, "\n")
 }
 
-// renderBlock 多行内容块：首行 "  ↪ " 前缀、续行 4 空格缩进；diff 块
-// + 行淡绿、- 行红，其余 muted；超过 blockMaxLines 截断并加尾注。
-func renderBlock(b textBlock) []string {
+// kvRowLines 键值行：值超宽按列硬折行（续行对齐 value 起始列，不越过
+// padding），整行统一配色。值无 ANSI（已截断的纯文本），Hardwrap 安全。
+func kvRowLines(r kvRow, kw, avail int, c color.Color) []string {
+	prefix := "    " + padRight(r.key, kw) + "  "
+	limit := avail - len(prefix) // prefix 全为窄字符，字节数即显示列数
+	if limit < 4 {
+		limit = 4
+	}
+	chunks := hardWrapIf(r.val, limit)
+	lines := make([]string, len(chunks))
+	for i, chunk := range chunks {
+		p := prefix
+		if i > 0 {
+			p = strings.Repeat(" ", len(prefix))
+		}
+		lines[i] = colorText(c, p+chunk)
+	}
+	return lines
+}
+
+// renderBlock 多行内容块：每行 4 空格缩进、muted 色；diff 块 + 行淡绿、
+// - 行红（折行后续行继承本逻辑行的 kind）；行内容按 avail 硬折行；
+// 超过 blockMaxLines 截断并加最暗色尾注。
+func renderBlock(b textBlock, avail int) []string {
+	if avail < 10 {
+		avail = 10
+	}
 	all := strings.Split(cleanBlock(b.text), "\n")
 	total := len(all)
 	if total > blockMaxLines {
 		all = all[:blockMaxLines]
 	}
 	out := make([]string, 0, len(all)+1)
-	for i, l := range all {
-		prefix := "    "
-		if i == 0 {
-			prefix = "  ↪ "
+	for _, l := range all {
+		kind := ""
+		if b.isDiff {
+			kind = diffLineKind(l)
 		}
-		out = append(out, prefix+colorBlockLine(b, l))
+		for _, chunk := range hardWrapIf(l, avail) {
+			out = append(out, "    "+colorChunk(b, kind, chunk))
+		}
 	}
 	if total > blockMaxLines {
-		out = append(out, colorText(cFgMuted,
-			fmt.Sprintf("    … 共 %d 行，显示前 %d 行", total, blockMaxLines)))
+		note := fmt.Sprintf("… 共 %d 行，显示前 %d 行", total, blockMaxLines)
+		for _, chunk := range hardWrapIf(note, avail) {
+			out = append(out, colorText(cFgMostSubtle, "    "+chunk))
+		}
 	}
 	return out
 }
 
-// colorBlockLine 块内单行染色。
-func colorBlockLine(b textBlock, l string) string {
+// colorChunk 块内单行（已折行的 chunk）染色。
+func colorChunk(b textBlock, kind, l string) string {
 	if !b.isDiff {
 		return colorText(cFgMuted, l)
 	}
-	switch diffLineKind(l) {
+	switch kind {
 	case "add":
 		return colorText(cSuccessSubtle, l)
 	case "del":
@@ -361,4 +397,12 @@ func colorBlockLine(b textBlock, l string) string {
 	default:
 		return colorText(cFgMuted, l)
 	}
+}
+
+// hardWrapIf 超宽才按列硬折行（ANSI 感知、保显示列对齐），否则原样单行。
+func hardWrapIf(s string, limit int) []string {
+	if limit < 1 || ansi.StringWidth(s) <= limit {
+		return []string{s}
+	}
+	return strings.Split(ansi.Hardwrap(s, limit, false), "\n")
 }

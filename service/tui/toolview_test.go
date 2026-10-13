@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
+
 	tools "HyperBot/service/engine/tools"
 )
 
@@ -200,10 +202,10 @@ func TestToolViewAssembly(t *testing.T) {
 		"edit_file": {Name: "edit_file", In: []string{"Path"}, Out: []string{"Diff"}},
 	})
 	args := []byte(`{"Path":"service/tui/render.go"}`)
-	out := toolView("edit_file", args, `{"Diff":"--- a/x.go\n+++ b/x.go\n@@ -1 +1 @@\n-old\n+new"}`)
+	out := toolView("edit_file", args, `{"Diff":"--- a/x.go\n+++ b/x.go\n@@ -1 +1 @@\n-old\n+new"}`, 120)
 	lines := strings.Split(out, "\n")
-	if len(lines) != 7 {
-		t.Fatalf("want 7 lines (header+param+5 diff), got %d:\n%s", len(lines), out)
+	if len(lines) != 8 { // header + param + 空行 + 5 行 diff
+		t.Fatalf("want 8 lines, got %d:\n%s", len(lines), out)
 	}
 	if !strings.Contains(lines[0], "edit_file") {
 		t.Errorf("header missing tool name: %q", lines[0])
@@ -211,8 +213,11 @@ func TestToolViewAssembly(t *testing.T) {
 	if !strings.Contains(lines[1], "Path") || !strings.Contains(lines[1], "render.go") {
 		t.Errorf("param line broken: %q", lines[1])
 	}
-	if !strings.Contains(lines[2], "--- a/x.go") {
-		t.Errorf("diff first line missing: %q", lines[2])
+	if lines[2] != "" {
+		t.Errorf("want blank separator line, got %q", lines[2])
+	}
+	if !strings.Contains(lines[3], "--- a/x.go") {
+		t.Errorf("diff first line missing: %q", lines[3])
 	}
 	// + 行染绿、- 行染红（文本包在 ANSI 内，用包含断言）
 	if !strings.Contains(out, "+new") || !strings.Contains(out, "-old") {
@@ -224,18 +229,61 @@ func TestToolViewKeyAlignment(t *testing.T) {
 	withMappers(t, map[string]*tools.ParamMapper{
 		"x": {Name: "x", In: []string{"K", "LongerKey"}, Out: []string{"R"}},
 	})
-	out := toolView("x", []byte(`{"K":"v1","LongerKey":"v2"}`), `{"R":"ok"}`)
+	out := toolView("x", []byte(`{"K":"v1","LongerKey":"v2"}`), `{"R":"ok"}`, 120)
 	lines := strings.Split(out, "\n")
-	// 两行的 ANSI 前缀相同（同为 muted 单色），value 起始列必须相等
+	if len(lines) != 5 { // header + 2 参数 + 空行 + 1 结果
+		t.Fatalf("want 5 lines, got %d:\n%s", len(lines), out)
+	}
+	// 两行参数的 ANSI 前缀相同（同为 most-subtle 单色），value 起始列必须相等
 	if i1, i2 := strings.Index(lines[1], "v1"), strings.Index(lines[2], "v2"); i1 != i2 {
 		t.Errorf("value columns misaligned (%d vs %d): %q / %q", i1, i2, lines[1], lines[2])
 	}
 	if !strings.Contains(lines[2], "LongerKey") {
 		t.Errorf("LongerKey row broken: %q", lines[2])
 	}
-	// 结果标量行带 ↪ 前缀
-	if !strings.Contains(lines[3], "↪ R") {
-		t.Errorf("result row missing arrow: %q", lines[3])
+	// 结果行与参数行同列对齐（无符号前缀）——参数/结果配色不同，ANSI 前缀
+	// 字节长不同，须剥 ANSI 后按显示列比较
+	if i1, i2 := strings.Index(ansi.Strip(lines[1]), "v1"), strings.Index(ansi.Strip(lines[4]), "ok"); i1 != i2 {
+		t.Errorf("result value misaligned vs param (%d vs %d)", i1, i2)
+	}
+}
+
+func TestToolViewSectionBrightness(t *testing.T) {
+	withMappers(t, map[string]*tools.ParamMapper{
+		"x": {Name: "x", In: []string{"K"}, Out: []string{"R"}},
+	})
+	out := toolView("x", []byte(`{"K":"v"}`), `{"R":"v"}`, 120)
+	lines := strings.Split(out, "\n")
+	// 参数 #605F6B（96;95;107）、结果 #858392（133;131;146）——明暗区分
+	if !strings.Contains(lines[1], "96;95;107") {
+		t.Errorf("param not most-subtle: %q", lines[1])
+	}
+	if !strings.Contains(lines[3], "133;131;146") {
+		t.Errorf("result not muted: %q", lines[3])
+	}
+}
+
+func TestToolViewBlankLineOnlyBetweenSections(t *testing.T) {
+	// 只有参数：无空行
+	withMappers(t, map[string]*tools.ParamMapper{
+		"p": {Name: "p", In: []string{"K"}, Out: nil},
+	})
+	if out := toolView("p", []byte(`{"K":"v"}`), "", 120); strings.Contains(out, "\n\n") {
+		t.Errorf("unexpected blank line (params only):\n%s", out)
+	}
+	// 只有结果：无空行
+	withMappers(t, map[string]*tools.ParamMapper{
+		"r": {Name: "r", In: nil, Out: []string{"R"}},
+	})
+	if out := toolView("r", nil, `{"R":"v"}`, 120); strings.Contains(out, "\n\n") {
+		t.Errorf("unexpected blank line (result only):\n%s", out)
+	}
+	// 都有：恰一行空行
+	withMappers(t, map[string]*tools.ParamMapper{
+		"b": {Name: "b", In: []string{"K"}, Out: []string{"R"}},
+	})
+	if out := toolView("b", []byte(`{"K":"v"}`), `{"R":"v"}`, 120); strings.Count(out, "\n\n") != 1 {
+		t.Errorf("want exactly one blank separator:\n%s", out)
 	}
 }
 
@@ -244,7 +292,7 @@ func TestRenderBlockTruncation(t *testing.T) {
 	for i := 0; i < 12; i++ {
 		fmt.Fprintf(&b, "line %d\n", i)
 	}
-	lines := renderBlock(textBlock{text: b.String()})
+	lines := renderBlock(textBlock{text: b.String()}, 120)
 	if len(lines) != 11 { // 10 行 + 尾注
 		t.Fatalf("want 11 lines, got %d", len(lines))
 	}
@@ -254,9 +302,56 @@ func TestRenderBlockTruncation(t *testing.T) {
 	}
 }
 
+func TestRenderBlockWrapsLongLines(t *testing.T) {
+	long := strings.Repeat("a", 50)
+	lines := renderBlock(textBlock{text: long}, 30) // 50 列 → 30 + 20
+	if len(lines) != 2 {
+		t.Fatalf("want 2 wrapped lines, got %d: %#v", len(lines), lines)
+	}
+	joined := ansi.Strip(strings.Join(lines, "\n"))
+	if joined != "    "+strings.Repeat("a", 30)+"\n    "+strings.Repeat("a", 20) {
+		t.Fatalf("wrap mangled content: %q", joined)
+	}
+}
+
+func TestRenderBlockDiffWrapKeepsKind(t *testing.T) {
+	// 40 列的删除行在 20 列限宽下折行，续行保持红色（kind 贯穿整逻辑行）
+	l := "-" + strings.Repeat("x", 39)
+	lines := renderBlock(textBlock{text: l, isDiff: true}, 20)
+	if len(lines) != 2 {
+		t.Fatalf("want 2 lines, got %d", len(lines))
+	}
+	for i, ln := range lines {
+		if !strings.Contains(ln, "38;2;235;66;104") { // cError #EB4268
+			t.Errorf("line %d lost del color: %q", i, ln)
+		}
+	}
+}
+
+func TestToolViewRowWrapNarrowWidth(t *testing.T) {
+	withMappers(t, map[string]*tools.ParamMapper{
+		"x": {Name: "x", In: []string{"K"}, Out: nil},
+	})
+	// w=20：avail=14，值 41 个全宽字符必然折行；任何行显示宽不得越过
+	// w - msgIndentW = 18
+	out := toolView("x", []byte(`{"K":"`+strings.Repeat("一", 45)+`"}`), "", 20)
+	lines := strings.Split(out, "\n")
+	if len(lines) < 3 {
+		t.Fatalf("value not wrapped:\n%s", out)
+	}
+	for i, ln := range lines {
+		if lw := ansi.StringWidth(ln); lw > 18 {
+			t.Errorf("line %d overflows padding (width %d): %q", i, lw, ansi.Strip(ln))
+		}
+	}
+	if n := strings.Count(ansi.Strip(out), "一"); n != 40 { // 截断后 40 个 + …
+		t.Errorf("content lost in wrap/truncate: got %d 一, want 40", n)
+	}
+}
+
 func TestToolViewEmptyArgsResult(t *testing.T) {
 	withMappers(t, map[string]*tools.ParamMapper{})
-	out := toolView("date_now", nil, "")
+	out := toolView("date_now", nil, "", 120)
 	lines := strings.Split(out, "\n")
 	if len(lines) != 1 || !strings.Contains(lines[0], "date_now") {
 		t.Fatalf("want header only, got:\n%s", out)
@@ -330,16 +425,16 @@ func TestToolViewSearchInFileFallback(t *testing.T) {
 		"search_in_file": {Name: "search_in_file", In: []string{"Path", "Regex"}, Out: nil},
 	})
 	res := `{"10":"m10","2":"m2","0":"m0"}`
-	out := toolView("search_in_file", []byte(`{"Path":"x.go","Regex":"foo"}`), res)
+	out := toolView("search_in_file", []byte(`{"Path":"x.go","Regex":"foo"}`), res, 120)
 	lines := strings.Split(out, "\n")
-	// header + 2 参数行 + 3 结果行
-	if len(lines) != 6 {
-		t.Fatalf("want 6 lines, got %d:\n%s", len(lines), out)
+	// header + 2 参数行 + 空行 + 3 结果行
+	if len(lines) != 7 {
+		t.Fatalf("want 7 lines, got %d:\n%s", len(lines), out)
 	}
-	if !strings.Contains(lines[5], "m10") {
-		t.Errorf("numeric order broken, last row: %q", lines[5])
+	if !strings.Contains(lines[6], "m10") {
+		t.Errorf("numeric order broken, last row: %q", lines[6])
 	}
-	if !strings.Contains(lines[3], "m0") {
-		t.Errorf("numeric order broken, first result row: %q", lines[3])
+	if !strings.Contains(lines[4], "m0") {
+		t.Errorf("numeric order broken, first result row: %q", lines[4])
 	}
 }

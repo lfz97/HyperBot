@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/charmbracelet/x/ansi"
+
 	tools "HyperBot/service/engine/tools"
 )
 
@@ -152,4 +154,79 @@ func padRight(s string, w int) string {
 		return s + strings.Repeat(" ", gap)
 	}
 	return s
+}
+
+// ── 结果路由 ────────────────────────────────────────────
+
+// resultParts 结果解析：JSON 对象按 mapper.Out 顺序提取字段——标量成 ↪ 行、
+// 多行内容成块；非对象结果（JSON 字符串或原文）整体按内容类型路由。
+// 空/()/{} 无输出。
+func resultParts(name string, result string) ([]kvRow, []textBlock) {
+	s := strings.TrimSpace(result)
+	if s == "" || s == "{}" || s == "()" {
+		return nil, nil
+	}
+	if obj, ok := decodeJSONObject([]byte(s)); ok {
+		var rows []kvRow
+		var blocks []textBlock
+		for _, k := range orderedKeys(name, obj, false) {
+			v, exists := obj[k]
+			if !exists || v == nil {
+				continue
+			}
+			str := stringValue(v)
+			if isMultiline(str) {
+				blocks = append(blocks, textBlock{text: str, isDiff: isDiff(str)})
+			} else {
+				rows = append(rows, kvRow{
+					key: k,
+					val: truncateRunes(compactLine(str), argValueMaxRunes),
+				})
+			}
+		}
+		return rows, blocks
+	}
+	// 非对象：JSON 字符串解开引号，否则当原文
+	var str string
+	if err := json.Unmarshal([]byte(s), &str); err != nil {
+		str = s
+	}
+	if isMultiline(str) {
+		return nil, []textBlock{{text: str, isDiff: isDiff(str)}}
+	}
+	return []kvRow{{key: "result", val: truncateRunes(compactLine(str), argValueMaxRunes)}}, nil
+}
+
+// isMultiline 清洗后含真实换行（≥2 行）即多行内容。
+func isMultiline(s string) bool {
+	return strings.Contains(strings.TrimSpace(s), "\n")
+}
+
+// isDiff 统一 diff 识别：首行 --- / diff --git / @@ 起头。
+func isDiff(s string) bool {
+	t := strings.TrimSpace(s)
+	return strings.HasPrefix(t, "--- ") ||
+		strings.HasPrefix(t, "diff --git") ||
+		strings.HasPrefix(t, "@@ ")
+}
+
+// diffLineKind diff 行分类：add(+)/del(-)/ctx(其余，含 --- +++ @@ 与上下文)。
+func diffLineKind(l string) string {
+	switch {
+	case strings.HasPrefix(l, "+") && !strings.HasPrefix(l, "+++"):
+		return "add"
+	case strings.HasPrefix(l, "-") && !strings.HasPrefix(l, "---"):
+		return "del"
+	default:
+		return "ctx"
+	}
+}
+
+// cleanBlock 多行内容清洗：剥 ANSI 色码（PTY 输出防串色）、\r\n 归一、去首尾
+// 空白。与 compactLine 的区别：保留换行结构。
+func cleanBlock(s string) string {
+	s = ansi.Strip(s)
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "")
+	return strings.TrimSpace(s)
 }

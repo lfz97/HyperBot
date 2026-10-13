@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -98,5 +99,97 @@ func TestIndexMappers(t *testing.T) {
 	idx := indexMappers(ms)
 	if idx["a"] == nil || idx["b"] == nil || idx["b"].In[0] != "X" {
 		t.Fatalf("index broken: %#v", idx)
+	}
+}
+
+const testDiff = `--- a/x.go
++++ b/x.go
+@@ -1,3 +1,4 @@
+ ctx
+-old
++new
++new2
+`
+
+func TestResultPartsDiffRouting(t *testing.T) {
+	withMappers(t, map[string]*tools.ParamMapper{
+		"edit_file": {Name: "edit_file", In: []string{"Path"}, Out: []string{"Diff"}},
+	})
+	rows, blocks := resultParts("edit_file", `{"Diff":`+strconv.Quote(testDiff)+`}`)
+	if len(rows) != 0 || len(blocks) != 1 {
+		t.Fatalf("want 0 rows 1 block, got %d rows %d blocks", len(rows), len(blocks))
+	}
+	if !blocks[0].isDiff {
+		t.Fatalf("want diff block, got %#v", blocks[0])
+	}
+}
+
+func TestResultPartsLongTextRouting(t *testing.T) {
+	withMappers(t, map[string]*tools.ParamMapper{
+		"exec": {Name: "exec", In: []string{"Cmd"}, Out: []string{"Output"}},
+	})
+	rows, blocks := resultParts("exec", `{"Output":"total 24\ndrwxr-xr-x 5\n-rw-r--r-- 1"}`)
+	if len(rows) != 0 || len(blocks) != 1 || blocks[0].isDiff {
+		t.Fatalf("want 1 text block, got rows=%#v blocks=%#v", rows, blocks)
+	}
+}
+
+func TestResultPartsScalarRow(t *testing.T) {
+	withMappers(t, map[string]*tools.ParamMapper{
+		"write_file": {Name: "write_file", In: []string{"Path"}, Out: []string{"BytesWritten"}},
+	})
+	rows, blocks := resultParts("write_file", `{"BytesWritten":1234}`)
+	if len(rows) != 1 || rows[0].key != "BytesWritten" || rows[0].val != "1234" || len(blocks) != 0 {
+		t.Fatalf("want scalar row, got rows=%#v blocks=%#v", rows, blocks)
+	}
+}
+
+func TestResultPartsNonObjectResult(t *testing.T) {
+	withMappers(t, map[string]*tools.ParamMapper{})
+	// JSON 字符串整体路由为内容块
+	_, blocks := resultParts("raw", `"line1\nline2\nline3"`)
+	if len(blocks) != 1 || blocks[0].isDiff {
+		t.Fatalf("want text block, got %#v", blocks)
+	}
+	// 非法 JSON 原文兜底
+	rows, _ := resultParts("raw", `plain result`)
+	if len(rows) != 1 || rows[0].key != "result" || rows[0].val != "plain result" {
+		t.Fatalf("want result fallback row, got %#v", rows)
+	}
+}
+
+func TestResultPartsEmpty(t *testing.T) {
+	withMappers(t, map[string]*tools.ParamMapper{})
+	for _, s := range []string{"", "{}", "()", "   "} {
+		if rows, blocks := resultParts("x", s); len(rows) != 0 || len(blocks) != 0 {
+			t.Fatalf("want nothing for %q, got %#v %#v", s, rows, blocks)
+		}
+	}
+}
+
+func TestDiffLineKind(t *testing.T) {
+	cases := []struct {
+		line string
+		want string
+	}{
+		{"+new", "add"},
+		{"+++ b/x.go", "ctx"},
+		{"-old", "del"},
+		{"--- a/x.go", "ctx"},
+		{"@@ -1,3 +1,4 @@", "ctx"},
+		{" ctx", "ctx"},
+		{"", "ctx"},
+	}
+	for _, c := range cases {
+		if got := diffLineKind(c.line); got != c.want {
+			t.Errorf("diffLineKind(%q) = %q, want %q", c.line, got, c.want)
+		}
+	}
+}
+
+func TestCleanBlock(t *testing.T) {
+	in := "  \x1b[32mgreen\x1b[m\r\nline2\r\n"
+	if got := cleanBlock(in); got != "green\nline2" {
+		t.Fatalf("cleanBlock = %q, want green\\nline2", got)
 	}
 }

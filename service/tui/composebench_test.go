@@ -90,12 +90,12 @@ func buildSession() []string {
 			Role:             "assistant",
 			ReasoningContent: thinking,
 			ToolCalls: []model.ToolCall{
-				{ID: fmt.Sprintf("t%d-a", turn), Function: model.FunctionDefinitionParam{Name: "EditFile", Arguments: []byte(fmt.Sprintf(`{"path":"/home/lfz/hyperbot/service/main.go","old":"x%d","new":"y%d"}`, turn, turn))}},
-				{ID: fmt.Sprintf("t%d-b", turn), Function: model.FunctionDefinitionParam{Name: "WriteFile", Arguments: []byte(fmt.Sprintf(`{"path":"/tmp/x%d.go","content":%s}`, turn, strconv.Quote(code)))}},
+				{ID: fmt.Sprintf("t%d-a", turn), Function: model.FunctionDefinitionParam{Name: "EditFile", Arguments: []byte(fmt.Sprintf(`{"Path":"/home/lfz/hyperbot/service/main.go","old":"x%d","new":"y%d"}`, turn, turn))}},
+				{ID: fmt.Sprintf("t%d-b", turn), Function: model.FunctionDefinitionParam{Name: "WriteFile", Arguments: []byte(fmt.Sprintf(`{"Path":"/tmp/x%d.go","Content":%s}`, turn, strconv.Quote(code)))}},
 				{ID: fmt.Sprintf("t%d-c", turn), Function: model.FunctionDefinitionParam{Name: "LocalExec_run", Arguments: []byte(fmt.Sprintf(`{"process":"bash","args":["-c","tail -n 50 log%d.log"]}`, turn))}},
 			},
 		}))
-		recs = append(recs, wire("message", model.Message{Role: "tool", ToolID: fmt.Sprintf("t%d-a", turn), Content: `{"diff":` + strconv.Quote(diff) + `}`}))
+		recs = append(recs, wire("message", model.Message{Role: "tool", ToolID: fmt.Sprintf("t%d-a", turn), Content: `{"Diff":` + strconv.Quote(diff) + `}`}))
 		recs = append(recs, wire("message", model.Message{Role: "tool", ToolID: fmt.Sprintf("t%d-b", turn), Content: fmt.Sprintf(`{"wrote":%d,"content":%s}`, len(code), strconv.Quote(code))}))
 		recs = append(recs, wire("message", model.Message{Role: "tool", ToolID: fmt.Sprintf("t%d-c", turn), Content: fmt.Sprintf(`{"status":"done","exitCode":0,"id":"p%d","output":%s}`, turn, strconv.Quote(output))}))
 		recs = append(recs, wire("message", model.Message{Role: "assistant", Content: "# 自检报告\n\n" + table.String() + "\n结论：全部正常。" + strings.Repeat(" 详细说明段落，包含中英文混合内容与 markdown 强调。", 20)}))

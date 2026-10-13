@@ -64,18 +64,23 @@ func TestHighlightCodeConcurrent(t *testing.T) {
 }
 
 func TestCodeBlockLines(t *testing.T) {
-	content := strings.Repeat("line\n", 15) // 15 行
+	content := strings.Repeat("line\n", 45) // 45 行 > blockMaxLines(40)
 	lines := codeBlockLines("x.go", content, 120)
-	if len(lines) != 11 { // 10 行 + 尾注
-		t.Fatalf("want 11 lines, got %d", len(lines))
+	if len(lines) != 41 { // 40 行 + 尾注
+		t.Fatalf("want 41 lines, got %d", len(lines))
 	}
-	// 行号列：前导行号 1..10
+	// 行号列：前导行号 1..40
 	if !strings.Contains(ansi.Strip(lines[0]), " 1") {
 		t.Errorf("missing line number: %q", lines[0])
 	}
-	last := ansi.Strip(lines[10])
-	if !strings.Contains(last, "共 15 行") {
+	last := ansi.Strip(lines[40])
+	if !strings.Contains(last, "共 45 行") || !strings.Contains(last, "前 40 行") {
 		t.Errorf("truncation note wrong: %q", last)
+	}
+	// 不足 40 行全显：无尾注
+	short := codeBlockLines("x.go", strings.Repeat("l\n", 5), 120)
+	if len(short) != 5 {
+		t.Fatalf("short content should show all lines, got %d", len(short))
 	}
 	// 高亮存在：Go 内容应带 ANSI
 	if lines[0] == ansi.Strip(lines[0]) {
@@ -83,33 +88,23 @@ func TestCodeBlockLines(t *testing.T) {
 	}
 }
 
-func TestToolViewWriteFileContent(t *testing.T) {
+func TestToolViewWriteFileArgsContentSuppressed(t *testing.T) {
 	withMappers(t, map[string]*tools.ParamMapper{
 		"WriteFile": {Name: "WriteFile", In: []string{"Path", "Content"}, Out: []string{"BytesWritten"}},
 	})
+	// 响应无 content（如出错路径）：参数 Content 行仍摘除（避免与响应
+	// content 代码块重复），参数侧不再渲染兜底块——响应为准
 	args := []byte(`{"Path":"x.go","Content":"func main() {\n\treturn 42\n}\n"}`)
 	out := toolView("WriteFile", args, `{"BytesWritten":44}`, 120, "")
-	lines := strings.Split(out, "\n")
-	// header + Path 行 + 空行 + 3 行代码 + 空行 + 1 结果行 = 8
-	if len(lines) != 8 {
-		t.Fatalf("want 8 lines, got %d:\n%s", len(lines), out)
+	flat := ansi.Strip(out)
+	if strings.Contains(flat, "func main()") {
+		t.Errorf("args-side content fallback should be gone:\n%s", flat)
 	}
-	// 参数行不再出现 Content 截断值
-	if strings.Contains(lines[1], "Content") {
-		t.Errorf("Content should not render as truncated row: %q", lines[1])
+	if strings.Contains(flat, "Content") {
+		t.Errorf("Content value row should be suppressed:\n%s", flat)
 	}
-	if !strings.Contains(lines[1], "Path") || !strings.Contains(lines[1], "x.go") {
-		t.Errorf("Path row broken: %q", lines[1])
-	}
-	// 代码块：完整内容行（不是 40 rune 截断）+ 高亮
-	if !strings.Contains(ansi.Strip(out), "func main() {") {
-		t.Errorf("code content missing:\n%s", out)
-	}
-	if !strings.Contains(ansi.Strip(out), "return 42") {
-		t.Errorf("code body missing:\n%s", out)
-	}
-	if strings.Count(out, "\x1b[38;2;") == 0 {
-		t.Errorf("no syntax highlighting in output")
+	if !strings.Contains(flat, "Path") || !strings.Contains(flat, "BytesWritten") {
+		t.Errorf("Path/BytesWritten rows missing:\n%s", flat)
 	}
 }
 
@@ -156,18 +151,18 @@ func TestRenderDiffBlockHunkGap(t *testing.T) {
 }
 
 func TestRenderDiffBlockTruncationCountsContent(t *testing.T) {
-	// 3 头行 + 12 内容行：截断计数只算内容行
+	// 3 头行 + 45 内容行：截断计数只算内容行（头行不计入"共 X 行"）
 	var b strings.Builder
-	b.WriteString("--- a/x.go\n+++ b/x.go\n@@ -1,12 +1,12 @@\n")
-	for i := 0; i < 12; i++ {
+	b.WriteString("--- a/x.go\n+++ b/x.go\n@@ -1,45 +1,45 @@\n")
+	for i := 0; i < 45; i++ {
 		b.WriteString(" ctx\n")
 	}
 	lines := renderDiffBlock(textBlock{text: b.String(), isDiff: true}, "x.go", 120)
-	if len(lines) != 11 { // 10 内容行 + 尾注
-		t.Fatalf("want 11 lines, got %d", len(lines))
+	if len(lines) != 41 { // 40 内容行 + 尾注
+		t.Fatalf("want 41 lines, got %d", len(lines))
 	}
 	last := ansi.Strip(lines[len(lines)-1])
-	if !strings.Contains(last, "共 12 行") {
+	if !strings.Contains(last, "共 45 行") {
 		t.Errorf("truncation note should count content lines only: %q", last)
 	}
 }
@@ -218,5 +213,24 @@ func TestToolViewBodySectionLines(t *testing.T) {
 	// 结果区行带淡绿线（#12C78F = 18;199;143）
 	if !strings.HasPrefix(lines[3], "\x1b[38;2;18;199;143m│") {
 		t.Errorf("result line missing soft-green line: %q", lines[3])
+	}
+}
+
+func TestToolViewReadFileContent(t *testing.T) {
+	withMappers(t, map[string]*tools.ParamMapper{
+		"ReadFile": {Name: "ReadFile", In: []string{"Path"}, Out: []string{"ReadLength"}},
+	})
+	// ReadFile 响应的 Content（实际读出的内容）渲染为高亮代码块
+	result := `{"ReadPath":"x.go","ReadLength":28,"Content":"func main() {\n\treturn 42\n}\n"}`
+	out := toolView("ReadFile", []byte(`{"Path":"x.go","Bytes":1024}`), result, 120, "")
+	flat := ansi.Strip(out)
+	if !strings.Contains(flat, "func main()") || !strings.Contains(flat, "return 42") {
+		t.Errorf("read content not rendered as code block:\n%s", flat)
+	}
+	if !strings.Contains(flat, "ReadLength") {
+		t.Errorf("ReadLength row missing:\n%s", flat)
+	}
+	if strings.Count(flat, "func main()") != 1 {
+		t.Errorf("content duplicated (%d)", strings.Count(flat, "func main()"))
 	}
 }

@@ -309,15 +309,15 @@ func TestToolViewBlankLineOnlyBetweenSections(t *testing.T) {
 
 func TestRenderBlockTruncation(t *testing.T) {
 	var b strings.Builder
-	for i := 0; i < 12; i++ {
+	for i := 0; i < 45; i++ {
 		fmt.Fprintf(&b, "line %d\n", i)
 	}
 	lines := renderBlock(textBlock{text: b.String()}, 120, "")
-	if len(lines) != 11 { // 10 行 + 尾注
-		t.Fatalf("want 11 lines, got %d", len(lines))
+	if len(lines) != 41 { // 40 行 + 尾注
+		t.Fatalf("want 41 lines, got %d", len(lines))
 	}
 	last := lines[len(lines)-1]
-	if !strings.Contains(last, "共 12 行") || !strings.Contains(last, "前 10 行") {
+	if !strings.Contains(last, "共 45 行") || !strings.Contains(last, "前 40 行") {
 		t.Fatalf("truncation note wrong: %q", last)
 	}
 }

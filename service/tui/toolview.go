@@ -22,7 +22,7 @@ import (
 
 const (
 	argValueMaxRunes = 40 // 参数/标量值单行截断
-	blockMaxLines    = 10 // diff/长文本默认显示行数
+	blockMaxLines    = 40 // diff/长文本/代码块默认显示行数（用户指定：概览多看一点）
 
 	// tabSpaces tab 展开宽度：ANSI 宽度测量把 \t 计 0 列而终端展开到
 	// 8 列制表位，不展开则含 tab 的行"测量达标、实际越界"（crush
@@ -30,17 +30,18 @@ const (
 	tabSpaces = "    "
 )
 
-// codeArgFields 工具参数中的"代码内容"字段：渲染为高亮代码块而非截断值行
-// （WriteFile 的写入内容）。渲染知识留在 UI 层（同 crush per-tool
-// renderer 思路），工具本身零改动。
+// codeArgFields 工具参数中的"代码内容"字段：仅从参数值行中摘除（避免与
+// 响应 content 代码块重复展示，响应为准——参数侧不再渲染兜底块）。
+// 渲染知识留在 UI 层（同 crush per-tool renderer 思路），工具本身零改动。
 var codeArgFields = map[string]string{
 	"WriteFile": "Content",
 }
 
-// codeResultFields 工具结果中的"代码内容"字段（响应侧优先于参数侧——
-// 展示实际写入的内容）。WriteFile 响应携带小写 content。
+// codeResultFields 工具结果中的"代码内容"字段：渲染为高亮代码块——
+// 实际写入/读出的内容。WriteFile 响应携带小写 content；ReadFile 携带 Content。
 var codeResultFields = map[string]string{
 	"WriteFile": "content",
+	"ReadFile":  "Content",
 }
 
 // argPath 工具调用参数中的目标文件路径（选 lexer 用）。
@@ -393,26 +394,17 @@ func toolView(name string, args []byte, result string, w int, meta string) strin
 	argRowList := argRows(name, args)
 	resRows, blocks := resultParts(name, result, meta)
 
-	// 代码内容：响应侧（WriteFile 的 content）优先——展示实际写入的内容；
-	// 参数侧（写入参数 Content）作无响应内容时的兜底。
+	// 代码内容：响应侧字段（WriteFile/ReadFile 的 content/Content）渲染为
+	// 高亮代码块——实际写入/读出的内容，响应为准。参数侧同名字段不再渲染
+	// 兜底，仅在下方从参数值行摘除（同一数据不重复展示）。
 	var codeLines []string
-	codeInResult := false
 	if resCode := codeResultFields[name]; resCode != "" {
 		if obj := resultObjectOf(result, meta); obj != nil {
 			if s, ok := obj[resCode].(string); ok && strings.TrimSpace(s) != "" {
 				codeLines = codeBlockLines(path, s, avail)
-				codeInResult = true
 			}
 		}
 	}
-	if !codeInResult {
-		if codeArg := codeArgFields[name]; codeArg != "" {
-			if s, ok := argsObj[codeArg].(string); ok && strings.TrimSpace(s) != "" {
-				codeLines = codeBlockLines(path, s, avail)
-			}
-		}
-	}
-	// 参数行摘除代码内容字段（无论哪侧渲染，同一数据不重复展示）
 	if codeArg := codeArgFields[name]; codeArg != "" {
 		rows := argRowList[:0]
 		for _, r := range argRowList {
@@ -457,18 +449,11 @@ func toolView(name string, args []byte, result string, w int, meta string) strin
 	}
 
 	// 体区（头部行之外）：参数区行（暗灰竖线）→ 空行 → 结果区行（淡绿竖线）。
-	// 代码块归属其来源段：参数侧兜底在参数区，响应侧在结果区。
+	// 代码块（响应侧 content）归属结果区，接在标量行/内容块之后。
 	var inLines, outLines []string
 	for _, r := range argRowList {
 		inLines = append(inLines, kvRowLines(r, kw, avail, cFgMostSubtle)...)
 	}
-	if !codeInResult && len(codeLines) > 0 && len(argRowList) > 0 {
-		inLines = append(inLines, "")
-	}
-	if !codeInResult {
-		inLines = append(inLines, codeLines...)
-	}
-
 	for _, r := range resRows {
 		outLines = append(outLines, kvRowLines(r, kw, avail, cFgMuted)...)
 	}
@@ -478,9 +463,7 @@ func toolView(name string, args []byte, result string, w int, meta string) strin
 	for _, b := range blocks {
 		outLines = append(outLines, renderBlock(b, avail, path)...)
 	}
-	if codeInResult {
-		outLines = append(outLines, codeLines...)
-	}
+	outLines = append(outLines, codeLines...)
 
 	lines := make([]string, 0, len(inLines)+len(outLines)+2)
 	lines = append(lines, toolHeader(name, ""))

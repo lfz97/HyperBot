@@ -323,7 +323,9 @@ func hexOf(c string) *string { return &c }
 func markdownStyle() ansi.StyleConfig {
 	return ansi.StyleConfig{
 		Document: ansi.StyleBlock{
-			StylePrimitive: ansi.StylePrimitive{Color: hexOf("#BFBCC8")},
+			// Sash 最亮档（#ECEBF0）：暗底终端上正文要够亮才醒目
+			// （原 Smoke #BFBBC8 在暗底下衬得发灰）；与输入框文字同档
+			StylePrimitive: ansi.StylePrimitive{Color: hexOf("#ECEBF0")},
 		},
 		BlockQuote: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{},

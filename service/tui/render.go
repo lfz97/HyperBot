@@ -41,7 +41,7 @@ func (t *TUI) composeView(st *pullState) string {
 				continue
 			}
 			if m.Role == "tool" {
-				out = renderToolResult(&m, toolBuf, w, rec.Meta)
+				out = renderToolResult(&m, toolBuf, w, string(rec.Meta))
 			} else {
 				tailReasoning.WriteString(m.ReasoningContent)
 				tailContent.WriteString(m.Content)
@@ -54,7 +54,7 @@ func (t *TUI) composeView(st *pullState) string {
 				continue
 			}
 			if m.Role == "tool" {
-				out = renderToolResult(&m, toolBuf, w, rec.Meta)
+				out = renderToolResult(&m, toolBuf, w, string(rec.Meta))
 			} else {
 				bufferToolCalls(&m, toolBuf)
 				// 思考块并入本条输出（定稿自带则用它，否则用流式尾累积的，两者本应同文），

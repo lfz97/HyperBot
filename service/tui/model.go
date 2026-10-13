@@ -44,7 +44,7 @@ type wireRecord struct {
 	Type string          `json:"type"`
 	Msg  json.RawMessage `json:"msg,omitempty"`
 	Text string          `json:"text,omitempty"`
-	Meta string          `json:"meta,omitempty"`
+	Meta json.RawMessage `json:"meta,omitempty"` // Role=tool 记录携带的 sidecar 旁路元数据（原始 JSON 对象）
 }
 
 // wireToolCall 待结果的工具调用缓冲条目（按 ToolCall.ID 索引）。

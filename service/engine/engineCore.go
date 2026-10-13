@@ -18,7 +18,6 @@ func GetEngineService(name string) *Engine {
 		interruptCh: make(chan struct{}),
 		notice:      notice{Kind: NoticeNone},
 		errBudget:   newErrorBudget(defaultErrorMaxTimes, defaultErrorSleepGap),
-		sidecar:     newToolSidecar(),
 	}
 }
 

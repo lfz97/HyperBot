@@ -43,10 +43,6 @@ type Engine struct {
 	// 状态流转见 errorBudget.go 的 errorBudget 类型。
 	errBudget errorBudget
 
-	// sidecar 工具渲染元数据旁路通道（AfterTool 回调写入、emitChoice 消费，
-	// 见 toolmeta.go）——模型上下文不受影响。
-	sidecar *toolSidecar
-
 	// ── 对上层 UI 暴露的可观察状态（pull 契约，方法见 uistate.go）──
 	mu        sync.Mutex // 串行化引擎各 goroutine 的写入与 UI goroutine 的读取
 	records   []string
@@ -88,13 +84,7 @@ func (e *Engine) newRunner() {
 					MaxTokens:       &(*(*e).Config_p).Model.MaxTokens, // 最大生成 token 数，来自配置 maxtokens 字段
 					Stream:          (*(*e).Config_p).Model.Stream,
 					ReasoningEffort: (*(*e).Config_p).Model.ReasoningEffortPtr(), // 思考强度，来自配置 reasoning_effort 字段，留空不下发
-				}),
-				// 工具结果旁路通道：原始结果按 ToolCallID 记录进 sidecar，
-				// emitChoice 写 Role=tool 记录时下发 UI（模型上下文不受影响）
-				llmagent.WithToolCallbacks(&tool.Callbacks{
-					AfterTool: []tool.AfterToolCallbackStructured{(*e).sidecar.afterTool()},
-				}),
-				llmagent.WithTools(tools),
+				}),				llmagent.WithTools(tools),
 				llmagent.WithGlobalInstruction((*e).Systemprompt), //系统提示词
 				llmagent.WithToolSets(toolsets),
 				llmagent.WithRefreshToolSetsOnRun(true),

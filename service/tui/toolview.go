@@ -24,6 +24,23 @@ const (
 	blockMaxLines    = 10 // diff/长文本默认显示行数
 )
 
+// codeArgFields 工具参数中的"代码内容"字段：渲染为高亮代码块而非截断值行
+// （write_file 的写入内容）。渲染知识留在 UI 层（同 crush per-tool
+// renderer 思路），工具本身零改动。
+var codeArgFields = map[string]string{
+	"write_file": "Content",
+}
+
+// argPath 工具调用参数中的目标文件路径（选 lexer 用）。
+func argPath(obj map[string]any) string {
+	for _, k := range []string{"Path", "PathA", "File", "FilePath"} {
+		if s, ok := obj[k].(string); ok && s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
 // paramMappers 工具名 → 字段登记，包级一次性索引（查询 O(1)）。
 // 测试可整体替换后恢复。
 var paramMappers = indexMappers(tools.GetParamMapper())
@@ -302,10 +319,29 @@ func toolView(name string, args []byte, result string, w int) string {
 	argRowList := argRows(name, args)
 	resRows, blocks := resultParts(name, result)
 
+	// 代码内容参数（write_file 的写入内容）：从参数行里摘出来，渲染为
+	// 高亮代码块——40 rune 截断值行对代码内容没有意义。
+	var codeLines []string
+	codeField := codeArgFields[name]
+	if codeField != "" {
+		if obj, ok := decodeJSONObject(args); ok {
+			if content, isStr := obj[codeField].(string); isStr && strings.TrimSpace(content) != "" {
+				rows := argRowList[:0]
+				for _, r := range argRowList {
+					if r.key != codeField {
+						rows = append(rows, r)
+					}
+				}
+				argRowList = rows
+				codeLines = codeBlockLines(argPath(obj), content, avail)
+			}
+		}
+	}
+
 	all := make([]kvRow, 0, len(argRowList)+len(resRows))
 	all = append(all, argRowList...)
 	all = append(all, resRows...)
-	if len(all) == 0 && len(blocks) == 0 {
+	if len(all) == 0 && len(blocks) == 0 && len(codeLines) == 0 {
 		return toolHeader(name, "")
 	}
 
@@ -320,8 +356,14 @@ func toolView(name string, args []byte, result string, w int) string {
 	for _, r := range argRowList {
 		lines = append(lines, kvRowLines(r, kw, avail, cFgMostSubtle)...)
 	}
+	// 代码块属于参数区（展示"写了什么"）：与参数行之间空行分隔
+	if len(codeLines) > 0 && len(argRowList) > 0 {
+		lines = append(lines, "")
+	}
+	lines = append(lines, codeLines...)
 	// 空行仅在两段都存在时出现（无参工具不凭空多空行）
-	if len(argRowList) > 0 && (len(resRows) > 0 || len(blocks) > 0) {
+	hasInput := len(argRowList) > 0 || len(codeLines) > 0
+	if hasInput && (len(resRows) > 0 || len(blocks) > 0) {
 		lines = append(lines, "")
 	}
 	for _, r := range resRows {

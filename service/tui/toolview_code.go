@@ -6,11 +6,14 @@ package tui
 
 import (
 	"bytes"
+	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/formatters"
 	"github.com/alecthomas/chroma/v2/lexers"
+	"github.com/charmbracelet/x/ansi"
 )
 
 var (
@@ -96,5 +99,36 @@ func highlightCode(source, filename string) string {
 	hlMu.Lock()
 	hlCache[key] = out
 	hlMu.Unlock()
+	return out
+}
+
+// codeBlockLines 高亮代码块：行号列（most-subtle 右对齐）+ chroma 高亮 +
+// blockMaxLines 截断与尾注。写入内容展示用（crush toolOutputCodeContent 同型）。
+func codeBlockLines(path, content string, avail int) []string {
+	if avail < 10 {
+		avail = 10
+	}
+	lines := strings.Split(cleanBlock(content), "\n")
+	total := len(lines)
+	if total > blockMaxLines {
+		lines = lines[:blockMaxLines]
+	}
+	// 高亮整段再按行拆：块内多行 token（块注释等）颜色上下文连续
+	hl := strings.Split(highlightCode(strings.Join(lines, "\n"), path), "\n")
+	if len(hl) < len(lines) { // 高亮输出行数异常时兜底原文
+		hl = lines
+	}
+	numW := len(fmt.Sprintf("%d", len(lines)))
+	var out []string
+	for i, ln := range hl {
+		num := colorText(cFgMostSubtle, fmt.Sprintf("%*d", numW, i+1))
+		body := ansi.Truncate(ln, avail-numW-2, "…")
+		out = append(out, num+"  "+body)
+	}
+	if total > blockMaxLines {
+		note := fmt.Sprintf("… 共 %d 行，显示前 %d 行", total, blockMaxLines)
+		out = append(out, colorText(cFgMostSubtle,
+			fmt.Sprintf("%*s  %s", numW, "", truncateRunes(note, avail-numW-2))))
+	}
 	return out
 }

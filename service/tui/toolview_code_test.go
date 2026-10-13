@@ -204,16 +204,18 @@ func TestToolViewBodySectionLines(t *testing.T) {
 	if strings.HasPrefix(ansi.Strip(lines[0]), "│") {
 		t.Errorf("header should not carry section line: %q", lines[0])
 	}
-	// 体区行全部带竖线；参数区行用暗灰线（#605F6B = 96;95;107）、
-	// 结果区行（含分段空行）用淡绿线（#12C78F = 18;199;143）
-	if len(lines) != 4 { // header + Path + 空行 + CwdNow
+	if len(lines) != 4 { // header + Path + 段间空行 + CwdNow
 		t.Fatalf("want 4 lines, got %d:\n%s", len(lines), out)
 	}
-	for _, l := range lines[1:3] {
-		if !strings.HasPrefix(l, "\x1b[38;2;96;95;107m│") {
-			t.Errorf("param line missing dark-gray line: %q", l)
-		}
+	// 参数区行带暗灰线（#605F6B = 96;95;107）
+	if !strings.HasPrefix(lines[1], "\x1b[38;2;96;95;107m│") {
+		t.Errorf("param line missing dark-gray line: %q", lines[1])
 	}
+	// 段间空行不带竖线（两段竖线在此断开）
+	if strings.Contains(lines[2], "│") {
+		t.Errorf("section separator should not carry line: %q", lines[2])
+	}
+	// 结果区行带淡绿线（#12C78F = 18;199;143）
 	if !strings.HasPrefix(lines[3], "\x1b[38;2;18;199;143m│") {
 		t.Errorf("result line missing soft-green line: %q", lines[3])
 	}

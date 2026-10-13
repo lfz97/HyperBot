@@ -468,11 +468,7 @@ func toolView(name string, args []byte, result string, w int, meta string) strin
 	if !codeInResult {
 		inLines = append(inLines, codeLines...)
 	}
-	// 空行仅在两段都存在时出现（无参工具不凭空多空行）
-	hasInput := len(argRowList) > 0 || len(codeLines) > 0
-	if hasInput && (len(resRows) > 0 || len(blocks) > 0 || codeInResult) {
-		inLines = append(inLines, "")
-	}
+
 	for _, r := range resRows {
 		outLines = append(outLines, kvRowLines(r, kw, avail, cFgMuted)...)
 	}
@@ -486,10 +482,15 @@ func toolView(name string, args []byte, result string, w int, meta string) strin
 		outLines = append(outLines, codeLines...)
 	}
 
-	lines := make([]string, 0, len(inLines)+len(outLines)+1)
+	lines := make([]string, 0, len(inLines)+len(outLines)+2)
 	lines = append(lines, toolHeader(name, ""))
 	for _, l := range inLines {
 		lines = append(lines, lineWrap(l, cToolLineIn))
+	}
+	// 段间空行不带竖线：参数段/结果段的竖线在此断开、各自成段
+	// （段内空行——如参数行与代码块之间——仍带竖线保持段内连续）
+	if len(inLines) > 0 && len(outLines) > 0 {
+		lines = append(lines, "")
 	}
 	for _, l := range outLines {
 		lines = append(lines, lineWrap(l, cToolLineOut))

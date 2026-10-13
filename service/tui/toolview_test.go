@@ -274,12 +274,11 @@ func TestToolViewSectionBrightness(t *testing.T) {
 }
 
 func TestToolViewBlankLineOnlyBetweenSections(t *testing.T) {
-	// 空行判定按视觉：竖线包裹后的空行是"│ + 空白"，剥色后去掉 │ 判断
+	// 空行判定按视觉：段间空行不带竖线（裸空行）；段内空行带竖线
 	visBlanks := func(out string) int {
 		n := 0
 		for _, l := range strings.Split(out, "\n") {
-			s := strings.TrimSpace(strings.TrimPrefix(ansi.Strip(l), "│"))
-			if s == "" && strings.Contains(ansi.Strip(l), "│") {
+			if strings.TrimSpace(ansi.Strip(l)) == "" {
 				n++
 			}
 		}

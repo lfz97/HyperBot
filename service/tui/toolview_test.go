@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -191,5 +192,73 @@ func TestCleanBlock(t *testing.T) {
 	in := "  \x1b[32mgreen\x1b[m\r\nline2\r\n"
 	if got := cleanBlock(in); got != "green\nline2" {
 		t.Fatalf("cleanBlock = %q, want green\\nline2", got)
+	}
+}
+
+func TestToolViewAssembly(t *testing.T) {
+	withMappers(t, map[string]*tools.ParamMapper{
+		"edit_file": {Name: "edit_file", In: []string{"Path"}, Out: []string{"Diff"}},
+	})
+	args := []byte(`{"Path":"service/tui/render.go"}`)
+	out := toolView("edit_file", args, `{"Diff":"--- a/x.go\n+++ b/x.go\n@@ -1 +1 @@\n-old\n+new"}`)
+	lines := strings.Split(out, "\n")
+	if len(lines) != 7 {
+		t.Fatalf("want 7 lines (header+param+5 diff), got %d:\n%s", len(lines), out)
+	}
+	if !strings.Contains(lines[0], "edit_file") {
+		t.Errorf("header missing tool name: %q", lines[0])
+	}
+	if !strings.Contains(lines[1], "Path") || !strings.Contains(lines[1], "render.go") {
+		t.Errorf("param line broken: %q", lines[1])
+	}
+	if !strings.Contains(lines[2], "--- a/x.go") {
+		t.Errorf("diff first line missing: %q", lines[2])
+	}
+	// + 行染绿、- 行染红（文本包在 ANSI 内，用包含断言）
+	if !strings.Contains(out, "+new") || !strings.Contains(out, "-old") {
+		t.Errorf("diff content missing:\n%s", out)
+	}
+}
+
+func TestToolViewKeyAlignment(t *testing.T) {
+	withMappers(t, map[string]*tools.ParamMapper{
+		"x": {Name: "x", In: []string{"K", "LongerKey"}, Out: []string{"R"}},
+	})
+	out := toolView("x", []byte(`{"K":"v1","LongerKey":"v2"}`), `{"R":"ok"}`)
+	lines := strings.Split(out, "\n")
+	// 两行的 ANSI 前缀相同（同为 muted 单色），value 起始列必须相等
+	if i1, i2 := strings.Index(lines[1], "v1"), strings.Index(lines[2], "v2"); i1 != i2 {
+		t.Errorf("value columns misaligned (%d vs %d): %q / %q", i1, i2, lines[1], lines[2])
+	}
+	if !strings.Contains(lines[2], "LongerKey") {
+		t.Errorf("LongerKey row broken: %q", lines[2])
+	}
+	// 结果标量行带 ↪ 前缀
+	if !strings.Contains(lines[3], "↪ R") {
+		t.Errorf("result row missing arrow: %q", lines[3])
+	}
+}
+
+func TestRenderBlockTruncation(t *testing.T) {
+	var b strings.Builder
+	for i := 0; i < 12; i++ {
+		fmt.Fprintf(&b, "line %d\n", i)
+	}
+	lines := renderBlock(textBlock{text: b.String()})
+	if len(lines) != 11 { // 10 行 + 尾注
+		t.Fatalf("want 11 lines, got %d", len(lines))
+	}
+	last := lines[len(lines)-1]
+	if !strings.Contains(last, "共 12 行") || !strings.Contains(last, "前 10 行") {
+		t.Fatalf("truncation note wrong: %q", last)
+	}
+}
+
+func TestToolViewEmptyArgsResult(t *testing.T) {
+	withMappers(t, map[string]*tools.ParamMapper{})
+	out := toolView("date_now", nil, "")
+	lines := strings.Split(out, "\n")
+	if len(lines) != 1 || !strings.Contains(lines[0], "date_now") {
+		t.Fatalf("want header only, got:\n%s", out)
 	}
 }

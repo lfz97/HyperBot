@@ -230,3 +230,79 @@ func cleanBlock(s string) string {
 	s = strings.ReplaceAll(s, "\r", "")
 	return strings.TrimSpace(s)
 }
+
+// ── 组装与块渲染 ────────────────────────────────────────
+
+// toolView 工具块总装：头部行（✓ name）→ 参数字段行（4 空格缩进）→
+// 结果标量行（↪ 前缀）→ 多行内容块（首行 ↪、续行 4 空格缩进）。
+// 参数与结果行共用同一 key 列宽。
+func toolView(name string, args []byte, result string) string {
+	argRowList := argRows(name, args)
+	resRows, blocks := resultParts(name, result)
+
+	all := make([]kvRow, 0, len(argRowList)+len(resRows))
+	all = append(all, argRowList...)
+	all = append(all, resRows...)
+	if len(all) == 0 && len(blocks) == 0 {
+		return toolHeader(name, "")
+	}
+
+	kw := 0
+	for _, r := range all {
+		if n := len([]rune(r.key)); n > kw {
+			kw = n
+		}
+	}
+
+	lines := []string{toolHeader(name, "")}
+	for _, r := range argRowList {
+		lines = append(lines, colorText(cFgMuted,
+			"    "+padRight(r.key, kw)+"  "+r.val))
+	}
+	for _, r := range resRows {
+		lines = append(lines, colorText(cFgMuted,
+			"  ↪ "+padRight(r.key, kw)+"  "+r.val))
+	}
+	for _, b := range blocks {
+		lines = append(lines, renderBlock(b)...)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// renderBlock 多行内容块：首行 "  ↪ " 前缀、续行 4 空格缩进；diff 块
+// + 行淡绿、- 行红，其余 muted；超过 blockMaxLines 截断并加尾注。
+func renderBlock(b textBlock) []string {
+	all := strings.Split(cleanBlock(b.text), "\n")
+	total := len(all)
+	if total > blockMaxLines {
+		all = all[:blockMaxLines]
+	}
+	out := make([]string, 0, len(all)+1)
+	for i, l := range all {
+		prefix := "    "
+		if i == 0 {
+			prefix = "  ↪ "
+		}
+		out = append(out, prefix+colorBlockLine(b, l))
+	}
+	if total > blockMaxLines {
+		out = append(out, colorText(cFgMuted,
+			fmt.Sprintf("    … 共 %d 行，显示前 %d 行", total, blockMaxLines)))
+	}
+	return out
+}
+
+// colorBlockLine 块内单行染色。
+func colorBlockLine(b textBlock, l string) string {
+	if !b.isDiff {
+		return colorText(cFgMuted, l)
+	}
+	switch diffLineKind(l) {
+	case "add":
+		return colorText(cSuccessSubtle, l)
+	case "del":
+		return colorText(cError, l)
+	default:
+		return colorText(cFgMuted, l)
+	}
+}

@@ -49,6 +49,7 @@ func WriteFile(ctx context.Context, req struct {
 
 	return map[string]string{
 		"BytesWritten": strconv.Itoa(length),
+		"content":      req.Content,
 	}, nil
 }
 

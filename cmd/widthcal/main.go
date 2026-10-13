@@ -3,57 +3,55 @@ package main
 // widthcal 终端宽度校准工具：诊断 TUI 表格错位的根因。
 //
 // 用法：go run ./cmd/widthcal
-// 在运行 HyperBot TUI 的同一个终端里执行，观察每行行尾是否与标注的
-// "应到列位"竖线对齐。哪一行偏了，哪个字符就是宽度分歧源。
+// 在运行 HyperBot TUI 的同一个终端里执行。
 //
-// 背景：TUI 的所有排版（表格列宽/折行/对齐）按 x/ansi 的宽度测量计算
-// （CJK/emoji=2 列，歧义宽字符=1 列）。若终端实际渲染宽度与测量不一致
-// （字体 fallback、emoji 渲染、歧义宽模式），含该字符的行会整体偏移——
-// 表格竖线/交界点就错位。本工具逐字符验证。
+// 原理：每行内容后面补空格，把结束标记「│←30」钉在【按 x/ansi 测量的
+// 第 30 列】——与 TUI 排版用的是同一套测量。若终端实际渲染宽度一致，
+// 内容行尾应恰好顶到标记；若内容【没到】标记 = 终端渲得比测量窄，
+// 【越过】标记 = 渲得比测量宽。含该字符的表格行就会整体偏移错位。
 
 import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/table"
 )
 
-func main() {
-	const N = 30 // 每行目标列数
+const target = 30
 
-	fmt.Println("=== 终端宽度校准（在跑 TUI 的同一终端里执行）===")
-	fmt.Println("每行行尾应与『应到30列』的竖线对齐；偏了 = 该字符是宽度分歧源")
-	fmt.Println()
-
-	row := func(label, s string) {
-		fmt.Printf("[%s] %s%s 应到30列│\n", label, s, strings.Repeat(" ", max(0, 0)))
+func cal(label, s string) {
+	w := ansi.StringWidth(s)
+	pad := target - w
+	if pad < 1 {
+		pad = 1
 	}
-	_ = row
+	fmt.Printf("[%-4s] %s%s│← 第30列(按测量)\n", label, s, strings.Repeat(" ", pad))
+}
 
-	// 基准：30 列标尺
-	fmt.Printf("[基准] %s 应到30列│\n", strings.Repeat("0123456789", 3))
-	// CJK：每字 2 列，15 字 = 30
-	fmt.Printf("[中文] %s 应到30列│\n", strings.Repeat("一二三四五六七八九十一二三四五", 1))
-	// 全角标点：每字 2 列，15 字 = 30
-	fmt.Printf("[全角] %s 应到30列│\n", "？？？？？？？？？？？？？？？？？")
-	// emoji：x/ansi 计 2 列，10 个 = 20？不——✅ 按 2 列算：15 个 = 30
-	fmt.Printf("[对勾] %s 应到30列│\n", strings.Repeat("✅", 15))
-	fmt.Printf("[叉号] %s 应到30列│\n", strings.Repeat("❌", 15))
-	fmt.Printf("[警告] %s 应到30列│(带变体选择符，x/ansi 计 2)\n", strings.Repeat("⚠️", 15))
-	fmt.Printf("[信息] %s 应到30列│\n", strings.Repeat("ℹ️", 15))
-	// 歧义宽字符：x/ansi 计 1 列，30 个 = 30（若终端按 2 列渲染会到 60）
-	fmt.Printf("[中点] %s 应到30列│\n", strings.Repeat("·", 30))
-	fmt.Printf("[省略] %s 应到30列│\n", strings.Repeat("…", 30))
-	fmt.Printf("[长划] %s 应到30列│\n", strings.Repeat("—", 30))
-	fmt.Printf("[箭头] %s 应到30列│\n", strings.Repeat("→", 30))
-	fmt.Printf("[框线] %s 应到30列│\n", strings.Repeat("─│", 15))
-
-	fmt.Println()
-	fmt.Println("=== 真实表格复现（glamour 同款配置：Margin(0,1) + NormalBorder 无外框 + Width 116）===")
+func main() {
+	fmt.Println("=== 终端宽度校准（在跑 TUI 的同一终端里执行）===")
+	fmt.Println("内容行尾应顶到「│←」标记：没到=终端渲窄了，越过=渲宽了")
 	fmt.Println()
 
-	// 与 glamour ansi/table.go setStyles/setBorders 同款配置
+	cal("基准", strings.Repeat("0123456789", 3))            // ASCII 30
+	cal("中文", strings.Repeat("字", 15))                    // CJK×15 = 30
+	cal("全角", strings.Repeat("？", 15))                    // 全角标点×15 = 30
+	cal("对勾", strings.Repeat("✅", 15))                    // emoji×15 = 30
+	cal("警告", strings.Repeat("⚠️", 15))                   // 带变体选择符×15 = 30
+	cal("中点", strings.Repeat("·", 30))                     // 歧义宽计1×30 = 30
+	cal("省略", strings.Repeat("…", 30))                     // 同上
+	cal("箭头", strings.Repeat("→", 30))                     // 同上
+	cal("框线", strings.Repeat("─", 30))                     // 同上
+	cal("混排", "检查项：Linux / amd64，用户 lfz（测试）") // 真实形态混合
+
+	fmt.Println()
+	fmt.Println("=== 真实表格复现（glamour 同款配置）===")
+	fmt.Println("（✅ 行与 OK 行的竖线应同列；错开=✅ 渲宽分歧）")
+	fmt.Println()
+
 	tbl := table.New().
 		Width(116).
 		Wrap(true).
@@ -67,10 +65,4 @@ func main() {
 		Row("系统时间", "✅", "2026-10-13 19:03（与日志时间戳一致）").
 		Row("文件系统", "OK", "配置目录完整（hyperbot.yaml、skills、日志、memory.db）")
 	fmt.Println(tbl.String())
-
-	fmt.Println("判定：")
-	fmt.Println("- 上表 ✅ 行与 OK 行的竖线位置不同 → 终端对 ✅ 的渲染宽度 ≠ 2 列（emoji 分歧）")
-	fmt.Println("- [对勾]/[警告] 行尾没到 30 列 → 同上")
-	fmt.Println("- [中点]/[省略]/[箭头] 行尾超到 60 列 → 终端开了歧义宽=2 模式")
-	fmt.Println("- 全部对齐 → 宽度不是问题，把上表复制发我继续查")
 }

@@ -214,7 +214,7 @@ func TestToolViewAssembly(t *testing.T) {
 	if !strings.Contains(lines[1], "Path") || !strings.Contains(lines[1], "render.go") {
 		t.Errorf("param line broken: %q", lines[1])
 	}
-	if strings.TrimSpace(ansi.Strip(lines[2])) != "" {
+	if strings.TrimSpace(strings.TrimPrefix(ansi.Strip(lines[2]), "│")) != "" {
 		t.Errorf("want blank separator line, got %q", lines[2])
 	}
 	// diff 头行剥离：不出现原始 hunk 语法
@@ -270,11 +270,12 @@ func TestToolViewSectionBrightness(t *testing.T) {
 }
 
 func TestToolViewBlankLineOnlyBetweenSections(t *testing.T) {
-	// 空行判定按视觉：底色包裹后的空行是"ANSI + 空白"，须剥色后判断
+	// 空行判定按视觉：竖线包裹后的空行是"│ + 空白"，剥色后去掉 │ 判断
 	visBlanks := func(out string) int {
 		n := 0
 		for _, l := range strings.Split(out, "\n") {
-			if strings.TrimSpace(ansi.Strip(l)) == "" {
+			s := strings.TrimSpace(strings.TrimPrefix(ansi.Strip(l), "│"))
+			if s == "" && strings.Contains(ansi.Strip(l), "│") {
 				n++
 			}
 		}
@@ -325,7 +326,7 @@ func TestRenderBlockWrapsLongLines(t *testing.T) {
 		t.Fatalf("want 2 wrapped lines, got %d: %#v", len(lines), lines)
 	}
 	joined := ansi.Strip(strings.Join(lines, "\n"))
-	if joined != "    "+strings.Repeat("a", 30)+"\n    "+strings.Repeat("a", 20) {
+	if joined != "  "+strings.Repeat("a", 30)+"\n  "+strings.Repeat("a", 20) {
 		t.Fatalf("wrap mangled content: %q", joined)
 	}
 }

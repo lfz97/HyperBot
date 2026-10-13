@@ -194,23 +194,27 @@ func TestToolViewWriteFileResultContent(t *testing.T) {
 	}
 }
 
-func TestToolViewBodyBackground(t *testing.T) {
+func TestToolViewBodySectionLines(t *testing.T) {
 	withMappers(t, map[string]*tools.ParamMapper{
 		"CD": {Name: "CD", In: []string{"Path"}, Out: []string{"CwdNow"}},
 	})
 	out := toolView("CD", []byte(`{"Path":"/tmp"}`), `{"CwdNow":"/home/x"}`, 120, "")
 	lines := strings.Split(out, "\n")
-	// 头部行无底色
-	if strings.Contains(lines[0], "48;2;") {
-		t.Errorf("header should not carry background: %q", lines[0])
+	// 头部行无竖线
+	if strings.HasPrefix(ansi.Strip(lines[0]), "│") {
+		t.Errorf("header should not carry section line: %q", lines[0])
 	}
-	// 体区行全部带底色（#262626 = 38;38;38）并铺满块宽（118 = 120 - msgIndent 2）
-	for i, l := range lines[1:] {
-		if !strings.Contains(l, "48;2;38;38;38") {
-			t.Errorf("body line %d missing background: %q", i+1, l)
+	// 体区行全部带竖线；参数区行用暗灰线（#605F6B = 96;95;107）、
+	// 结果区行（含分段空行）用淡绿线（#12C78F = 18;199;143）
+	if len(lines) != 4 { // header + Path + 空行 + CwdNow
+		t.Fatalf("want 4 lines, got %d:\n%s", len(lines), out)
+	}
+	for _, l := range lines[1:3] {
+		if !strings.HasPrefix(l, "\x1b[38;2;96;95;107m│") {
+			t.Errorf("param line missing dark-gray line: %q", l)
 		}
-		if w := ansi.StringWidth(l); w != 118 {
-			t.Errorf("body line %d not padded to block width (got %d): %q", i+1, w, ansi.Strip(l))
-		}
+	}
+	if !strings.HasPrefix(lines[3], "\x1b[38;2;18;199;143m│") {
+		t.Errorf("result line missing soft-green line: %q", lines[3])
 	}
 }

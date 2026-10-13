@@ -362,21 +362,12 @@ func cleanBlock(s string) string {
 
 // ── 组装与块渲染 ────────────────────────────────────────
 
-// toolBodyBgSGR 工具块体区（参数+结果）的浅底色 SGR：#262626 纯中性灰，
-// 与代码块底色同族（styles.go 的 cCodeBlockBg）。浅底色成块是工具体的
-// 视觉语言（对应思考块的左竖线），亮度差与纯灰调保证黑底终端上不读成色块。
-var toolBodyBgSGR = "\x1b[48;2;38;38;38m"
-
-// bgWrap 给体区行加底色并铺满 fill 列宽：chroma/lipgloss 的逐 token reset
-// （\x1b[0m / \x1b[m）会清掉底色，必须每个 reset 后重发；行尾在底色活跃
-// 状态下补空格铺满（补的空格即带底色），最后统一收尾 reset。
-func bgWrap(line string, fill int) string {
-	s := strings.ReplaceAll(line, "\x1b[0m", "\x1b[0m"+toolBodyBgSGR)
-	s = strings.ReplaceAll(s, "\x1b[m", "\x1b[m"+toolBodyBgSGR)
-	if pad := fill - ansi.StringWidth(line); pad > 0 {
-		s += strings.Repeat(" ", pad)
-	}
-	return toolBodyBgSGR + s + "\x1b[0m"
+// lineWrap 体区行加左侧竖线前缀（与思考块/用户消息同款视觉语言）：
+// 参数区/结果区竖线异色区分段（颜色承载段语义，正文保持明暗层级）。
+// 竖线占 2 显示列，内容折行预算（avail = w - msgIndentW - 4）已含冗余，
+// 加前缀后总宽仍 ≤ w。
+func lineWrap(line string, c color.Color) string {
+	return colorText(c, "│ ") + line
 }
 
 // toolView 工具块总装：头部行（✓ name）→ 参数字段行（most-subtle，最暗）→
@@ -439,39 +430,40 @@ func toolView(name string, args []byte, result string, w int, meta string) strin
 		}
 	}
 
-	// 体区（头部行之外的所有行）：参数行 → 代码块（参数侧兜底时）→ 空行 →
-	// 结果行/内容块 → 代码块（响应侧时）
-	var bodyLines []string
+	// 体区（头部行之外）：参数区行（暗灰竖线）→ 空行 → 结果区行（淡绿竖线）。
+	// 代码块归属其来源段：参数侧兜底在参数区，响应侧在结果区。
+	var inLines, outLines []string
 	for _, r := range argRowList {
-		bodyLines = append(bodyLines, kvRowLines(r, kw, avail, cFgMostSubtle)...)
+		inLines = append(inLines, kvRowLines(r, kw, avail, cFgMostSubtle)...)
 	}
 	if !codeInResult && len(codeLines) > 0 && len(argRowList) > 0 {
-		bodyLines = append(bodyLines, "")
+		inLines = append(inLines, "")
 	}
 	if !codeInResult {
-		bodyLines = append(bodyLines, codeLines...)
+		inLines = append(inLines, codeLines...)
 	}
 	// 空行仅在两段都存在时出现（无参工具不凭空多空行）
 	hasInput := len(argRowList) > 0 || len(codeLines) > 0
 	if hasInput && (len(resRows) > 0 || len(blocks) > 0 || codeInResult) {
-		bodyLines = append(bodyLines, "")
+		inLines = append(inLines, "")
 	}
 	for _, r := range resRows {
-		bodyLines = append(bodyLines, kvRowLines(r, kw, avail, cFgMuted)...)
+		outLines = append(outLines, kvRowLines(r, kw, avail, cFgMuted)...)
 	}
 	for _, b := range blocks {
-		bodyLines = append(bodyLines, renderBlock(b, avail, path)...)
+		outLines = append(outLines, renderBlock(b, avail, path)...)
 	}
 	if codeInResult {
-		bodyLines = append(bodyLines, codeLines...)
+		outLines = append(outLines, codeLines...)
 	}
 
-	// 头部行 + 体区浅底色（逐行包裹并铺满块宽，视觉上成块）
-	lines := make([]string, 0, len(bodyLines)+1)
+	lines := make([]string, 0, len(inLines)+len(outLines)+1)
 	lines = append(lines, toolHeader(name, ""))
-	bodyW := w - msgIndentW
-	for _, l := range bodyLines {
-		lines = append(lines, bgWrap(l, bodyW))
+	for _, l := range inLines {
+		lines = append(lines, lineWrap(l, cToolLineIn))
+	}
+	for _, l := range outLines {
+		lines = append(lines, lineWrap(l, cToolLineOut))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -479,7 +471,7 @@ func toolView(name string, args []byte, result string, w int, meta string) strin
 // kvRowLines 键值行：值超宽按列硬折行（续行对齐 value 起始列，不越过
 // padding），整行统一配色。值无 ANSI（已截断的纯文本），Hardwrap 安全。
 func kvRowLines(r kvRow, kw, avail int, c color.Color) []string {
-	prefix := "    " + padRight(r.key, kw) + "  "
+	prefix := "  " + padRight(r.key, kw) + "  "
 	limit := avail - len(prefix) // prefix 全为窄字符，字节数即显示列数
 	if limit < 4 {
 		limit = 4
@@ -515,13 +507,13 @@ func renderBlock(b textBlock, avail int, path string) []string {
 	out := make([]string, 0, len(all)+1)
 	for _, l := range all {
 		for _, chunk := range hardWrapIf(l, avail) {
-			out = append(out, "    "+colorText(cFgMuted, chunk))
+			out = append(out, "  "+colorText(cFgMuted, chunk))
 		}
 	}
 	if total > blockMaxLines {
 		note := fmt.Sprintf("… 共 %d 行，显示前 %d 行", total, blockMaxLines)
 		for _, chunk := range hardWrapIf(note, avail) {
-			out = append(out, colorText(cFgMostSubtle, "    "+chunk))
+			out = append(out, colorText(cFgMostSubtle, "  "+chunk))
 		}
 	}
 	return out

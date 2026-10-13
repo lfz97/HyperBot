@@ -37,6 +37,12 @@ var (
 	// 兼容旧引用：边框沿用 demo 的 "62"（输入框/帮助浮层），次文本对齐 Squid。
 	cBorder = lipgloss.Color("62")
 	cSub    = cFgMuted
+
+	// 工具块体区竖线：与用户消息（primary 线）、思考块（faint 线）同款视觉
+	// 语言。参数区暗灰（输入=既定上下文，Oyster）、结果区淡绿（输出=产出，
+	// Guac；饱和度低于 success 主色，错误结果的红色内容仍可辨识）。
+	cToolLineIn  = cFgMostSubtle
+	cToolLineOut = cSuccessSubtle
 )
 
 // maxTextWidth 消息文本的最大列宽（crush 同款 cap：超宽终端下正文不至于拉满，

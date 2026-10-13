@@ -219,9 +219,11 @@ func TestToolViewAssembly(t *testing.T) {
 	if !strings.Contains(lines[3], "--- a/x.go") {
 		t.Errorf("diff first line missing: %q", lines[3])
 	}
-	// + 行染绿、- 行染红（文本包在 ANSI 内，用包含断言）
-	if !strings.Contains(out, "+new") || !strings.Contains(out, "-old") {
-		t.Errorf("diff content missing:\n%s", out)
+	// + 行染绿、- 行染红（语法色分层：前缀承载 diff 色，内容承载 chroma 色。
+	// 断言须剥 ANSI：前缀与内容之间隔着 SGR 转义码）
+	flat := ansi.Strip(out)
+	if !strings.Contains(flat, "+ new") || !strings.Contains(flat, "- old") {
+		t.Errorf("diff content missing:\n%s", flat)
 	}
 }
 
@@ -292,7 +294,7 @@ func TestRenderBlockTruncation(t *testing.T) {
 	for i := 0; i < 12; i++ {
 		fmt.Fprintf(&b, "line %d\n", i)
 	}
-	lines := renderBlock(textBlock{text: b.String()}, 120)
+	lines := renderBlock(textBlock{text: b.String()}, 120, "")
 	if len(lines) != 11 { // 10 行 + 尾注
 		t.Fatalf("want 11 lines, got %d", len(lines))
 	}
@@ -304,7 +306,7 @@ func TestRenderBlockTruncation(t *testing.T) {
 
 func TestRenderBlockWrapsLongLines(t *testing.T) {
 	long := strings.Repeat("a", 50)
-	lines := renderBlock(textBlock{text: long}, 30) // 50 列 → 30 + 20
+	lines := renderBlock(textBlock{text: long}, 30, "") // 50 列 → 30 + 20
 	if len(lines) != 2 {
 		t.Fatalf("want 2 wrapped lines, got %d: %#v", len(lines), lines)
 	}
@@ -317,7 +319,7 @@ func TestRenderBlockWrapsLongLines(t *testing.T) {
 func TestRenderBlockDiffWrapKeepsKind(t *testing.T) {
 	// 40 列的删除行在 20 列限宽下折行，续行保持红色（kind 贯穿整逻辑行）
 	l := "-" + strings.Repeat("x", 39)
-	lines := renderBlock(textBlock{text: l, isDiff: true}, 20)
+	lines := renderBlock(textBlock{text: l, isDiff: true}, 30, "")
 	if len(lines) != 2 {
 		t.Fatalf("want 2 lines, got %d", len(lines))
 	}

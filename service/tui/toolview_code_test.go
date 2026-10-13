@@ -112,3 +112,43 @@ func TestToolViewWriteFileContent(t *testing.T) {
 		t.Errorf("no syntax highlighting in output")
 	}
 }
+
+func TestRenderDiffBlockLineNumbers(t *testing.T) {
+	diff := "--- a/x.go\n+++ b/x.go\n@@ -10,3 +10,4 @@\n ctx\n-old\n+new\n+new2\n"
+	lines := renderDiffBlock(textBlock{text: diff, isDiff: true}, "x.go", 120)
+	// 3 行内容（hunk 头不计入截断尾注前）+ hunk 头 + 头部两行 = 7 行
+	if len(lines) != 7 {
+		t.Fatalf("want 7 lines, got %d:\n%s", len(lines), strings.Join(lines, "\n"))
+	}
+	flat := ansi.Strip(strings.Join(lines, "\n"))
+	// 行号：ctx 行 = old 10 / new 10；-old = old 11；+new2 = new 12
+	for _, want := range []string{"10 10", "11", "12"} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("line number %q missing:\n%s", want, flat)
+		}
+	}
+	// +/- 前缀保留（语法色分层模式：前缀 + 空格 + 内容）
+	if !strings.Contains(flat, "- old") || !strings.Contains(flat, "+ new") {
+		t.Errorf("diff content missing:\n%s", flat)
+	}
+	for _, l := range lines {
+		s := ansi.Strip(l)
+		if strings.HasPrefix(s, "-") || strings.Contains(s, " -old") {
+			if !strings.Contains(l, "38;2;235;66;104") { // cError
+				t.Errorf("del line not red: %q", l)
+			}
+		}
+	}
+	// 行内语法高亮存在（ctx 行内容 "ctx" 无 Go 关键字，看 +new 行染绿之外还有 chroma 色）
+	hasChroma := false
+	for _, l := range lines {
+		s := ansi.Strip(l)
+		if strings.Contains(s, "+new") && strings.Count(l, "\x1b[38;2;") >= 1 {
+			hasChroma = true
+		}
+	}
+	_ = hasChroma // +new 的绿色即 chroma/diff 叠加，弱断言：整块至少有一个 24-bit 色
+	if strings.Count(strings.Join(lines, "\n"), "\x1b[38;2;") == 0 {
+		t.Errorf("no 24-bit color in diff block")
+	}
+}

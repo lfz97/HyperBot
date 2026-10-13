@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"image/color"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -316,6 +317,9 @@ func toolView(name string, args []byte, result string, w int) string {
 		avail = 10
 	}
 
+	argsObj, _ := decodeJSONObject(args)
+	path := argPath(argsObj)
+
 	argRowList := argRows(name, args)
 	resRows, blocks := resultParts(name, result)
 
@@ -324,17 +328,15 @@ func toolView(name string, args []byte, result string, w int) string {
 	var codeLines []string
 	codeField := codeArgFields[name]
 	if codeField != "" {
-		if obj, ok := decodeJSONObject(args); ok {
-			if content, isStr := obj[codeField].(string); isStr && strings.TrimSpace(content) != "" {
-				rows := argRowList[:0]
-				for _, r := range argRowList {
-					if r.key != codeField {
-						rows = append(rows, r)
-					}
+		if content, isStr := argsObj[codeField].(string); isStr && strings.TrimSpace(content) != "" {
+			rows := argRowList[:0]
+			for _, r := range argRowList {
+				if r.key != codeField {
+					rows = append(rows, r)
 				}
-				argRowList = rows
-				codeLines = codeBlockLines(argPath(obj), content, avail)
 			}
+			argRowList = rows
+			codeLines = codeBlockLines(path, content, avail)
 		}
 	}
 
@@ -370,7 +372,7 @@ func toolView(name string, args []byte, result string, w int) string {
 		lines = append(lines, kvRowLines(r, kw, avail, cFgMuted)...)
 	}
 	for _, b := range blocks {
-		lines = append(lines, renderBlock(b, avail)...)
+		lines = append(lines, renderBlock(b, avail, path)...)
 	}
 	return strings.Join(lines, "\n")
 }
@@ -395,10 +397,14 @@ func kvRowLines(r kvRow, kw, avail int, c color.Color) []string {
 	return lines
 }
 
-// renderBlock 多行内容块：每行 4 空格缩进、muted 色；diff 块 + 行淡绿、
-// - 行红（折行后续行继承本逻辑行的 kind）；行内容按 avail 硬折行；
-// 超过 blockMaxLines 截断并加最暗色尾注。
-func renderBlock(b textBlock, avail int) []string {
+// renderBlock 多行内容块：每行 4 空格缩进、muted 色；diff 块分流到
+// renderDiffBlock（行号列 + 行内语法高亮）；行内容按 avail 硬折行；
+// 超过 blockMaxLines 截断并加最暗色尾注。path 为编辑目标文件路径（diff
+// 块选 lexer 用，空则不高亮）。
+func renderBlock(b textBlock, avail int, path string) []string {
+	if b.isDiff {
+		return renderDiffBlock(b, path, avail)
+	}
 	if avail < 10 {
 		avail = 10
 	}
@@ -409,12 +415,8 @@ func renderBlock(b textBlock, avail int) []string {
 	}
 	out := make([]string, 0, len(all)+1)
 	for _, l := range all {
-		kind := ""
-		if b.isDiff {
-			kind = diffLineKind(l)
-		}
 		for _, chunk := range hardWrapIf(l, avail) {
-			out = append(out, "    "+colorChunk(b, kind, chunk))
+			out = append(out, "    "+colorText(cFgMuted, chunk))
 		}
 	}
 	if total > blockMaxLines {
@@ -426,18 +428,156 @@ func renderBlock(b textBlock, avail int) []string {
 	return out
 }
 
-// colorChunk 块内单行（已折行的 chunk）染色。
-func colorChunk(b textBlock, kind, l string) string {
-	if !b.isDiff {
-		return colorText(cFgMuted, l)
+// diffHunkHeader 匹配 unified diff hunk 头，提取 old/new 起始行号。
+var diffHunkHeader = regexp.MustCompile(`^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@`)
+
+// renderDiffBlock unified diff 块：行号列（@@ 头解析并逐行推进，add/del
+// 行各自只占一侧）+ 行内语法高亮（lexer 取自 path）+ +/- 前缀染色。
+// 语法色与 diff 色分层：前缀承载 +/- 红绿，内容承载 chroma 语法色。
+func renderDiffBlock(b textBlock, path string, avail int) []string {
+	if avail < 10 {
+		avail = 10
 	}
+	all := strings.Split(cleanBlock(b.text), "\n")
+	total := len(all)
+	if total > blockMaxLines {
+		all = all[:blockMaxLines]
+	}
+
+	// 第一遍：推进行号，算 old/new 列宽
+	oldLine, newLine := 0, 0
+	maxOld, maxNew := 0, 0
+	for _, l := range all {
+		if m := diffHunkHeader.FindStringSubmatch(l); m != nil {
+			oldLine, _ = strconv.Atoi(m[1])
+			newLine, _ = strconv.Atoi(m[2])
+			continue
+		}
+		switch {
+		case strings.HasPrefix(l, "-") && !strings.HasPrefix(l, "---"):
+			if oldLine > maxOld {
+				maxOld = oldLine
+			}
+			oldLine++
+		case strings.HasPrefix(l, "+") && !strings.HasPrefix(l, "+++"):
+			if newLine > maxNew {
+				maxNew = newLine
+			}
+			newLine++
+		case strings.HasPrefix(l, " ") || strings.HasPrefix(l, "\\"):
+			if oldLine > maxOld {
+				maxOld = oldLine
+			}
+			if newLine > maxNew {
+				maxNew = newLine
+			}
+			oldLine++
+			newLine++
+		}
+	}
+	oldW := len(fmt.Sprintf("%d", max(maxOld, 1)))
+	newW := len(fmt.Sprintf("%d", max(maxNew, 1)))
+	numCol := oldW + 1 + newW + 1
+
+	// 第二遍：渲染
+	oldLine, newLine = 0, 0
+	renderNums := func(o, n int) string {
+		blank := strings.Repeat(" ", oldW+1+newW+1)
+		if o == 0 && n == 0 {
+			return colorText(cFgMostSubtle, blank)
+		}
+		var ob, nb string
+		if o > 0 {
+			ob = fmt.Sprintf("%*d", oldW, o)
+		} else {
+			ob = strings.Repeat(" ", oldW)
+		}
+		if n > 0 {
+			nb = fmt.Sprintf("%*d", newW, n)
+		} else {
+			nb = strings.Repeat(" ", newW)
+		}
+		return colorText(cFgMostSubtle, ob+" "+nb+" ")
+	}
+
+	limit := avail - numCol - 2
+	if limit < 4 {
+		limit = 4
+	}
+	out := make([]string, 0, len(all)+1)
+	for _, l := range all {
+		if m := diffHunkHeader.FindStringSubmatch(l); m != nil {
+			oldLine, _ = strconv.Atoi(m[1])
+			newLine, _ = strconv.Atoi(m[2])
+			out = append(out, renderNums(0, 0)+colorText(cFgMostSubtle, l))
+			continue
+		}
+		var (
+			o, n        int
+			prefix      string
+			kind        string
+			content     string
+		)
+		switch {
+		case strings.HasPrefix(l, "-") && !strings.HasPrefix(l, "---"):
+			o = oldLine
+			oldLine++
+			prefix, kind, content = "-", "del", l[1:]
+		case strings.HasPrefix(l, "+") && !strings.HasPrefix(l, "+++"):
+			n = newLine
+			newLine++
+			prefix, kind, content = "+", "add", l[1:]
+		case strings.HasPrefix(l, " "):
+			o, n = oldLine, newLine
+			oldLine++
+			newLine++
+			prefix, kind, content = " ", "ctx", l[1:]
+		default: // ---/+++/其他头行
+			out = append(out, renderNums(0, 0)+colorText(cFgMostSubtle, l))
+			continue
+		}
+		if path == "" {
+			// 无文件上下文（如 diff 工具的裸 diff）：整行按 kind 染色，
+			// 折行后每个 chunk 独立染色（kind 贯穿整逻辑行）
+			lineColor := diffKindColor(kind)
+			for i, chunk := range hardWrapIf(prefix+content, limit) {
+				if i == 0 {
+					out = append(out, renderNums(o, n)+colorText(lineColor, chunk))
+				} else {
+					out = append(out, colorText(cFgMostSubtle, strings.Repeat(" ", numCol))+colorText(lineColor, chunk))
+				}
+			}
+			continue
+		}
+		// 有文件路径：语法色打底、+/- 前缀承载 diff kind（crush 分层同型）
+		hl := highlightCode(content, path)
+		chunks := hardWrapIf(hl, limit)
+		for i, chunk := range chunks {
+			if i == 0 {
+				out = append(out, renderNums(o, n)+colorText(diffKindColor(kind), prefix+" ")+chunk)
+			} else {
+				out = append(out, colorText(cFgMostSubtle, strings.Repeat(" ", numCol+2))+chunk)
+			}
+		}
+	}
+	if total > blockMaxLines {
+		note := fmt.Sprintf("… 共 %d 行，显示前 %d 行", total, blockMaxLines)
+		for _, chunk := range hardWrapIf(note, limit) {
+			out = append(out, colorText(cFgMostSubtle, strings.Repeat(" ", numCol+2)+chunk))
+		}
+	}
+	return out
+}
+
+// diffKindColor diff 行分类配色。
+func diffKindColor(kind string) color.Color {
 	switch kind {
 	case "add":
-		return colorText(cSuccessSubtle, l)
+		return cSuccessSubtle
 	case "del":
-		return colorText(cError, l)
+		return cError
 	default:
-		return colorText(cFgMuted, l)
+		return cFgMuted
 	}
 }
 

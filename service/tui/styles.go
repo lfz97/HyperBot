@@ -120,13 +120,15 @@ func toolHeader(name, params string) string {
 }
 
 // compactLine 把多行文本压成单行：去掉 ANSI 转义与回车（命令输出常带 PTY 的
-// \r\n 和程序自身的颜色码，直接进视图会串色），换行转空格并合并多余空格。
+// \r\n 和程序自身的颜色码，直接进视图会串色），换行转空格并合并多余空格，
+// tab 展开为 4 空格（测量计 0 列而终端展开 8 列，见 cleanBlock 注释）。
 // toolview 的参数/标量兜底在用；多行内容块用 toolview.cleanBlock（保留换行）。
 func compactLine(s string) string {
 	s = ansi.Strip(s)
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.ReplaceAll(s, "\r", " ")
 	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\t", tabSpaces)
 	s = strings.ReplaceAll(s, "  ", " ")
 	return strings.TrimSpace(s)
 }

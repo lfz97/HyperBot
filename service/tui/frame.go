@@ -93,9 +93,13 @@ func (t *TUI) recalcPadding() {
 
 // wrapViewText 按宽度软换行。提交时用 lipgloss 根据窗口宽度软换行，
 // 不在 viewport 渲染时软换行，提高性能（长文本只重排一次而不是每帧重算）。
+// tab 展开是兜底安全网：任何来源（思考/正文/用户粘贴/工具块）的 tab 都在
+// 这里展开——ANSI 宽度测量把 \t 计 0 列而终端展开 8 列制表位，不展开则
+// 测量低估导致越界（cleanBlock/compactLine 已处理各自入口，此处兜住其余）。
 func wrapViewText(text string, width int) string {
 	if width <= 0 {
 		return strings.TrimRight(text, "\n")
 	}
-	return lipgloss.NewStyle().Width(width).Render(strings.TrimRight(text, "\n"))
+	return lipgloss.NewStyle().Width(width).Render(
+		strings.ReplaceAll(strings.TrimRight(text, "\n"), "\t", tabSpaces))
 }

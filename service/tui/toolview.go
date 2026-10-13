@@ -23,6 +23,11 @@ import (
 const (
 	argValueMaxRunes = 40 // 参数/标量值单行截断
 	blockMaxLines    = 10 // diff/长文本默认显示行数
+
+	// tabSpaces tab 展开宽度：ANSI 宽度测量把 \t 计 0 列而终端展开到
+	// 8 列制表位，不展开则含 tab 的行"测量达标、实际越界"（crush
+	// diffview 的 replaceTabs 同款处理，取 4 列保持紧凑）。
+	tabSpaces = "    "
 )
 
 // codeArgFields 工具参数中的"代码内容"字段：渲染为高亮代码块而非截断值行
@@ -343,12 +348,15 @@ func diffLineKind(l string) string {
 	}
 }
 
-// cleanBlock 多行内容清洗：剥 ANSI 色码（PTY 输出防串色）、\r\n 归一、去首尾
-// 空白。与 compactLine 的区别：保留换行结构。
+// cleanBlock 多行内容清洗：剥 ANSI 色码（PTY 输出防串色）、\r\n 归一、tab
+// 展开为 4 空格、去首尾空白。与 compactLine 的区别：保留换行结构。
+// tab 必须展开：ANSI 宽度测量把 \t 计为 0 列而终端展开到 8 列制表位，
+// 含 tab 的行会"测量达标、实际超宽"，越过 padding 被终端硬换行。
 func cleanBlock(s string) string {
 	s = ansi.Strip(s)
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.ReplaceAll(s, "\r", "")
+	s = strings.ReplaceAll(s, "\t", tabSpaces)
 	return strings.TrimSpace(s)
 }
 

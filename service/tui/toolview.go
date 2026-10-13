@@ -370,6 +370,13 @@ func lineWrap(line string, c color.Color) string {
 	return colorText(c, "│ ") + line
 }
 
+// diffHeaderVerbs 有 diff 结果的工具的块头动词（"← Edit <path>" 形式）。
+// 块头承载路径后，参数区的 Path 行与之重复，toolView 会摘除。
+var diffHeaderVerbs = map[string]string{
+	"EditFile": "Edit",
+	"Diff":     "Diff",
+}
+
 // toolView 工具块总装：头部行（✓ name）→ 参数字段行（most-subtle，最暗）→
 // 空行分段 → 结果标量行 + 多行内容块（muted，亮一档）。参数与结果行同列
 // 对齐，仅靠空行与明暗区分段。w 为块可用总宽（msgIndent 的缩进已扣）。
@@ -430,6 +437,25 @@ func toolView(name string, args []byte, result string, w int, meta string) strin
 		}
 	}
 
+	// diff 块头（← Edit <path>）：有 diff 结果且路径已知时渲染，参数区的
+	// Path 行与块头重复，一并摘除
+	diffHeader := ""
+	if verb := diffHeaderVerbs[name]; verb != "" && path != "" {
+		for _, b := range blocks {
+			if b.isDiff {
+				diffHeader = colorText(cInfo, "← "+verb) + " " + colorText(cFgSubtle, path)
+				rows := argRowList[:0]
+				for _, r := range argRowList {
+					if r.key != "Path" {
+						rows = append(rows, r)
+					}
+				}
+				argRowList = rows
+				break
+			}
+		}
+	}
+
 	// 体区（头部行之外）：参数区行（暗灰竖线）→ 空行 → 结果区行（淡绿竖线）。
 	// 代码块归属其来源段：参数侧兜底在参数区，响应侧在结果区。
 	var inLines, outLines []string
@@ -449,6 +475,9 @@ func toolView(name string, args []byte, result string, w int, meta string) strin
 	}
 	for _, r := range resRows {
 		outLines = append(outLines, kvRowLines(r, kw, avail, cFgMuted)...)
+	}
+	if diffHeader != "" {
+		outLines = append(outLines, diffHeader, "")
 	}
 	for _, b := range blocks {
 		outLines = append(outLines, renderBlock(b, avail, path)...)
@@ -535,7 +564,7 @@ func renderDiffBlock(b textBlock, path string, avail int) []string {
 
 	// 第一遍：解析为内容条目。头行只推进行号计数不产出。
 	type diffEntry struct {
-		o, n    int
+		num     int    // 单列行号：上下文/新增取新文件行号，删除取旧文件行号
 		kind    string // add | del | ctx | gap
 		content string
 	}
@@ -556,13 +585,13 @@ func renderDiffBlock(b textBlock, path string, avail int) []string {
 		}
 		switch {
 		case strings.HasPrefix(l, "-"):
-			entries = append(entries, diffEntry{o: oldLine, kind: "del", content: l[1:]})
+			entries = append(entries, diffEntry{num: oldLine, kind: "del", content: l[1:]})
 			oldLine++
 		case strings.HasPrefix(l, "+"):
-			entries = append(entries, diffEntry{n: newLine, kind: "add", content: l[1:]})
+			entries = append(entries, diffEntry{num: newLine, kind: "add", content: l[1:]})
 			newLine++
 		case strings.HasPrefix(l, " ") || strings.HasPrefix(l, "\\"):
-			entries = append(entries, diffEntry{o: oldLine, n: newLine, kind: "ctx", content: strings.TrimPrefix(l, " ")})
+			entries = append(entries, diffEntry{num: newLine, kind: "ctx", content: strings.TrimPrefix(l, " ")})
 			oldLine++
 			newLine++
 		}
@@ -590,91 +619,79 @@ func renderDiffBlock(b textBlock, path string, avail int) []string {
 		shown = kept
 	}
 
-	// 列宽
-	maxOld, maxNew := 1, 1
+	// 单列行号宽 + 标记列（num + " " + marker + " "，合计 numCol）
+	maxNum := 1
 	for _, e := range shown {
-		if e.o > maxOld {
-			maxOld = e.o
-		}
-		if e.n > maxNew {
-			maxNew = e.n
+		if e.num > maxNum {
+			maxNum = e.num
 		}
 	}
-	oldW := len(fmt.Sprintf("%d", maxOld))
-	newW := len(fmt.Sprintf("%d", maxNew))
-	numCol := oldW + 1 + newW + 1
+	numW := len(fmt.Sprintf("%d", maxNum))
+	numCol := numW + 3
 
-	renderNums := func(o, n int) string {
-		if o == 0 && n == 0 {
-			return colorText(cFgMostSubtle, strings.Repeat(" ", numCol))
+	renderNum := func(n int) string {
+		if n == 0 {
+			return colorText(cFgMostSubtle, strings.Repeat(" ", numW))
 		}
-		var ob, nb string
-		if o > 0 {
-			ob = fmt.Sprintf("%*d", oldW, o)
-		} else {
-			ob = strings.Repeat(" ", oldW)
-		}
-		if n > 0 {
-			nb = fmt.Sprintf("%*d", newW, n)
-		} else {
-			nb = strings.Repeat(" ", newW)
-		}
-		return colorText(cFgMostSubtle, ob+" "+nb+" ")
+		return colorText(cFgMostSubtle, fmt.Sprintf("%*d", numW, n))
 	}
-	diffPrefix := func(kind string) string {
+	// 标记列承载 diff kind 色（+ 淡绿 / - 红 / 上下空白）
+	diffMarker := func(kind string) string {
 		switch kind {
 		case "add":
-			return "+"
+			return colorText(cSuccessSubtle, "+")
 		case "del":
-			return "-"
+			return colorText(cError, "-")
 		default:
 			return " "
 		}
 	}
+	blankCol := colorText(cFgMostSubtle, strings.Repeat(" ", numCol))
 
-	limit := avail - numCol - 2
+	limit := avail - numCol
 	if limit < 4 {
 		limit = 4
 	}
 	out := make([]string, 0, len(shown)+1)
 	for _, e := range shown {
 		if e.kind == "gap" {
-			out = append(out, renderNums(0, 0)+colorText(cFgMostSubtle, "…"))
+			out = append(out, blankCol+colorText(cFgMostSubtle, "…"))
 			continue
 		}
 		if path == "" {
-			// 无文件上下文（如 Diff 工具的裸 diff）：整行按 kind 染色，
+			// 无文件上下文（如 Diff 工具的裸 diff）：内容整段按 kind 染色，
 			// 折行后每个 chunk 独立染色（kind 贯穿整逻辑行）
 			lineColor := diffKindColor(e.kind)
-			for i, chunk := range hardWrapIf(diffPrefix(e.kind)+e.content, limit) {
+			for i, chunk := range hardWrapIf(e.content, limit) {
 				if i == 0 {
-					out = append(out, renderNums(e.o, e.n)+colorText(lineColor, chunk))
+					out = append(out, renderNum(e.num)+" "+diffMarker(e.kind)+" "+colorText(lineColor, chunk))
 				} else {
-					out = append(out, colorText(cFgMostSubtle, strings.Repeat(" ", numCol))+colorText(lineColor, chunk))
+					out = append(out, blankCol+colorText(lineColor, chunk))
 				}
 			}
 			continue
 		}
-		// 有文件路径：语法色打底、+/- 前缀承载 diff kind（crush 分层同型）
+		// 有文件路径：语法色打底、标记列承载 diff kind（crush 分层同型）
 		hl := highlightCode(e.content, path)
 		chunks := hardWrapIf(hl, limit)
 		for i, chunk := range chunks {
 			if i == 0 {
-				out = append(out, renderNums(e.o, e.n)+colorText(diffKindColor(e.kind), diffPrefix(e.kind)+" ")+chunk)
+				out = append(out, renderNum(e.num)+" "+diffMarker(e.kind)+" "+chunk)
 			} else {
-				out = append(out, colorText(cFgMostSubtle, strings.Repeat(" ", numCol+2))+chunk)
+				out = append(out, blankCol+chunk)
 			}
 		}
 	}
 	if contentTotal > blockMaxLines {
 		note := fmt.Sprintf("… 共 %d 行，显示前 %d 行", contentTotal, blockMaxLines)
 		for _, chunk := range hardWrapIf(note, limit) {
-			out = append(out, colorText(cFgMostSubtle, strings.Repeat(" ", numCol+2)+chunk))
+			out = append(out, blankCol+colorText(cFgMostSubtle, chunk))
 		}
 	}
 	return out
 }
 
+// diffKindColor diff 行分类配色。
 // diffKindColor diff 行分类配色。
 func diffKindColor(kind string) color.Color {
 	switch kind {

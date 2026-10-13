@@ -127,14 +127,14 @@ func TestRenderDiffBlockLineNumbers(t *testing.T) {
 			t.Errorf("raw diff header leaked: %q\n%s", noise, flat)
 		}
 	}
-	// 行号：ctx 行 = old 10 / new 10；-old = old 11；+new2 = new 12
-	for _, want := range []string{"10 10", "11", "12"} {
+	// 单列行号：ctx = 新 10；-old = 旧 11；+new = 新 11；+new2 = 新 12
+	for _, want := range []string{"10", "11", "12"} {
 		if !strings.Contains(flat, want) {
 			t.Errorf("line number %q missing:\n%s", want, flat)
 		}
 	}
-	// +/- 前缀保留（语法色分层模式：前缀 + 空格 + 内容）
-	if !strings.Contains(flat, "- old") || !strings.Contains(flat, "+ new") {
+	// 标记列：行号 + 空格 + +/- + 空格 + 内容
+	if !strings.Contains(flat, "11 - old") || !strings.Contains(flat, "11 + new") {
 		t.Errorf("diff content missing:\n%s", flat)
 	}
 	if strings.Count(strings.Join(lines, "\n"), "\x1b[38;2;") == 0 {

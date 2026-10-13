@@ -204,15 +204,19 @@ func TestToolViewAssembly(t *testing.T) {
 	args := []byte(`{"Path":"service/tui/render.go"}`)
 	out := toolView("EditFile", args, `{"Diff":"--- a/x.go\n+++ b/x.go\n@@ -1 +1 @@\n-old\n+new"}`, 120, "")
 	lines := strings.Split(out, "\n")
-	// header + param + 空行 + 2 行内容（diff 头行不渲染）
+	// header + ←Edit 块头（Path 行摘除）+ 空行 + 2 行内容（diff 头行不渲染）
 	if len(lines) != 5 {
 		t.Fatalf("want 5 lines, got %d:\n%s", len(lines), out)
 	}
 	if !strings.Contains(lines[0], "EditFile") {
 		t.Errorf("header missing tool name: %q", lines[0])
 	}
-	if !strings.Contains(lines[1], "Path") || !strings.Contains(lines[1], "render.go") {
-		t.Errorf("param line broken: %q", lines[1])
+	// ← Edit 块头携带路径；Path 参数行被摘除（去重）
+	if !strings.Contains(ansi.Strip(lines[1]), "← Edit") || !strings.Contains(lines[1], "render.go") {
+		t.Errorf("diff header broken: %q", lines[1])
+	}
+	if strings.Contains(ansi.Strip(lines[1]), "Path") {
+		t.Errorf("Path row should be suppressed by diff header: %q", lines[1])
 	}
 	if strings.TrimSpace(strings.TrimPrefix(ansi.Strip(lines[2]), "│")) != "" {
 		t.Errorf("want blank separator line, got %q", lines[2])

@@ -109,7 +109,11 @@ func Check(agentName string, sink summarySink) (*BootEnv, error) {
 		env.Notices = append(env.Notices, bootNotice{NoticeSuccess, "config folder not found, created default"})
 	}
 
-	// ③ 配置文件：不存在则写入默认模板，本次启动到此为止（须改完配置重启）
+	// ③ 框架日志重定向到文件：尽早静音 stderr——Check 与 TUI 并发启动，重定向越早，
+	// sqlite/gse/框架初始化等后续步骤的日志污染 TUI 的窗口越小（失败则静默跳过，保持默认输出）
+	env.redirectFrameworkLog()
+
+	// ④ 配置文件：不存在则写入默认模板，本次启动到此为止（须改完配置重启）
 	env.HyperBotConfigPath = filepath.Join(env.ConfigFolderPath, HyperBotConfig)
 	if _, err := os.Stat(env.HyperBotConfigPath); err != nil {
 		if !os.IsNotExist(err) {
@@ -128,7 +132,7 @@ func Check(agentName string, sink summarySink) (*BootEnv, error) {
 		return env, nil
 	}
 
-	// ④ skills 文件夹：不存在则创建默认的
+	// ⑤ skills 文件夹：不存在则创建默认的
 	env.SkillFolderPath = filepath.Join(env.ConfigFolderPath, SkillsFolder)
 	if _, err := os.Stat(env.SkillFolderPath); err != nil {
 		if !os.IsNotExist(err) {
@@ -139,9 +143,6 @@ func Check(agentName string, sink summarySink) (*BootEnv, error) {
 		}
 		env.Notices = append(env.Notices, bootNotice{NoticeSuccess, "skills folder not found, created default"})
 	}
-
-	// ⑤ 框架日志重定向到文件，避免输出干扰 TUI（失败则静默跳过，保持默认输出）
-	env.redirectFrameworkLog()
 
 	// ⑥ 加载配置文件
 	cfg, err := config.LoadConfig(env.HyperBotConfigPath)

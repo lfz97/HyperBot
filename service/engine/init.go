@@ -25,7 +25,8 @@ import (
 type Engine struct {
 	Config_p            *config.Config      //yaml配置
 	Agentname           string              //Agent名称
-	CWD                 string              //当前工作目录
+	CWD                 string              //当前工作目录（os.Getwd()）
+	ExeDir              string              //可执行文件所在目录，资产锚点
 	ConfigFolderPath    string              //配置文件夹路径
 	HyperBotConfigPath  string              //配置文件路径
 	SkillFolderPath     string              //技能文件夹路径

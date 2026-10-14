@@ -50,6 +50,7 @@ func (e *Engine) Run() {
 // absorb 把 bootstrap 产物拷入引擎字段，并上屏启动期收集的非致命提示。
 func (e *Engine) absorb(env *BootEnv) {
 	e.CWD = env.CWD
+	e.ExeDir = env.ExeDir
 	e.ConfigFolderPath = env.ConfigFolderPath
 	e.HyperBotConfigPath = env.HyperBotConfigPath
 	e.SkillFolderPath = env.SkillFolderPath

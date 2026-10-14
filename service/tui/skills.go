@@ -101,12 +101,28 @@ func (s *skills) toggleVisibility() {
 	s.visible = !s.visible
 }
 
+// moveUp/moveDown 清单为空时必须直接返回：取模的除数是 len(s.items)，
+// 技能目录为空（bootstrap 建的默认目录就是空的）时清单为空，不判会 panic。
 func (s *skills) moveUp() {
+	if len(s.items) == 0 {
+		return
+	}
 	s.index = (s.index - 1 + len(s.items)) % len(s.items)
 }
 
 func (s *skills) moveDown() {
+	if len(s.items) == 0 {
+		return
+	}
 	s.index = (s.index + 1) % len(s.items)
+}
+
+// selectedCmd 返回当前选中条目的指令；清单为空或索引越界时 ok=false。
+func (s *skills) selectedCmd() (string, bool) {
+	if s.index < 0 || s.index >= len(s.items) {
+		return "", false
+	}
+	return s.items[s.index][0], true
 }
 
 // refreshItems 重建帮助条目：默认项 + 引擎拉取的技能项（每次打开时调用，

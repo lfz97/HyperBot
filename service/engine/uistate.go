@@ -300,6 +300,7 @@ func (e *Engine) InterruptChan() <-chan struct{} { return e.interruptCh }
 // ── 会话恢复弹框 ──────────────────────────────────────────
 
 // ResumeItem 会话恢复候选列表的一行（JSON 形状，消费端见 service/tui）。
+// 数据经 ListResumeItems 同步拉取，引擎不持有弹框 UI 状态。
 type ResumeItem struct {
 	ID        string `json:"id"`
 	Title     string `json:"title"`     // 会话内首条用户输入（截断）
@@ -307,33 +308,10 @@ type ResumeItem struct {
 	Current   bool   `json:"current"`   // 是否当前会话
 }
 
-// ResumeItemsJSON 返回弹框候选快照 JSON（"[]"=弹框应关闭）。
-// 不并入 version 契约：小体量低频数据，消费端逐帧拉取即可，
-// 不参与 records 的重组节流。
-func (e *Engine) ResumeItemsJSON() string {
+// isRunning 是否有对话在跑（turn 内/重试中）。命令类接口据此拒绝并发操作。
+func (e *Engine) isRunning() bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if len(e.resumeItems) == 0 {
-		return "[]"
-	}
-	b, err := json.Marshal(e.resumeItems)
-	if err != nil {
-		return "[]"
-	}
-	return string(b)
-}
-
-// setResumeItems 整体替换弹框候选（引擎侧写入口）。
-func (e *Engine) setResumeItems(items []ResumeItem) {
-	e.mu.Lock()
-	e.resumeItems = append([]ResumeItem(nil), items...)
-	e.mu.Unlock()
-}
-
-// clearResumeItems 清空候选（选择完成或取消后调用，消费端据此收起弹框）。
-func (e *Engine) clearResumeItems() {
-	e.mu.Lock()
-	e.resumeItems = nil
-	e.mu.Unlock()
+	return e.runState.Running
 }
 

@@ -2,11 +2,9 @@ package engine
 
 // /resume 会话恢复：列出当前 cwd 会话库里的候选、切换并重放。
 //
-// 编排在引擎侧（与 /exit /new /clear 同层），但刻意非阻塞：命令只负责
-// 列候选推给前端弹框（openResumeMenu），agentLoop 随即回到等输入——串行
-// 主循环不被 UI 交互时长绑架；选择完成后由前端调 CheckoutSession 收尾，
-// running 检查兜底无头模式下的并发切换。TUI 只负责展示与提交
-//（方向键/Enter/Esc），见 service/tui。
+// 命令语义在前端（service/tui 的 dispatchSlash），后端只暴露两个能力
+// 接口：ListResumeItems 同步给候选（纯查询，不感知 UI），CheckoutSession
+// 完成切换；running 检查兜底并发切换（SessionId 读写无锁）。
 //
 // 切换本体只是改 SessionId：下一轮 turn 起框架按新 id 走 GetSession，历史
 // 事件与摘要自动进上下文（sqlite 持久化）；此处重放事件到 records 纯粹是
@@ -14,6 +12,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -23,36 +22,33 @@ import (
 	"trpc.group/trpc-go/trpc-agent-go/session"
 )
 
-// openResumeMenu /resume 命令主体：列候选推给前端弹框即返回——主循环
-// 不等前端（agentLoop 回到等输入），选择完成由前端调 CheckoutSession 收尾。
-func (e *Engine) openResumeMenu() {
+// ListResumeItems /resume 的数据接口：候选列表 JSON（"[]"=无可恢复，
+// 已附 notice 说明；读取失败已 appendTyped）。弹框显隐与选中态完全由
+// 前端自持，引擎不感知 UI。
+func (e *Engine) ListResumeItems() string {
 	items, err := e.listResumeItems()
 	if err != nil {
 		(*e).appendTyped(RecError, "读取会话列表失败："+err.Error())
-		return
+		return "[]"
 	}
 	if len(items) == 0 {
 		(*e).setNotice(NoticeWarning, "当前目录还没有历史会话")
-		return
+		return "[]"
 	}
-	(*e).setResumeItems(items) // 弹框显隐由前端按本槽位驱动
+	b, err := json.Marshal(items)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
 }
 
-// CheckoutSession 提交弹框选择（前端 enter/esc 调用；""=取消）。
+// CheckoutSession 提交弹框选择（前端 enter 选中后调用）。
 //
 // running 时拒绝切换：SessionId 的读写无锁，turn 进行中切换是 data race。
-// TUI 场景下弹框拦截输入本不会有并发，这里是给无头模式/未来输入入口的兜底；
-// 拒绝时弹框保持，用户稍后重选。
+// TUI 场景下弹框拦截输入本不会有并发，这里是给未来输入入口的兜底；
+// 拒绝/失败时弹框保持，用户可重选。Esc 关闭是纯前端状态，不经这里。
 func (e *Engine) CheckoutSession(id string) error {
-	if id == "" { // Esc：收起弹框，无副作用
-		(*e).clearResumeItems()
-		(*e).setNotice(NoticeWarning, "已取消恢复会话")
-		return nil
-	}
-	(*e).mu.Lock()
-	running := (*e).runState.Running
-	(*e).mu.Unlock()
-	if running {
+	if e.isRunning() {
 		(*e).setNotice(NoticeWarning, "对话进行中，请稍后再恢复会话")
 		return fmt.Errorf("对话进行中")
 	}
@@ -60,7 +56,6 @@ func (e *Engine) CheckoutSession(id string) error {
 		(*e).appendTyped(RecError, "恢复会话失败："+err.Error())
 		return err // 弹框保持，用户可重选
 	}
-	(*e).clearResumeItems() // 成功才收起弹框
 	(*e).setNotice(NoticeSuccess, "已恢复会话 "+shortID(id))
 	return nil
 }

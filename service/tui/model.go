@@ -61,7 +61,6 @@ type frameMsg struct {
 	notice  string // 底部通知渲染结果（含 TTL 兜底）
 	running bool   // agent 是否在运行（spinner 开关依据）
 	fatal   *wireFatal
-	resumeItems string // 会话恢复弹框候选 JSON（"[]"=弹框应关闭）
 }
 
 // pullSkipMsg 坏帧保活消息。pullCmd 的 fn 绝不能返回 nil（nil 不会触发

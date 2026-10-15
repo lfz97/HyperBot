@@ -52,7 +52,6 @@ type TUI struct {
 	running      bool
 	fatalHandled bool // 终态已处理（/exit 直接退、init 错误等任意键）
 	waitingKey   bool // 终态 waitKey=true：等任意键退出
-	lastResumeJSON string // 弹框候选 JSON 去重（引擎侧变化才更新 resumeList）
 }
 
 // NewTui 组装界面与子组件。view 是引擎侧状态源（*Engine，经 EngineView 接口注入）。

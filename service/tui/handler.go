@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"strings"
+
 	tea "charm.land/bubbletea/v2"
 )
 
@@ -52,7 +54,7 @@ func (t *TUI) keyMsgHandler(m tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if input == "ctrl+c" {
 			return t, tea.Quit
 		} else if input == "esc" {
-			t.checkoutSession("")
+			t.resume.visible = false //取消是纯前端状态，不经引擎
 			return t, nil
 		} else if input == "down" {
 			t.resume.moveDown()
@@ -73,11 +75,23 @@ func (t *TUI) keyMsgHandler(m tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return t, tea.Quit
 
 		} else if input == "enter" {
-			//获取输入文本，主动提交给引擎（submitInput 内部 select-default，
-			//非阻塞）。引擎忙（无人接收）时提交失败、保留输入框内容，用户输入
-			//不丢失。空输入引擎侧会忽略（engineRun 的 checkprompt == "" 分支），
-			//无需特判。
-			text := t.ta.Value()
+			//斜杠命令在前端分发（注册表自持，后端只暴露能力接口）；
+			//未知命令按普通输入发给引擎，保持原先的兜底行为。
+			//普通输入主动提交给引擎（submitInput 内部 select-default，非阻塞），
+			//引擎忙时提交失败、保留输入框内容，用户输入不丢失。
+			text := strings.TrimSpace(t.ta.Value())
+			if text == "" {
+				return t, nil
+			}
+			if cmd, handled := t.dispatchSlash(text); handled {
+				if cmd != nil { // /exit：释放资源后直接退出
+					return t, cmd
+				}
+				t.ta.Reset()
+				t.vp.GotoBottom()
+				t.recalcComponentSize()
+				return t, nil
+			}
 			if t.submitInput(text) {
 				t.ta.Reset()
 			}
@@ -108,3 +122,23 @@ func (t *TUI) keyMsgHandler(m tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 }
 
+
+// dispatchSlash 前端自持的斜杠命令注册表：命令语义与维护都在前端，
+// 后端只暴露能力接口——不再有经 inputCh 的字符串 magic word。
+// 返回 (tea.Cmd, handled)：/exit 返回 tea.Quit；未知命令 handled=false，
+// 由调用方按普通输入兜底提交。
+func (t *TUI) dispatchSlash(cmd string) (tea.Cmd, bool) {
+	switch cmd {
+	case "/exit":
+		t.engine.Shutdown()
+		return tea.Quit, true
+	case "/new":
+		return nil, t.engine.NewConversation()
+	case "/clear":
+		return nil, t.engine.ClearRecords()
+	case "/resume":
+		t.openResume()
+		return nil, true
+	}
+	return nil, false
+}

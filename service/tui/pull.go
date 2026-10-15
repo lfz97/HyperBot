@@ -122,8 +122,7 @@ func (t *TUI) pullOnce(w int) (frameMsg, bool) {
 		view:        st.view,
 		todo:        todoLines(t.fetchTodoText()),
 		notice:      notice,
-		running:     rs.Running,
-		fatal:       rs.Fatal,
-		resumeItems: t.fetchResumeItems(),
+		running: rs.Running,
+		fatal:   rs.Fatal,
 	}, true
 }

@@ -57,9 +57,6 @@ type Engine struct {
 	inputCh   chan string
 
 	interruptCh chan struct{}
-
-	// resumeItems 会话恢复弹框候选槽位（读写方法见 uistate.go，业务见 resume.go）。
-	resumeItems []ResumeItem
 }
 
 type Agentrunner struct {

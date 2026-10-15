@@ -1,9 +1,9 @@
 package tui
 
 // /resume 弹框：会话恢复候选列表（帮助浮层同款：居中圆角盒、上下选择、
-// enter 确认）。数据由 pull 链逐帧从引擎拉取（ResumeItemsJSON）：非空即
-// 显示、清空即收起；选择经 checkoutSession 提交，Esc 传空串。按键语义在
-// handler.go，落地在 frame.go——本文件只管渲染与选中态。
+// enter 确认）。数据在 /resume 命令分发时由 openResume 同步拉取
+//（ListResumeItems），显隐与选中态由前端自持；选择经 checkoutSession
+// 提交，esc 本地收起。按键语义在 handler.go——本文件只管渲染与选中态。
 
 import (
 	"strings"

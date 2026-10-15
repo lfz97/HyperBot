@@ -94,39 +94,55 @@ func (e *Engine) agentLoop() {
 	// 启动横幅只在此组装一次（bootstrap/newRunner 均已完成）。
 	(*e).setStartupInfo((*e).startupInfoLines())
 	for {
-		cmd := parseInput(<-(*e).inputCh)
-		(*e).errBudget.recharge() //任何用户输入都充值（斜杠/空输入也是，无害）
+		line := <-(*e).inputCh
+		(*e).errBudget.recharge() //任何用户输入都充值（空输入也是，无害）
 
-		switch cmd.Kind {
-		case cmdExit: //用户主动结束对话：释放资源，置终态并永久驻留
-			(*e).appendTyped("slash", cmd.Prompt)
-			//关闭AgentRunner，释放资源
-			(*(*e).AgentRunner_p).Runner.Close()
-			for _, toolset := range (*e).mcpToolsets {
-				toolset.Close()
-			}
-			// 置终态并永久驻留（无文案）：TUI 观察到 fatal 后直接退出，
-			// main() 随 Run() 返回——引擎不再知道终端的存在。
-			(*e).parkWithFatal(FatalExit, "", false)
-
-		case cmdNew: //用户开始新对话：重置 SessionID
-			(*e).appendTyped("slash", cmd.Prompt)
-			e.newSessionID()
-			(*e).setNotice(NoticeNewConversation, "")
-		case cmdClear: //清除历史消息：记录全部丢弃（连本条 /clear 也不留痕），通知栏提示
-			(*e).clearRecords()
-			(*e).setNotice(NoticeClear, "")
-		case cmdResume: //恢复历史会话：列出候选推给前端弹框（非阻塞），选择经 CheckoutSession 回来
-			(*e).appendTyped("slash", cmd.Prompt)
-			e.openResumeMenu()
-
-		case cmdPrompt: //普通对话输入
-			(*e).appendTyped("user", cmd.Prompt)
-			e.turn(cmd.Prompt)
-
-		case cmdEmpty: //空输入，重新等待
+		if strings.TrimSpace(line) == "" { //空输入，重新等待（前端已兜底，双保险）
+			continue
 		}
+		//斜杠命令不经过这里：语义与注册表在前端（service/tui/handler.go 的
+		// dispatchSlash），后端只暴露能力接口——字符串 magic word 已废除。
+		(*e).appendTyped("user", line)
+		e.turn(line)
 	}
+}
+
+// ── 斜杠命令的后端能力接口（前端注册表见 service/tui/handler.go）──────
+
+// Shutdown /exit 的引擎侧收尾：释放 runner 与 MCP 连接。置终态与退出由
+// 前端接管（tea.Quit 直接结束进程），引擎不再依赖“观察 fatal”的退出路径。
+func (e *Engine) Shutdown() {
+	if (*e).AgentRunner_p != nil {
+		(*(*e).AgentRunner_p).Runner.Close()
+	}
+	for _, toolset := range (*e).mcpToolsets {
+		toolset.Close()
+	}
+}
+
+// NewConversation /new：重置 SessionID 开新对话。running 时拒绝——
+// SessionId 读写无锁，turn 进行中重置是 data race；旧版命令经 inputCh
+// 排队自然避开，命令前移到前端后这里显式兜底，拒绝即最小正确实现。
+func (e *Engine) NewConversation() bool {
+	if e.isRunning() {
+		e.setNotice(NoticeWarning, "对话进行中，请稍后再开新对话")
+		return false
+	}
+	(*e).appendTyped("slash", "/new")
+	e.newSessionID()
+	(*e).setNotice(NoticeNewConversation, "")
+	return true
+}
+
+// ClearRecords /clear：丢弃全部消息记录（连命令本身也不留痕）。running 拒绝同 NewConversation。
+func (e *Engine) ClearRecords() bool {
+	if e.isRunning() {
+		e.setNotice(NoticeWarning, "对话进行中，请稍后再清屏")
+		return false
+	}
+	e.clearRecords()
+	e.setNotice(NoticeClear, "")
+	return true
 }
 
 func (e *Engine) newSessionID() {

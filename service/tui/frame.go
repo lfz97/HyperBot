@@ -4,7 +4,6 @@ package tui
 // 以及视图文本写入 viewport 的相关操作。
 
 import (
-	"encoding/json"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -34,14 +33,6 @@ func (t *TUI) applyFrame(m frameMsg) (tea.Model, tea.Cmd) {
 	// 感知口径下不值一层守卫（消融论证见提交记录）。
 	t.todoText = m.todo
 	t.bottom.SetNotice(m.notice)
-	if m.resumeItems != t.lastResumeJSON { // 弹框候选：引擎侧变化才重组
-		t.lastResumeJSON = m.resumeItems
-		var items []wireResumeItem
-		if json.Unmarshal([]byte(m.resumeItems), &items) == nil {
-			t.resume.setItems(items)
-			t.resume.visible = len(items) > 0 // 引擎清槽位即收起
-		}
-	}
 	t.applyViewText(m.view)
 	t.recalcComponentSize()
 

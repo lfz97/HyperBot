@@ -7,6 +7,7 @@ require (
 	charm.land/bubbletea/v2 v2.0.10
 	charm.land/glamour/v2 v2.0.1
 	charm.land/lipgloss/v2 v2.0.6
+	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/anthropics/anthropic-sdk-go v1.66.0
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/creack/pty v1.1.24
@@ -24,11 +25,11 @@ require (
 	trpc.group/trpc-go/trpc-agent-go/memory/sqlite v1.11.0
 	trpc.group/trpc-go/trpc-agent-go/model/anthropic v1.11.1-0.20260820131707-cdaece75b478
 	trpc.group/trpc-go/trpc-agent-go/model/tiktoken v1.11.0
+	trpc.group/trpc-go/trpc-agent-go/session/sqlite v1.11.0
 	trpc.group/trpc-go/trpc-mcp-go v0.0.18
 )
 
 require (
-	github.com/alecthomas/chroma/v2 v2.27.0 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect

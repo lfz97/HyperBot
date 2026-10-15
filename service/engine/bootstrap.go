@@ -43,6 +43,7 @@ const (
 	SkillsFolder         string = "skills"
 	HyperBotLogFile      string = "hyperbot.log"
 	memoryDBFileName     string = "memory.db"
+	sessionDBFileName    string = "session.db"
 	outputDir            string = "output"
 )
 
@@ -154,8 +155,9 @@ func Check(agentName string, sink summarySink) (*BootEnv, error) {
 	// ⑦ 系统提示词（模板占位符替换）
 	env.buildSystemPrompt(agentName)
 
-	// ⑧ 会话服务（摘要展示经 sink 注入）
-	env.SessionService = s.NewMemorySessionService(env.Config.Model, sink)
+	// ⑧ 会话服务：默认 SQLite（.hyperbot/session.db，与 memory.db 同目录），会话跨进程持久化；
+	// 创建失败按原因降级内存服务（降级不阻断启动，原因经 Notices 上屏）
+	env.SessionService = env.buildSessionService(sink)
 
 	// ⑨ sqlite 记忆服务
 	memoryService, err := m.NewSQLiteMemoryService(filepath.Join(env.ConfigFolderPath, memoryDBFileName))
@@ -176,6 +178,42 @@ func Check(agentName string, sink summarySink) (*BootEnv, error) {
 	env.SkillRepo, _ = skill.NewFSRepository(env.SkillFolderPath)
 
 	return env, nil
+}
+
+// buildSessionService 构建会话服务：默认 SQLite 持久化（<CWD>/.hyperbot/session.db）。
+// session 按工作目录归属——分布式设计：不同 CWD 启动的实例各持独立会话空间，同 CWD 的
+// 多实例共享同一 db（WAL + busy_timeout + txlock=immediate 支撑多进程并发读写）；
+// CWD 取不到时回退 ExeDir，会话落回二进制目录，保证永远有非空锚点。
+// 创建失败按原因降级，降级不致命——会话只是从"跨进程持久化"退化为"进程内存"，不阻断启动：
+//   - 失败原因是目录不存在（常态：新工作目录首启，CWD/.hyperbot 尚未建立）：创建目录后重试一次；
+//     目录创建失败或重试仍失败 → 降级内存会话服务
+//   - 其它原因失败 → 直接降级内存会话服务
+//
+// "是否路径不存在"用 os.Stat 判定而非解析驱动错误文案：mattn/go-sqlite3 的 CantOpen
+// 错误不保证能 errors.Is 链到 fs.ErrNotExist，Stat 目录是稳定的判定依据。
+func (env *BootEnv) buildSessionService(sink summarySink) session.Service {
+	dbPath := filepath.Join(env.CWD, HyperBotConfigFolder, sessionDBFileName)
+
+	svc, err := s.NewSQLiteSessionService(dbPath, env.Config.Model, sink)
+	if err == nil {
+		return svc
+	}
+
+	if _, statErr := os.Stat(filepath.Dir(dbPath)); os.IsNotExist(statErr) {
+		if mkErr := os.MkdirAll(filepath.Dir(dbPath), os.ModePerm); mkErr != nil {
+			env.Notices = append(env.Notices, bootNotice{NoticeWarning, fmt.Sprintf(
+				"sqlite session db directory create failed (%v), fallback to in-memory session service", mkErr)})
+			return s.NewMemorySessionService(env.Config.Model, sink)
+		}
+		svc, err = s.NewSQLiteSessionService(dbPath, env.Config.Model, sink)
+		if err == nil {
+			return svc
+		}
+	}
+
+	env.Notices = append(env.Notices, bootNotice{NoticeWarning, fmt.Sprintf(
+		"sqlite session service failed (%v), fallback to in-memory session service", err)})
+	return s.NewMemorySessionService(env.Config.Model, sink)
 }
 
 // builtinAssets 内置 function 工具与工具集（localexec + cron agent）。

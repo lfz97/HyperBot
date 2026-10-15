@@ -107,5 +107,6 @@ func (t *TUI) openResume() {
 }
 
 // checkoutSession 提交弹框选择（enter 选中后调用）。错误引擎侧已自行
-// 记录（appendTyped/notice），调用方无需处理；失败时弹框保持可重选。
-func (t *TUI) checkoutSession(id string) { _ = t.engine.CheckoutSession(id) }
+// 记录（appendTyped/notice），调用方无需处理；true=成功（据此关框），
+// false=失败（弹框保持可重选）。
+func (t *TUI) checkoutSession(id string) bool { return t.engine.CheckoutSession(id) == nil }

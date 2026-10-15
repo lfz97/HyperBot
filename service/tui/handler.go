@@ -63,8 +63,8 @@ func (t *TUI) keyMsgHandler(m tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			t.resume.moveUp()
 			return t, nil
 		} else if input == "enter" {
-			if id, ok := t.resume.selectedID(); ok {
-				t.checkoutSession(id)
+			if id, ok := t.resume.selectedID(); ok && t.checkoutSession(id) {
+				t.resume.visible = false //成功才关框；失败弹框保持可重选
 			}
 			return t, nil
 		}

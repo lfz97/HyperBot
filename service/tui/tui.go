@@ -40,6 +40,7 @@ type TUI struct {
 
 	skills *skills
 	bottom *bottom
+	resume *resumeList // /resume 弹框（会话恢复选择）
 
 	// pull 是拉取循环的私有状态（见 pull.go 的 pullState 注释）。
 	pull *pullState
@@ -51,6 +52,7 @@ type TUI struct {
 	running      bool
 	fatalHandled bool // 终态已处理（/exit 直接退、init 错误等任意键）
 	waitingKey   bool // 终态 waitKey=true：等任意键退出
+	lastResumeJSON string // 弹框候选 JSON 去重（引擎侧变化才更新 resumeList）
 }
 
 // NewTui 组装界面与子组件。view 是引擎侧状态源（*Engine，经 EngineView 接口注入）。
@@ -65,6 +67,7 @@ func NewTui(view EngineView) *TUI {
 				60*time.Millisecond),
 		},
 		engine: view,
+		resume: newResumeList(),
 		pull:   newPullState(),
 	}
 }
@@ -117,6 +120,9 @@ func (t *TUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case pullSkipMsg: // 坏帧保活（见 pullCmd 注释）：什么都不应用，只续链
 		return t, t.pullCmd()
+
+	case resumeSentMsg: // 弹框选择已送达；引擎清槽位后下一帧自动收起
+		return t, nil
 	}
 	return t, nil
 }

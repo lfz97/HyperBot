@@ -296,3 +296,55 @@ func (e *Engine) Interrupt() bool {
 
 // InterruptChan 返回中断信号通道（桥接 goroutine 读取）。
 func (e *Engine) InterruptChan() <-chan struct{} { return e.interruptCh }
+
+// ── 会话恢复弹框 ──────────────────────────────────────────
+
+// ResumeItem 会话恢复候选列表的一行（JSON 形状，消费端见 service/tui）。
+type ResumeItem struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`     // 会话内首条用户输入（截断）
+	UpdatedAt string `json:"updatedAt"` // 已格式化 "01-02 15:04"
+	Current   bool   `json:"current"`   // 是否当前会话
+}
+
+// ResumeItemsJSON 返回弹框候选快照 JSON（"[]"=弹框应关闭）。
+// 不并入 version 契约：小体量低频数据，消费端逐帧拉取即可，
+// 不参与 records 的重组节流。
+func (e *Engine) ResumeItemsJSON() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if len(e.resumeItems) == 0 {
+		return "[]"
+	}
+	b, err := json.Marshal(e.resumeItems)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+// setResumeItems 整体替换弹框候选（引擎侧写入口）。
+func (e *Engine) setResumeItems(items []ResumeItem) {
+	e.mu.Lock()
+	e.resumeItems = append([]ResumeItem(nil), items...)
+	e.mu.Unlock()
+}
+
+// clearResumeItems 清空候选（选择完成或取消后调用，消费端据此收起弹框）。
+func (e *Engine) clearResumeItems() {
+	e.mu.Lock()
+	e.resumeItems = nil
+	e.mu.Unlock()
+}
+
+// ResumeSelect 回传弹框选择（前端 Enter 提交 id；Esc 提交空串）。
+// 引擎不在等待期（竞态兜底）返回 false，消费端可安全忽略。
+// 无缓冲通道：发送成功即被引擎接收，信号不跨回合残留。
+func (e *Engine) ResumeSelect(id string) bool {
+	select {
+	case e.resumeCh <- id:
+		return true
+	default:
+		return false
+	}
+}

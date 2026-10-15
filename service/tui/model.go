@@ -61,9 +61,22 @@ type frameMsg struct {
 	notice  string // 底部通知渲染结果（含 TTL 兜底）
 	running bool   // agent 是否在运行（spinner 开关依据）
 	fatal   *wireFatal
+	resumeItems string // 会话恢复弹框候选 JSON（"[]"=弹框应关闭）
 }
 
 // pullSkipMsg 坏帧保活消息。pullCmd 的 fn 绝不能返回 nil（nil 不会触发
 // Update 的续链分支，链会静默断掉）——RunStateJSON 解析失败时返回它，
 // Update 收到后什么都不应用、只返回下一个 pullCmd 续链。
 type pullSkipMsg struct{}
+
+// wireResumeItem 会话恢复弹框条目（与引擎侧 uistate.go 的 ResumeItem 对齐）。
+type wireResumeItem struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	UpdatedAt string `json:"updatedAt"`
+	Current   bool   `json:"current"`
+}
+
+// resumeSentMsg 弹框选择已送达引擎（发送动作的回执，内容无需携带：
+// 引擎收到后清空槽位，下一帧拉取自然收起弹框）。
+type resumeSentMsg struct{}

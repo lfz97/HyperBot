@@ -46,6 +46,27 @@ func (t *TUI) keyMsgHandler(m tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return t, nil
 		}
 
+	} else if t.resume.isVisible() {
+		// /resume 弹框：方向键选择、enter 确认、esc 取消；其余键一律吞掉，
+		// 不让按键漏进 textarea（弹框期间输入被引擎串行化，不存在并发 turn）。
+		if input == "ctrl+c" {
+			return t, tea.Quit
+		} else if input == "esc" {
+			return t, t.resumeChoice("")
+		} else if input == "down" {
+			t.resume.moveDown()
+			return t, nil
+		} else if input == "up" {
+			t.resume.moveUp()
+			return t, nil
+		} else if input == "enter" {
+			if id, ok := t.resume.selectedID(); ok {
+				return t, t.resumeChoice(id)
+			}
+			return t, nil
+		}
+		return t, nil
+
 	} else {
 		if input == "ctrl+c" {
 			return t, tea.Quit
@@ -84,4 +105,13 @@ func (t *TUI) keyMsgHandler(m tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+}
+
+// resumeChoice 异步回传弹框选择（tea.Cmd 在 cmd goroutine 上执行，不阻塞
+// 事件循环）；"" = Esc 取消。送达与否由引擎侧竞态兜底（false 可忽略）。
+func (t *TUI) resumeChoice(id string) tea.Cmd {
+	return func() tea.Msg {
+		t.resumeSelect(id)
+		return resumeSentMsg{}
+	}
 }

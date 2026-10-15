@@ -21,6 +21,7 @@ const (
 	cmdNew                        //开始新对话
 	cmdEmpty                      //空输入
 	cmdClear                      //清除历史消息
+	cmdResume                     //恢复历史会话（前端弹框选择）
 )
 
 type inputCmd struct {
@@ -40,6 +41,8 @@ func parseInput(raw string) inputCmd {
 		return inputCmd{Kind: cmdNew, Prompt: check}
 	case "/clear":
 		return inputCmd{Kind: cmdClear, Prompt: check}
+	case "/resume":
+		return inputCmd{Kind: cmdResume, Prompt: check}
 	case "":
 		return inputCmd{Kind: cmdEmpty}
 	}

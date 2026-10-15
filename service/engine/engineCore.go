@@ -16,6 +16,7 @@ func GetEngineService(name string) *Engine {
 		Agentname:   name,
 		inputCh:     make(chan string),
 		interruptCh: make(chan struct{}),
+		resumeCh:    make(chan string),
 		notice:      notice{Kind: NoticeNone},
 		errBudget:   newErrorBudget(defaultErrorMaxTimes, defaultErrorSleepGap),
 	}
@@ -116,6 +117,10 @@ func (e *Engine) agentLoop() {
 		case cmdClear: //清除历史消息：记录全部丢弃（连本条 /clear 也不留痕），通知栏提示
 			(*e).clearRecords()
 			(*e).setNotice(NoticeClear, "")
+		case cmdResume: //恢复历史会话：列出候选→前端弹框选择→切换并重放记录
+			(*e).appendTyped("slash", cmd.Prompt)
+			e.handleResume()
+
 		case cmdPrompt: //普通对话输入
 			(*e).appendTyped("user", cmd.Prompt)
 			e.turn(cmd.Prompt)

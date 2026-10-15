@@ -102,7 +102,7 @@ func (e *Engine) agentLoop() {
 		}
 		//斜杠命令不经过这里：语义与注册表在前端（service/tui/handler.go 的
 		// dispatchSlash），后端只暴露能力接口——字符串 magic word 已废除。
-		(*e).appendTyped("user", line)
+		(*e).appendTyped(RecUser, line)
 		e.turn(line)
 	}
 }
@@ -128,7 +128,7 @@ func (e *Engine) NewConversation() bool {
 		e.setNotice(NoticeWarning, "对话进行中，请稍后再开新对话")
 		return false
 	}
-	(*e).appendTyped("slash", "/new")
+	(*e).appendTyped(RecSlash, "/new")
 	e.newSessionID()
 	(*e).setNotice(NoticeNewConversation, "")
 	return true

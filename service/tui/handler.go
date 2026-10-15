@@ -83,14 +83,14 @@ func (t *TUI) keyMsgHandler(m tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if text == "" {
 				return t, nil
 			}
-			if cmd, handled := t.dispatchSlash(text); handled {
-				if cmd != nil { // /exit：释放资源后直接退出
-					return t, cmd
-				}
+
+			//处理斜杠指令
+			cmd, handled := t.dispatchSlash(text)
+			if handled {
 				t.ta.Reset()
 				t.vp.GotoBottom()
 				t.recalcComponentSize()
-				return t, nil
+				return t, cmd
 			}
 			if t.submitInput(text) {
 				t.ta.Reset()
@@ -122,7 +122,6 @@ func (t *TUI) keyMsgHandler(m tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 }
 
-
 // dispatchSlash 前端自持的斜杠命令注册表：命令语义与维护都在前端，
 // 后端只暴露能力接口——不再有经 inputCh 的字符串 magic word。
 // 返回 (tea.Cmd, handled)：/exit 返回 tea.Quit；未知命令 handled=false，
@@ -133,9 +132,11 @@ func (t *TUI) dispatchSlash(cmd string) (tea.Cmd, bool) {
 		t.engine.Shutdown()
 		return tea.Quit, true
 	case "/new":
-		return nil, t.engine.NewConversation()
+		t.engine.NewConversation() //running 时引擎拒绝并自行 setNotice
+		return nil, true
 	case "/clear":
-		return nil, t.engine.ClearRecords()
+		t.engine.ClearRecords() //running 时引擎拒绝并自行 setNotice
+		return nil, true
 	case "/resume":
 		t.openResume()
 		return nil, true

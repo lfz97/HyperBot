@@ -119,9 +119,9 @@ func (t *TUI) pullOnce(w int) (frameMsg, bool) {
 	notice := t.fetchNotice(rs.Running)
 
 	return frameMsg{
-		view:    st.view,
-		todo:    todoLines(t.fetchTodoText()),
-		notice:  notice,
+		view:        st.view,
+		todo:        todoLines(t.fetchTodoText()),
+		notice:      notice,
 		running: rs.Running,
 		fatal:   rs.Fatal,
 	}, true

@@ -40,6 +40,7 @@ type TUI struct {
 
 	skills *skills
 	bottom *bottom
+	resume *resumeList // /resume 弹框（会话恢复选择）
 
 	// pull 是拉取循环的私有状态（见 pull.go 的 pullState 注释）。
 	pull *pullState
@@ -65,6 +66,7 @@ func NewTui(view EngineView) *TUI {
 				60*time.Millisecond),
 		},
 		engine: view,
+		resume: newResumeList(),
 		pull:   newPullState(),
 	}
 }
@@ -117,6 +119,7 @@ func (t *TUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case pullSkipMsg: // 坏帧保活（见 pullCmd 注释）：什么都不应用，只续链
 		return t, t.pullCmd()
+
 	}
 	return t, nil
 }

@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"strings"
+
 	tea "charm.land/bubbletea/v2"
 )
 
@@ -46,16 +48,50 @@ func (t *TUI) keyMsgHandler(m tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return t, nil
 		}
 
+	} else if t.resume.isVisible() {
+		// /resume 弹框：方向键选择、enter 确认、esc 取消；其余键一律吞掉，
+		// 不让按键漏进 textarea（弹框期间输入被引擎串行化，不存在并发 turn）。
+		if input == "ctrl+c" {
+			return t, tea.Quit
+		} else if input == "esc" {
+			t.resume.visible = false //取消是纯前端状态，不经引擎
+			return t, nil
+		} else if input == "down" {
+			t.resume.moveDown()
+			return t, nil
+		} else if input == "up" {
+			t.resume.moveUp()
+			return t, nil
+		} else if input == "enter" {
+			if id, ok := t.resume.selectedID(); ok {
+				t.checkoutSession(id)
+			}
+			return t, nil
+		}
+		return t, nil
+
 	} else {
 		if input == "ctrl+c" {
 			return t, tea.Quit
 
 		} else if input == "enter" {
-			//获取输入文本，主动提交给引擎（submitInput 内部 select-default，
-			//非阻塞）。引擎忙（无人接收）时提交失败、保留输入框内容，用户输入
-			//不丢失。空输入引擎侧会忽略（engineRun 的 checkprompt == "" 分支），
-			//无需特判。
-			text := t.ta.Value()
+			//斜杠命令在前端分发（注册表自持，后端只暴露能力接口）；
+			//未知命令按普通输入发给引擎，保持原先的兜底行为。
+			//普通输入主动提交给引擎（submitInput 内部 select-default，非阻塞），
+			//引擎忙时提交失败、保留输入框内容，用户输入不丢失。
+			text := strings.TrimSpace(t.ta.Value())
+			if text == "" {
+				return t, nil
+			}
+
+			//处理斜杠指令
+			cmd, handled := t.dispatchSlash(text)
+			if handled {
+				t.ta.Reset()
+				t.vp.GotoBottom()
+				t.recalcComponentSize()
+				return t, cmd
+			}
 			if t.submitInput(text) {
 				t.ta.Reset()
 			}
@@ -84,4 +120,26 @@ func (t *TUI) keyMsgHandler(m tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+}
+
+// dispatchSlash 前端自持的斜杠命令注册表：命令语义与维护都在前端，
+// 后端只暴露能力接口——不再有经 inputCh 的字符串 magic word。
+// 返回 (tea.Cmd, handled)：/exit 返回 tea.Quit；未知命令 handled=false，
+// 由调用方按普通输入兜底提交。
+func (t *TUI) dispatchSlash(cmd string) (tea.Cmd, bool) {
+	switch cmd {
+	case "/exit":
+		t.engine.Shutdown()
+		return tea.Quit, true
+	case "/new":
+		t.engine.NewConversation() //running 时引擎拒绝并自行 setNotice
+		return nil, true
+	case "/clear":
+		t.engine.ClearRecords() //running 时引擎拒绝并自行 setNotice
+		return nil, true
+	case "/resume":
+		t.openResume()
+		return nil, true
+	}
+	return nil, false
 }

@@ -47,6 +47,11 @@ func (f *fakeView) StartupInfo() ([]string, bool)   { return nil, false }
 func (f *fakeView) SkillItemsJSON() string          { return "[]" }
 func (f *fakeView) SubmitInput(line string) bool    { return true }
 func (f *fakeView) Interrupt() bool                 { return true }
+func (f *fakeView) Shutdown()                       {}
+func (f *fakeView) NewConversation() bool           { return true }
+func (f *fakeView) ClearRecords() bool              { return true }
+func (f *fakeView) ListResumeItems() string         { return "[]" }
+func (f *fakeView) CheckoutSession(id string) error { return nil }
 
 // buildSession 构造真实规模的会话：20 轮对话 ×
 // （用户输入 + 思考 + 正文含表格 + 3 个工具调用 + 工具结果含 diff/代码/长输出）。

@@ -67,3 +67,12 @@ type frameMsg struct {
 // Update 的续链分支，链会静默断掉）——RunStateJSON 解析失败时返回它，
 // Update 收到后什么都不应用、只返回下一个 pullCmd 续链。
 type pullSkipMsg struct{}
+
+// wireResumeItem 会话恢复弹框条目（与引擎侧 uistate.go 的 ResumeItem 对齐）。
+type wireResumeItem struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	UpdatedAt string `json:"updatedAt"`
+	Current   bool   `json:"current"`
+}
+

@@ -48,7 +48,7 @@ func (f *fakeView) SkillItemsJSON() string          { return "[]" }
 func (f *fakeView) SubmitInput(line string) bool    { return true }
 func (f *fakeView) Interrupt() bool                 { return true }
 func (f *fakeView) ResumeItemsJSON() string         { return "[]" }
-func (f *fakeView) ResumeSelect(id string) bool     { return true }
+func (f *fakeView) CheckoutSession(id string) error { return nil }
 
 // buildSession 构造真实规模的会话：20 轮对话 ×
 // （用户输入 + 思考 + 正文含表格 + 3 个工具调用 + 工具结果含 diff/代码/长输出）。

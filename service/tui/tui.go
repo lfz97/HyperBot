@@ -121,8 +121,6 @@ func (t *TUI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case pullSkipMsg: // 坏帧保活（见 pullCmd 注释）：什么都不应用，只续链
 		return t, t.pullCmd()
 
-	case resumeSentMsg: // 弹框选择已送达；引擎清槽位后下一帧自动收起
-		return t, nil
 	}
 	return t, nil
 }

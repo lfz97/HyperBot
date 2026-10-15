@@ -26,8 +26,8 @@ type EngineView interface {
 	SkillItemsJSON() string
 	SubmitInput(line string) bool
 	Interrupt() bool
-	ResumeItemsJSON() string // 会话恢复弹框候选（"[]"=弹框应关闭）
-	ResumeSelect(id string) bool // 回传弹框选择（Esc 传空串）
+	ResumeItemsJSON() string      // 会话恢复弹框候选（"[]"=弹框应关闭）
+	CheckoutSession(id string) error // 提交弹框选择（Esc 传空串；失败弹框保持）
 }
 
 // noticeTTL 临时通知的停留时长，到期回落兜底提示。TTL 从引擎写入槽位的
@@ -92,5 +92,6 @@ func (t *TUI) interrupt() bool { return t.engine.Interrupt() }
 // 小体量低频数据，逐帧拉取即可，不参与 records 的 version 契约。
 func (t *TUI) fetchResumeItems() string { return t.engine.ResumeItemsJSON() }
 
-// resumeSelect 回传弹框选择；引擎不在等待期（竞态）返回 false，可安全忽略。
-func (t *TUI) resumeSelect(id string) bool { return t.engine.ResumeSelect(id) }
+// checkoutSession 提交弹框选择（enter/esc）。错误引擎侧已自行记录
+//（appendTyped/notice），调用方无需处理；弹框显隐由引擎槽位驱动。
+func (t *TUI) checkoutSession(id string) { _ = t.engine.CheckoutSession(id) }

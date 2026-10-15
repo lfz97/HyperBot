@@ -58,10 +58,6 @@ type Engine struct {
 
 	interruptCh chan struct{}
 
-	// resumeCh 会话恢复弹框的回传通道（无缓冲握手：""=Esc 取消；引擎不在
-	// 等待期时发送立即失败，信号不跨回合残留）。
-	resumeCh chan string
-
 	// resumeItems 会话恢复弹框候选槽位（读写方法见 uistate.go，业务见 resume.go）。
 	resumeItems []ResumeItem
 }

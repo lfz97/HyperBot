@@ -337,14 +337,3 @@ func (e *Engine) clearResumeItems() {
 	e.mu.Unlock()
 }
 
-// ResumeSelect 回传弹框选择（前端 Enter 提交 id；Esc 提交空串）。
-// 引擎不在等待期（竞态兜底）返回 false，消费端可安全忽略。
-// 无缓冲通道：发送成功即被引擎接收，信号不跨回合残留。
-func (e *Engine) ResumeSelect(id string) bool {
-	select {
-	case e.resumeCh <- id:
-		return true
-	default:
-		return false
-	}
-}

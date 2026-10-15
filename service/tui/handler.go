@@ -52,7 +52,8 @@ func (t *TUI) keyMsgHandler(m tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if input == "ctrl+c" {
 			return t, tea.Quit
 		} else if input == "esc" {
-			return t, t.resumeChoice("")
+			t.checkoutSession("")
+			return t, nil
 		} else if input == "down" {
 			t.resume.moveDown()
 			return t, nil
@@ -61,7 +62,7 @@ func (t *TUI) keyMsgHandler(m tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return t, nil
 		} else if input == "enter" {
 			if id, ok := t.resume.selectedID(); ok {
-				return t, t.resumeChoice(id)
+				t.checkoutSession(id)
 			}
 			return t, nil
 		}
@@ -107,11 +108,3 @@ func (t *TUI) keyMsgHandler(m tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 }
 
-// resumeChoice 异步回传弹框选择（tea.Cmd 在 cmd goroutine 上执行，不阻塞
-// 事件循环）；"" = Esc 取消。送达与否由引擎侧竞态兜底（false 可忽略）。
-func (t *TUI) resumeChoice(id string) tea.Cmd {
-	return func() tea.Msg {
-		t.resumeSelect(id)
-		return resumeSentMsg{}
-	}
-}

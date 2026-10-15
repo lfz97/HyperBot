@@ -77,6 +77,3 @@ type wireResumeItem struct {
 	Current   bool   `json:"current"`
 }
 
-// resumeSentMsg 弹框选择已送达引擎（发送动作的回执，内容无需携带：
-// 引擎收到后清空槽位，下一帧拉取自然收起弹框）。
-type resumeSentMsg struct{}

@@ -31,8 +31,10 @@ On first run, `.hyperbot/hyperbot.yaml` is generated automatically. Fill in your
 |--------|-------------|
 | Enter | Send message (Shift+Enter for newline) |
 | ESC | Interrupt current response |
-| `/` | Command list (keep typing to filter, Enter to complete) |
+| `/` | Command list (keep typing to filter; Enter completes the selection, press Enter again to run it) |
 | `/new` | Start a new conversation |
+| `/clear` | Clear the screen (on-screen records only, conversation context is kept) |
+| `/resume` | Resume a previous session (pick from a popup) |
 | `/exit` | Quit |
 
 ## Deployment

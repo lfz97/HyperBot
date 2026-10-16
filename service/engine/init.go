@@ -114,7 +114,7 @@ func (e *Engine) newRunner() {
 			// 先挡住，给出可读的配置错误。
 			apiType := (*(*e).Config_p).Model.APIType
 			if apiType != "openai" && apiType != "anthropic" {
-				return nil, errors.New("不支持的API类型，请检查配置文件中的 Model.APIType 字段")
+				return nil, errors.New("unsupported API type, check the Model.APIType field in your config")
 			}
 			Agent_p = agent.ConfigBaseAgent(
 				(*e).Agentname,
@@ -143,7 +143,7 @@ func (e *Engine) loadConfig() {
 	//加载配置文件
 	c, err := config.LoadConfig((*e).HyperBotConfigPath)
 	if err != nil {
-		(*e).parkWithFatal(FatalError, fmt.Sprintf("加载配置文件错误: %v,按任意键退出", err), true)
+		(*e).parkWithFatal(FatalError, fmt.Sprintf("Failed to load config: %v (press any key to exit)", err), true)
 	}
 	(*e).Config_p = c
 }

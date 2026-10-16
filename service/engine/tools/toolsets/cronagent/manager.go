@@ -258,14 +258,14 @@ func (m *manager) validate(recs []persistedSchedule) error {
 	seen := make(map[string]struct{}, len(recs))
 	for _, r := range recs {
 		if _, err := cronParser.Parse(r.Cronexpr); err != nil {
-			return fmt.Errorf("cron agent %s 的表达式 %q 非法: %w", r.Id, r.Cronexpr, err)
+			return fmt.Errorf("cron agent %s has an invalid expression %q: %w", r.Id, r.Cronexpr, err)
 		}
 		if _, dup := seen[r.Id]; dup {
-			return fmt.Errorf("cron agent id %s 重复", r.Id)
+			return fmt.Errorf("duplicate cron agent id %s", r.Id)
 		}
 		seen[r.Id] = struct{}{}
 		if m.get(r.Id) != nil {
-			return fmt.Errorf("cron agent id %s 与已在运行的任务冲突", r.Id)
+			return fmt.Errorf("cron agent id %s conflicts with a running job", r.Id)
 		}
 	}
 	return nil
@@ -276,9 +276,9 @@ func (m *manager) validate(recs []persistedSchedule) error {
 func (m *manager) quarantine(cause error) error {
 	dst := quarantineFile(m.path)
 	if dst == "" {
-		return fmt.Errorf("加载 cron agent 存档失败，且无法挪走原文件（下次保存会覆盖它）: %w", cause)
+		return fmt.Errorf("failed to load cron agent store and could not move the original aside (the next save will overwrite it): %w", cause)
 	}
-	return fmt.Errorf("加载 cron agent 存档失败，原文件已挪至 %s: %w", dst, cause)
+	return fmt.Errorf("failed to load cron agent store; original moved to %s: %w", dst, cause)
 }
 
 func NewManager(agentname string, cfg *config.Config, systemprompt string, SkillFolderPath string, configFolderPath string) (*manager, error) {
@@ -337,7 +337,7 @@ func NewManager(agentname string, cfg *config.Config, systemprompt string, Skill
 			// 先挡住，给出可读的配置错误。
 			apiType := (*cfg).Model.APIType
 			if apiType != "openai" && apiType != "anthropic" {
-				return nil, errors.New("不支持的API类型，请检查配置文件中的 Model.APIType 字段")
+				return nil, errors.New("unsupported API type, check the Model.APIType field in your config")
 			}
 			Agent_p = agent.ConfigBaseAgent(
 				agentname,

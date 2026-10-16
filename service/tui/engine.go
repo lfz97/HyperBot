@@ -76,12 +76,12 @@ func (t *TUI) fetchNotice(running bool) string {
 	return composeHint(running)
 }
 
-// fetchHelpItems 拉取并解析技能帮助项（默认项 /new /exit 由 helps 自持，
-// 引擎只提供技能项）。
-func (t *TUI) fetchSkillItems() []wireSkillItem {
-	var ws []wireSkillItem
-	_ = json.Unmarshal([]byte(t.engine.SkillItemsJSON()), &ws)
-	return ws
+// fetchSkillItems 拉取并解析引擎技能目录（skill repo 的摘要）。
+// 只负责跨界拉取；与前端内置命令的合并在 slash.go 的 fetchSlashItems。
+func (t *TUI) fetchSkillItems() []slashItem {
+	var items []slashItem
+	_ = json.Unmarshal([]byte(t.engine.SkillItemsJSON()), &items)
+	return items
 }
 
 // submitInput 提交一行用户输入。引擎忙（无人接收）时返回 false，

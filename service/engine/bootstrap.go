@@ -87,7 +87,7 @@ func Check(agentName string, sink summarySink) (*BootEnv, error) {
 	// ① 可执行文件所在目录：一切资产的锚点
 	exePath, err := os.Executable()
 	if err != nil {
-		return nil, fmt.Errorf("获取可执行文件目录错误: %w", err)
+		return nil, fmt.Errorf("failed to get executable directory: %w", err)
 	}
 	env.ExeDir = filepath.Dir(exePath)
 
@@ -102,10 +102,10 @@ func Check(agentName string, sink summarySink) (*BootEnv, error) {
 	env.ConfigFolderPath = filepath.Join(env.ExeDir, HyperBotConfigFolder)
 	if _, err := os.Stat(env.ConfigFolderPath); err != nil {
 		if !os.IsNotExist(err) {
-			return nil, fmt.Errorf("检查config文件夹错误: %w", err)
+			return nil, fmt.Errorf("failed to check config directory: %w", err)
 		}
 		if err := os.MkdirAll(env.ConfigFolderPath, os.ModePerm); err != nil {
-			return nil, fmt.Errorf("创建默认config文件夹错误: %w", err)
+			return nil, fmt.Errorf("failed to create default config directory: %w", err)
 		}
 		env.Notices = append(env.Notices, bootNotice{NoticeSuccess, "config folder not found, created default"})
 	}
@@ -118,16 +118,16 @@ func Check(agentName string, sink summarySink) (*BootEnv, error) {
 	env.HyperBotConfigPath = filepath.Join(env.ConfigFolderPath, HyperBotConfig)
 	if _, err := os.Stat(env.HyperBotConfigPath); err != nil {
 		if !os.IsNotExist(err) {
-			return nil, fmt.Errorf("检查配置文件错误: %w", err)
+			return nil, fmt.Errorf("failed to check config file: %w", err)
 		}
 		fd, err := os.OpenFile(env.HyperBotConfigPath, os.O_RDWR|os.O_CREATE, 0644)
 		if err != nil {
-			return nil, fmt.Errorf("创建默认配置文件错误: %w", err)
+			return nil, fmt.Errorf("failed to create default config file: %w", err)
 		}
 		defer fd.Close()
 		cfg := strings.ReplaceAll(config.Template, "{USERID}", uuid.New().String())
 		if _, err := fd.WriteString(cfg); err != nil {
-			return nil, fmt.Errorf("写入默认配置文件错误: %w", err)
+			return nil, fmt.Errorf("failed to write default config file: %w", err)
 		}
 		env.NeedRestart = true
 		return env, nil
@@ -137,10 +137,10 @@ func Check(agentName string, sink summarySink) (*BootEnv, error) {
 	env.SkillFolderPath = filepath.Join(env.ConfigFolderPath, SkillsFolder)
 	if _, err := os.Stat(env.SkillFolderPath); err != nil {
 		if !os.IsNotExist(err) {
-			return nil, fmt.Errorf("检查skills文件夹错误: %w", err)
+			return nil, fmt.Errorf("failed to check skills directory: %w", err)
 		}
 		if err := os.MkdirAll(env.SkillFolderPath, os.ModePerm); err != nil {
-			return nil, fmt.Errorf("创建默认skills文件夹错误: %w", err)
+			return nil, fmt.Errorf("failed to create default skills directory: %w", err)
 		}
 		env.Notices = append(env.Notices, bootNotice{NoticeSuccess, "skills folder not found, created default"})
 	}
@@ -148,7 +148,7 @@ func Check(agentName string, sink summarySink) (*BootEnv, error) {
 	// ⑥ 加载配置文件
 	cfg, err := config.LoadConfig(env.HyperBotConfigPath)
 	if err != nil {
-		return nil, fmt.Errorf("加载配置文件错误: %w", err)
+		return nil, fmt.Errorf("failed to load config file: %w", err)
 	}
 	env.Config = cfg
 
@@ -162,7 +162,7 @@ func Check(agentName string, sink summarySink) (*BootEnv, error) {
 	// ⑨ sqlite 记忆服务
 	memoryService, err := m.NewSQLiteMemoryService(filepath.Join(env.ConfigFolderPath, memoryDBFileName))
 	if err != nil {
-		return nil, fmt.Errorf("初始化sqlite记忆服务错误: %w", err)
+		return nil, fmt.Errorf("failed to initialize sqlite memory service: %w", err)
 	}
 	env.MemoryService = memoryService
 
@@ -232,11 +232,11 @@ func builtinAssets(env *BootEnv, agentName string) ([]tool.Tool, []tool.ToolSet,
 		env.ConfigFolderPath,
 	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("初始化cron agent错误: %w", err)
+		return nil, nil, fmt.Errorf("failed to initialize cron agent: %w", err)
 	}
 	// 存档加载失败是非致命的：坏文件已被挪到 .fix<时间戳>，空集合可以正常启动
 	if loadErr := cronToolset.LoadError(); loadErr != nil {
-		stdlog.Printf("cron agent 存档加载失败: %v", loadErr)
+		stdlog.Printf("failed to load cron agent store: %v", loadErr)
 		env.Notices = append(env.Notices, bootNotice{NoticeWarning, "cron agent config broken, moved to .fix"})
 	}
 	sets = append(sets, cronToolset)

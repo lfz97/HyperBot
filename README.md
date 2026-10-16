@@ -31,7 +31,7 @@ go build -o HyperBot ./cmd
 |------|------|
 | Enter | 发送消息（Shift+Enter 换行） |
 | ESC | 中断当前响应 |
-| Ctrl+K | 帮助页 |
+| `/` | 命令列表（继续输入即前缀过滤，Enter 补全） |
 | `/new` | 开始新对话 |
 | `/exit` | 退出 |
 

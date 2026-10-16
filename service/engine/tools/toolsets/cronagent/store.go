@@ -34,14 +34,14 @@ func readPersisted(path string) ([]persistedSchedule, error) {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("读取 %s 失败: %w", path, err)
+		return nil, fmt.Errorf("failed to read %s: %w", path, err)
 	}
 	var f persistedFile
 	if err := json.Unmarshal(data, &f); err != nil {
-		return nil, fmt.Errorf("解析 %s 失败: %w", path, err)
+		return nil, fmt.Errorf("failed to parse %s: %w", path, err)
 	}
 	if f.Version != persistVersion {
-		return nil, fmt.Errorf("%s 格式版本为 %d，当前只支持 %d", path, f.Version, persistVersion)
+		return nil, fmt.Errorf("%s format version is %d, only %d is supported", path, f.Version, persistVersion)
 	}
 	return f.Schedules, nil
 }
@@ -52,15 +52,15 @@ func writePersisted(path string, sches []persistedSchedule) error {
 	f := persistedFile{Version: persistVersion, Schedules: sches}
 	data, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
-		return fmt.Errorf("序列化 cron agent 配置失败: %w", err)
+		return fmt.Errorf("failed to marshal cron agent config: %w", err)
 	}
 	data = append(data, '\n')
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0644); err != nil {
-		return fmt.Errorf("写入 %s 失败: %w", tmp, err)
+		return fmt.Errorf("failed to write %s: %w", tmp, err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("替换 %s 失败: %w", path, err)
+		return fmt.Errorf("failed to replace %s: %w", path, err)
 	}
 	return nil
 }

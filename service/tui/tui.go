@@ -12,7 +12,9 @@ package tui
 //   component.go 组件构建与整屏拼版（NewPrettyXxx/recalcComponentSize/draw/浮层）
 //   render.go   渲染类（composeView 记录重放、glamour、通知/终态文本翻译）
 //   styles.go   上色（lipgloss 颜色与文本样式 helpers）
-//   helps.go / bottom.go / spinner.go / banner.go  各组件自持结构体与方法
+//   slash.go    斜杠命令注册表（slashRegistry/dispatchSlash）+ 浮层候选合并
+//   slashpopup.go / resumelist.go  两个浮层各自的渲染与选中态
+//   bottom.go / spinner.go / banner.go / toolview*.go  各组件自持结构体与方法
 
 import (
 	"time"
@@ -38,9 +40,9 @@ type TUI struct {
 	leftPadding  int
 	rightPadding int
 
-	skills *skills
-	bottom *bottom
-	resume *resumeList // /resume 弹框（会话恢复选择）
+	slashPopup *slashPopup // 斜杠命令补全浮层（显隐由输入框内容派生）
+	bottom     *bottom
+	resume     *resumeList // /resume 弹框（会话恢复选择）
 
 	// pull 是拉取循环的私有状态（见 pull.go 的 pullState 注释）。
 	pull *pullState
@@ -60,7 +62,7 @@ func NewTui(view EngineView) *TUI {
 		leftPadding:  2,
 		rightPadding: 2,
 		vp:           NewPrettyViewport(0, 1),
-		skills:       NewHelps(),
+		slashPopup:   newSlashPopup(),
 		bottom: &bottom{
 			spinner: NewSpinner(defaultDynamicSpinner, defaultStaticSpinner,
 				60*time.Millisecond),

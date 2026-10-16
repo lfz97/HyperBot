@@ -1,6 +1,6 @@
 package tui
 
-// wire JSON 形状（与引擎侧 uistate.go 的 schema 对齐）+ 事件循环消息。
+// wire JSON 形状（与引擎侧 uistate.go 的 schema 对齐）+ 前端 UI 条目 + 事件循环消息。
 // demo 的 model/model.go 同位物：跨 goroutine 传递的消息类型与 JSON 契约
 // 集中在本文件；引擎访问的封装在 engine.go，事件循环在 tui.go。
 
@@ -29,12 +29,6 @@ type wireNotice struct {
 	SetAt string `json:"setAt"` // RFC3339
 }
 
-// wireHelpItem 帮助页一行。
-type wireSkillItem struct {
-	Cmd  string `json:"cmd"`
-	Desc string `json:"desc"`
-}
-
 // wireRecord 消息日志记录：type 承载消息类型。
 //   - delta / message：msg 为框架 model.Message 原样（框架自带 json 标签，两端同型收发）
 //   - user / slash / warn / error / summary：text 为语义原文
@@ -48,6 +42,16 @@ type wireRecord struct {
 type wireToolCall struct {
 	name string
 	args string
+}
+
+// ── 前端 UI 条目 ─────────────────────────────────────────
+
+// slashItem 斜杠命令浮层的一行。双重身份：既是引擎 SkillItemsJSON 的解码形状
+//（cmd/desc 与引擎侧 uistate.go 的 SkillItem 对齐），也是前端内置命令的浮层
+// 行类型——后者不跨界，所以不带 wire 前缀。
+type slashItem struct {
+	Cmd  string `json:"cmd"`
+	Desc string `json:"desc"`
 }
 
 // ── 事件循环消息 ─────────────────────────────────────────
@@ -75,4 +79,3 @@ type wireResumeItem struct {
 	UpdatedAt string `json:"updatedAt"`
 	Current   bool   `json:"current"`
 }
-

@@ -31,7 +31,7 @@ On first run, `.hyperbot/hyperbot.yaml` is generated automatically. Fill in your
 |--------|-------------|
 | Enter | Send message (Shift+Enter for newline) |
 | ESC | Interrupt current response |
-| Ctrl+K | Help page |
+| `/` | Command list (keep typing to filter, Enter to complete) |
 | `/new` | Start a new conversation |
 | `/exit` | Quit |
 

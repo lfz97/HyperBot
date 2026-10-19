@@ -20,8 +20,8 @@ import (
 	"github.com/robfig/cron/v3"
 	ag "trpc.group/trpc-go/trpc-agent-go/agent"
 	"trpc.group/trpc-go/trpc-agent-go/agent/llmagent"
-	"trpc.group/trpc-go/trpc-agent-go/model/tiktoken"
 	"trpc.group/trpc-go/trpc-agent-go/model"
+	"trpc.group/trpc-go/trpc-agent-go/model/tiktoken"
 	"trpc.group/trpc-go/trpc-agent-go/runner"
 	"trpc.group/trpc-go/trpc-agent-go/skill"
 	"trpc.group/trpc-go/trpc-agent-go/tool"
@@ -322,6 +322,7 @@ func NewManager(agentname string, cfg *config.Config, systemprompt string, Skill
 				llmagent.WithSessionSummaryInjectionMode(llmagent.SessionSummaryInjectionUser), //摘要注入到user message，不与system prompt中的SOP规则竞争优先级
 				llmagent.WithSyncSummaryIntraRun(true),                                         //在同一次对话中同步更新摘要
 				llmagent.WithEnableContextCompaction(true),                                     // 启用 tool result 压缩（Pass 1+2）
+				llmagent.WithContextCompactionToolResultMaxTokens(8192),                        // Pass 1 预算：与主 agent 一致（默认1024过激，见 init.go 注释）
 				llmagent.WithContextCompactionOversizedToolResultMaxTokens(8192),               // Pass 2: 超大 tool result 首尾保留截断
 				llmagent.WithEnableOnDemandSession(true),                                       // 按需加载被压缩的原始数据（session_load）
 				llmagent.WithContextCompactionTokenCounter(counter),                            //裁剪阈值判定用精确计数：默认 rune/4 对中文低估 3~4 倍，会漏裁

@@ -42,6 +42,13 @@ type summarySink interface {
 }
 
 func NewSummarizer(m config.Model, sink summarySink) summary.SessionSummarizer {
+	return NewSummarizerWithThreshold(m, sink, CheckTokenThresholdPercent)
+}
+
+// NewSummarizerWithThreshold 与 NewSummarizer 相同，但用调用方给定的
+// 阈值百分比替代包级默认 CheckTokenThresholdPercent（相对 m.ContextWindow）。
+// 供阈值评测（cmd/ctxbench）复用生产代码路径；生产路径不传自定义值。
+func NewSummarizerWithThreshold(m config.Model, sink summarySink, thresholdPercent float64) summary.SessionSummarizer {
 	initSummarizerPrompts()
 	//设置tiktoken计算方式，默认的方式太不准确了
 	counter, _ := tiktoken.New(m.Model)
@@ -54,8 +61,14 @@ func NewSummarizer(m config.Model, sink summarySink) summary.SessionSummarizer {
 		summarizerModel = models.Anthropic(m)
 	}
 	opts := []summary.Option{
-		summary.WithChecksAny( // 只按 token 阈值触发；时间阈值已删：挂机不发消息也压摘要，只会白白压掉活跃会话的上下文
-			summary.CheckTokenThreshold(int(CheckTokenThresholdPercent * float64(m.ContextWindow))), // 新增 n 个 token 后触发
+		// 触发条件：请求总占用超过 contextwindow 的 thresholdPercent（v1.11 语义，对标
+		// Codex CLI/Claude Code 的零配置压缩）。请求上下文可得时用最终请求的本地计数
+		// （llmflow.go/runner.go 注入 model-visible view），无上下文时退回 delta 估算——与
+		// 旧 CheckTokenThreshold 数值一致。fallback 不显式设置：框架会自动用 summarizer
+		// 模型（models.Openai 带的 yaml contextwindow）兜底，与显式配置同值。
+		// 注意：两机制同时挂会被 s.checks 的 AND 短路求值叠加成"两者都过才触发"，勿混用。
+		summary.WithContextThreshold(
+			summary.WithContextThresholdRatio(thresholdPercent),
 		),
 		summary.WithMaxSummaryWords(maxSummaryWords),     //设置摘要的最大长度，单位为词
 		summary.WithSystemPrompt(systemSummarizerPrompt), //设置系统提示词，指导模型如何进行摘要，默认为空，可以根据需要自定义

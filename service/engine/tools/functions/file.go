@@ -191,7 +191,7 @@ type matchInfo struct {
 	MatchContent string `json:"MatchContent"`
 }
 
-// searchInFileRequest 是 SearchInFile 的请求；正则约束（RE2 语法等）见工具的 WithDescription。
+// searchInFileRequest 是 Grep 工具的请求；正则约束（RE2 语法等）见工具的 WithDescription。
 type searchInFileRequest struct {
 	Path  string `json:"Path" jsonschema:"description=Path of the file to search in."`
 	Regex string `json:"Regex" jsonschema:"description=The regular expression to search for."`
@@ -327,12 +327,12 @@ func Diff(ctx context.Context, req struct {
 	}, nil
 }
 
-// 获取文件操作工具集合（WriteFile/ReadFile/EditFile/SearchInFile/DeleteFile/FileStat/Diff）。
+// 获取文件操作工具集合（WriteFile/ReadFile/EditFile/Grep/DeleteFile/FileStat/Diff）。
 const (
 	writeFileToolName    string = "WriteFile"
 	readFileToolName     string = "ReadFile"
 	editFileToolName     string = "EditFile"
-	searchInFileToolName string = "SearchInFile"
+	grepToolName string = "Grep"
 	deleteFileToolName   string = "DeleteFile"
 	fileStatToolName     string = "FileStat"
 	diffToolName         string = "Diff"
@@ -356,7 +356,7 @@ func GetFileOperationsTools() []tool.Tool {
 	)
 	sftool := function.NewFunctionTool(
 		SearchInFile,
-		function.WithName(searchInFileToolName),
+		function.WithName(grepToolName),
 		function.WithDescription("Search the specified file with a regular expression and return the line numbers and content of all matches. Uses Go RE2 syntax: lookahead, lookbehind and backreference are not supported. `.` does not match newlines by default; use `(?s)` to match across lines. `^` and `$` match the start and end of the whole text by default; use `(?m)` to match line starts and ends. The result is capped at the inline budget: when truncated, `Truncated` is true and `TotalMatches` reports the total count."),
 	)
 	dftool := function.NewFunctionTool(

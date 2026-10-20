@@ -11,7 +11,7 @@ func InjectMapper(m Mappers) {
 	m.AddMapping(editFileToolName, []string{"Path"}, []string{"Diff"})
 	// search_in_file 的结果是数字键（"0"~"N" 的逐条匹配），无法逐字段登记，
 	// Out 传 nil 走兜底：数字键自然排序、每条匹配一行
-	m.AddMapping(searchInFileToolName, []string{"Path", "Regex"}, nil)
+	m.AddMapping(grepToolName, []string{"Path", "Regex"}, nil)
 	m.AddMapping(deleteFileToolName, []string{"Path"}, []string{"Deleted"})
 	m.AddMapping(fileStatToolName, []string{"Path"}, []string{"Name", "Size", "IsDir", "Mode", "ModeTime"})
 	m.AddMapping(diffToolName, []string{"PathA", "PathB"}, []string{"Diff"})

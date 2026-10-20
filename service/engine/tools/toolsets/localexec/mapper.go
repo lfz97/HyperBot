@@ -1,14 +1,13 @@
 package localexec
 
-// 框架以工具集名为前缀给工具名加前缀（LocalExec_<tool>）。
-const localExecToolSetName = "LocalExec"
-
+// 工具名统一 Command* 家族前缀，语义自解释；工具集名为空时框架不再加
+// LocalExec_ 前缀，这里登记的名字就是模型看到的名字（cronagent/MCP 仍带前缀）。
 const (
-	runToolName       = "run"
-	statusToolName    = "status"
-	outputToolName    = "output"
-	interveneToolName = "intervene"
-	killToolName      = "kill"
+	runToolName       = "CommandRun"
+	statusToolName    = "CommandStatus"
+	outputToolName    = "CommandOutput"
+	interveneToolName = "CommandIntervene"
+	killToolName      = "CommandKill"
 )
 
 // Mappers 由 tools 包实现（*tools.Mappers 满足本接口）；localexec 自定义同形接口，避免跨包依赖。
@@ -16,16 +15,15 @@ type Mappers interface {
 	AddMapping(Name string, In []string, Out []string)
 }
 
-// InjectMapper 注册 localexec 各工具的参数/结果提取字段。工具名为框架加前缀后的实际名。
+// InjectMapper 注册 localexec 各工具的参数/结果提取字段。
 func InjectMapper(m Mappers) {
-	prefix := localExecToolSetName + "_"
 	// run：标量字段在前、Output 块殿后（渲染层块独立于标量行，旧的
 	// "Id 放前防截断"考量已不适用）
-	m.AddMapping(prefix+runToolName, []string{"Process", "Args"}, []string{"Status", "ExitCode", "Id", "Output"})
-	m.AddMapping(prefix+statusToolName, []string{"Id"}, []string{"Status", "ExitCode", "Id", "Pid", "StatusAll"})
+	m.AddMapping(runToolName, []string{"Process", "Args"}, []string{"Status", "ExitCode", "Id", "Output"})
+	m.AddMapping(statusToolName, []string{"Id"}, []string{"Status", "ExitCode", "Id", "Pid", "StatusAll"})
 	// output：工具的本体就是取输出，Out 必须含 Output；落盘超阈值时
 	// Note/OutputFile 告知 agent 完整内容的位置
-	m.AddMapping(prefix+outputToolName, []string{"Id", "Stream"}, []string{"Id", "Output", "Note", "OutputFile"})
-	m.AddMapping(prefix+interveneToolName, []string{"Id", "Signal"}, []string{"Msg"})
-	m.AddMapping(prefix+killToolName, []string{"Id"}, []string{"Status"})
+	m.AddMapping(outputToolName, []string{"Id", "Stream"}, []string{"Id", "Output", "Note", "OutputFile"})
+	m.AddMapping(interveneToolName, []string{"Id", "Signal"}, []string{"Msg"})
+	m.AddMapping(killToolName, []string{"Id"}, []string{"Status"})
 }

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"HyperBot/service/engine/tools/modeltext"
 	"trpc.group/trpc-go/trpc-agent-go/tool"
 	"trpc.group/trpc-go/trpc-agent-go/tool/function"
 )
@@ -21,16 +22,37 @@ import (
 // agent 连文件路径都拿不到，MCP 层还会把这次调用标记为失败。
 func deliver(res map[string]string, data []byte, id string) error {
 	total := len(data)
+	// 二进制快速通道：这类输出内联给模型只会变成 \ufffd/\u00XX 转义墙
+	// （2026-10-20 事故：25,840 字节膨胀到 128,007 字符），落盘 raw 副本 +
+	// 诊断才是正道。低于 binaryMinBytes 的零星二进制净化后内联无害，不走此路。
+	if total > binaryMinBytes && modeltext.IsBinaryLike(data) {
+		path, err := spill(id, data)
+		if err != nil {
+			return err
+		}
+		res["Output"] = fmt.Sprintf(
+			"[binary output: %d bytes, not inlined to avoid flooding the context with escape sequences. Raw bytes saved to OutputFile; inspect with `xxd -l 256 OutputFile`, `strings OutputFile | head -50` or `file OutputFile` rather than reading it whole]",
+			total)
+		res["OutputFile"] = path
+		res["TotalBytes"] = strconv.Itoa(total)
+		res["Note"] = "Binary-dominated output: raw copy at OutputFile, diagnostic only above."
+		return nil
+	}
+	// 净化收敛量纲：净化后无控制字节、非法字节折叠为 U+FFFD（marshal 实测写
+	// raw 3 字节），json.Marshal 不再逐字节膨胀 6 倍——原始字节数与进上下文的
+	// 体积重新同量纲，inline 阈值继续按原始字节判定是安全的。
+	clean := modeltext.Sanitize(data)
 	if total <= inlineMaxBytes {
-		res["Output"] = string(data)
+		res["Output"] = string(clean)
 		return nil
 	}
 	path, err := spill(id, data)
 	if err != nil {
 		return err
 	}
-	head := preview(data)
-	// 尾部偏移直接算好给 agent，省掉它自己做减法（也避免它算错）
+	head := modeltext.Sanitize(preview(data))
+	// 尾部偏移直接算好给 agent，省掉它自己做减法（也避免它算错）。
+	// 注意 OutputFile 是 raw 权威副本，Offset 语义按 raw 文件计。
 	tailOffset := total - 4096
 	if tailOffset < 0 {
 		tailOffset = 0
@@ -40,14 +62,13 @@ func deliver(res map[string]string, data []byte, id string) error {
 	res["TotalBytes"] = strconv.Itoa(total)
 	res["Note"] = fmt.Sprintf(
 		"Output is %d bytes, over the %d-byte inline limit; the full content has been saved to OutputFile. "+
-			"The Output above is only a %d-byte head preview and does not represent the whole output. "+
+			"The Output above is only a %d-character sanitized head preview and does not represent the whole output. "+
 			"Failure reasons, test summaries and stack traces are usually at the end: pass Offset=%d to ReadFile to read the tail directly, "+
 			"or use SearchInFile to look for keywords.",
 		total, inlineMaxBytes, len(head), tailOffset,
 	)
 	return nil
 }
-
 func getTools(m *Manager) []tool.Tool {
 	toolSets := []tool.Tool{}
 

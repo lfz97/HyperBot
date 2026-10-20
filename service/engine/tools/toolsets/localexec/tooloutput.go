@@ -30,6 +30,9 @@ const (
 	inlineMaxBytes = 64 << 10 // 64 KB
 	// previewBytes 是落盘后内联返回的预览长度（取头部）。
 	previewBytes = 2 << 10 // 2 KB
+	// binaryMinBytes 是二进制快速通道的最低输出量：更小的输出即使二进制主导，
+	// 净化后内联也不过几 KB，落盘 + 诊断反而绕。低于此值一律走文本路径。
+	binaryMinBytes = 4 << 10 // 4 KB
 	// spillDirName 是落盘目录名，位于 <exeDir>/output 下。
 	spillDirName = "tool-outputs"
 	// spillMaxAge 是落盘文件的保留时长，超过即由 GC 回收。

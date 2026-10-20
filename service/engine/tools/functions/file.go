@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/pmezard/go-difflib/difflib"
+	"HyperBot/service/engine/tools/modeltext"
 	"io"
 	"os"
 	"path/filepath"
@@ -103,14 +104,24 @@ func ReadFile(ctx context.Context, req struct {
 	if len(content) == 0 && n > 0 {
 		content = buf[:n]
 	}
+	// NextOffset 按原始字节的消费量推进（含被 trim 的尾部半个字符，下次重读
+	// 取回），与下方净化无关：若按净化后长度推进，剔除控制字节会让进度停在
+	// 已展示过的位置，下一页把同一段 raw 字节重复吐一遍。
 	next := req.Offset + len(content)
+	// 模型朝向净化：ReadFile 是模型读文件的通道，控制字节/ANSI 色码在此收敛；
+	// 读 spill 的 raw 权威副本时，转义膨胀不再发生（见 modeltext 包注释）。
+	view := modeltext.Sanitize(content)
+	if len(view) == 0 && len(content) > 0 {
+		// 纯控制字节窗口：给占位说明而非空串，原始字节已按 NextOffset 全部消费。
+		view = []byte(fmt.Sprintf("[window of %d bytes: no displayable characters (control bytes omitted)]", len(content)))
+	}
 	return map[string]string{
 		"ReadPath":   req.Path,
-		"ReadLength": strconv.Itoa(len(content)),
+		"ReadLength": strconv.Itoa(len(view)),
 		"NextOffset": strconv.Itoa(next), //分页续读时直接把这个值传给 Offset，无需自己计算
 		"TotalSize":  strconv.Itoa(int(total)),
 		"EOF":        strconv.FormatBool(int64(next) >= total),
-		"Content":    string(content),
+		"Content":    string(view),
 	}, nil
 }
 
@@ -211,10 +222,11 @@ func SearchInFile(ctx context.Context, req struct {
 		endlineNum := strings.Count(string(contentBytes[:endOffset]), "\n") + 1
 
 		matchContent_b := contentBytes[startOffset:endOffset]
+		// 匹配内容是模型朝向输出：控制字节/ANSI 在此收敛（正则仍按原始字节匹配）
 		info := matchInfo{
 			StartlineNum: startlineNum,
 			EndlineNum:   endlineNum,
-			MatchContent: string(matchContent_b),
+			MatchContent: string(modeltext.Sanitize(matchContent_b)),
 		}
 		infoBytes, err := json.Marshal(info)
 		if err != nil {

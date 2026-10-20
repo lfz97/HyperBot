@@ -10,39 +10,27 @@ import (
 )
 
 const (
-	// clampSummaryReserveTokens 摘要调用自身的输出预留。WithMaxSummaryWords(5000 词)
-	// 约 7500~10000 token，按上限取。钳制最坏落点为 窗口-此值，保证摘要请求
-	// （input=全量上下文）始终有输出空间，消除"满窗后摘要请求发不出去"的死锁。
+	// 摘要请求自身的输出预留：WithMaxSummaryWords(5000 词) 约 7500~10000 token，按上限取，
+	// 保证满窗后摘要请求仍发得出去。
 	clampSummaryReserveTokens = 10000
-	// clampBufferTokens 输入估算误差缓冲：tiktoken 对非 OpenAI 模型以 cl100k
-	// 逼近（中文 ±30%）、消息结构/分隔符开销、状态栏等尾部注入的波动。
+	// 输入估算误差缓冲：tiktoken 对非 OpenAI 模型以 cl100k 逼近（中文 ±30%）+ 消息结构开销。
 	clampBufferTokens = 2000
-	// clampMinViableTokens 钳制下限：低于此值输出已无意义，保持下限由
-	// provider 截断（finish_reason=length），消息照常入库，下一跳由
-	// 阈值压缩（Pass 1/2、摘要）接管，而非放弃输出。
+	// 钳制下限：低于此值不再下调，由 provider 截断（finish_reason=length），
+	// 下一跳由阈值压缩（Pass 1/2、摘要）接管。
 	clampMinViableTokens = 1024
 )
 
 // TokenClampConfig 动态 max_tokens 钳制参数；传 nil 表示不启用钳制。
 type TokenClampConfig struct {
-	Counter       model.TokenCounter // 输入 token 计数器（tiktoken，与 summarizer 共用同一实例）
-	ContextWindow int                // 当前模型上下文窗口，必须跟随模型配置，不能写死
-	CfgMaxTokens  int                // 配置的静态 maxtokens 上限（yaml maxtokens 字段）
+	Counter       model.TokenCounter // tiktoken 计数器，与 summarizer 共用同一实例
+	ContextWindow int                // 跟随模型配置，不能写死
+	CfgMaxTokens  int                // yaml maxtokens 静态上限
 }
 
-// clampMaxTokens 按以下公式钳制本次请求的 max_tokens：
-//
-//	max_tokens = min(配置上限, 窗口 - 输入 - 工具schema - 摘要预留 - 缓冲)
-//
-// 输入用 tiktoken 逐消息精确计数（与 summarizer 同一计数器）。推理模型的思维链
-// 计入 max_tokens（deepseek-v4-pro @千帆实测：max_tokens=1000 全被 reasoning_tokens
-// 消耗、content 为空），因此钳制的是"思考链+正文"的总预算。
-//
-// 计数失败时 fail-open：不动 max_tokens，仅记日志——宁可放行给 provider 的
-// input+max_tokens 校验兜底，不因计数故障阻塞对话。
-//
-// 必须分配新指针：Request 内嵌 GenerationConfig 的 MaxTokens 与 yaml 配置共享
-// 同一个 *int（init.go: MaxTokens: &cfg.MaxTokens），直接解引用修改会污染全局配置。
+// clampMaxTokens 将本次请求的 max_tokens 钳制为 min(配置上限, 窗口-输入-工具schema-摘要预留-缓冲)。
+// 推理模型的思维链计入 max_tokens（实测 max_tokens 全被 reasoning_tokens 消耗、content 为空），
+// 因此钳制的是"思维链+正文"总预算。计数失败时 fail-open：不动 max_tokens，交给 provider 校验兜底。
+// 必须分配新指针：Request.MaxTokens 与 yaml 配置共享同一个 *int，直接解引用会污染全局配置。
 func clampMaxTokens(ctx context.Context, req *model.Request, cfg *TokenClampConfig) {
 	if cfg == nil || cfg.Counter == nil || cfg.ContextWindow <= 0 {
 		return
@@ -60,8 +48,7 @@ func clampMaxTokens(ctx context.Context, req *model.Request, cfg *TokenClampConf
 
 	ceiling := cfg.ContextWindow - inputTokens - clampSummaryReserveTokens - clampBufferTokens
 	if ceiling < clampMinViableTokens {
-		// 输入已逼近窗口（正常情况下压缩 Pass 1/2 与摘要应在更低水位消化掉）：
-		// 保持下限，由 provider 截断，不放大也不报错。
+		// 输入已逼近窗口（正常由压缩 Pass 1/2 与摘要提前消化）：保持下限，交给 provider 截断。
 		log.Printf("[MAXTOKENS] input %d near window %d, clamp to floor %d",
 			inputTokens, cfg.ContextWindow, clampMinViableTokens)
 		ceiling = clampMinViableTokens
@@ -73,9 +60,8 @@ func clampMaxTokens(ctx context.Context, req *model.Request, cfg *TokenClampConf
 }
 
 // countToolSchemaTokens 统计工具 schema（名称+描述+参数 JSON）的 token 数。
-// schema 不在 Request.Messages 里，但同样占用上下文，且参与 provider 的
-// input+max_tokens ≤ 窗口校验——不计入会导致高水位钳制偏松、实际请求被
-// provider 以 400 拒绝。单条工具失败静默跳过，不阻塞钳制。
+// schema 不在 Messages 里但占窗口、参与 provider 的 input+max_tokens 校验，不计入会导致钳制偏松。
+// 单条工具失败静默跳过，不阻塞钳制。
 func countToolSchemaTokens(ctx context.Context, counter model.TokenCounter, tools map[string]tool.Tool) int {
 	total := 0
 	for _, t := range tools {

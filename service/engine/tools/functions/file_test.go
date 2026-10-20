@@ -1,8 +1,7 @@
 package functionTools
 
-// 模型侧体量预算的回归测试：返回给模型的文本经 JSON 序列化后会放大（非法
-// UTF-8/控制字符每字节 6 字节转义），ReadFile 的窗口与 SearchInFile 的匹配列表
-// 都按 modeltext.Size 度量设防。
+// 模型侧体量预算的回归测试：结果经 JSON 序列化后会被放大，ReadFile 的窗口与
+// SearchInFile 的匹配列表都按 modeltext.Size 度量设防。
 
 import (
 	"context"
@@ -25,8 +24,7 @@ func inlineJSONSize(t *testing.T, res map[string]string) int {
 	return len(b)
 }
 
-// 请求超大窗口时，页体量按序列化后大小收缩：合法文本收缩到预算内，二进制文件
-// 收缩得更多；NextOffset 保持分页语义，数据不丢。
+// 请求超大窗口时页体量按序列化后大小收缩到预算内；NextOffset 保持分页语义，数据不丢。
 func TestReadFileShrinksWindowToBudget(t *testing.T) {
 	dir := t.TempDir()
 
@@ -50,8 +48,8 @@ func TestReadFileShrinksWindowToBudget(t *testing.T) {
 		t.Fatal("window should have been shrunk for the over-budget page")
 	}
 
-	// 分页语义：从 NextOffset 连续续读（trim 掉的截断字节会在下一页补回），
-	// 最终到达 EOF，且每一页都在预算内、页偏移严格前进。
+	// 分页语义：从 NextOffset 连续续读（trim 掉的截断字节下一页补回）直至 EOF，
+	// 每一页都在预算内、页偏移严格前进。
 	binPath := filepath.Join(dir, "bin.dat")
 	bin := make([]byte, 16<<10)
 	for i := range bin {

@@ -32,9 +32,8 @@ type manager struct {
 	sches  map[string]*schedule
 	runner runner.Runner
 	userid string
-	path   string // cronagent.json 持久化文件路径
-	// loadErr 保存启动时恢复存档的非致命错误。只在 NewManager 里、manager 被
-	// 共享给其他 goroutine 之前写一次，之后只读，所以不需要加锁。
+	path   string
+	// 启动恢复存档的非致命错误；NewManager 里共享给其他 goroutine 之前写一次，之后只读，无需加锁
 	loadErr error
 }
 
@@ -175,8 +174,7 @@ func (m *manager) Clear() int {
 	return n
 }
 
-// ClearAll 是面向用户的显式清空：停掉全部 schedule，并把空集合落盘。
-// 与 Clear 的区别就在落盘——不落盘的话重启后任务会全部回来，那不叫清空。
+// ClearAll 是面向用户的显式清空：与 Clear 的区别就在落盘，否则重启后任务会全部回来。
 func (m *manager) ClearAll() (int, error) {
 	n := m.Clear()
 	return n, m.save()
@@ -216,17 +214,15 @@ func (m *manager) save() error {
 }
 
 // cronParser 是表达式解析的唯一来源：调度器和 Load 的预校验都必须用它，
-// 否则会出现"校验通过但 Add 失败"的半加载状态。
-// 用 SecondOptional 而非 Second，这样模型最常产出的 5 字段标准 Unix cron
-// （秒位默认 0）和显式的 6 字段写法都能解析。
+// 否则会出现"校验通过但 Add 失败"的半加载状态。SecondOptional 让 5 字段
+// 标准 Unix cron（秒位默认 0）和显式的 6 字段写法都能解析。
 var cronParser = cron.NewParser(
 	cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor,
 )
 
 // Load 从持久化文件恢复 schedule。文件不存在时静默返回（首次运行）。
-// 先整体校验再启动：Add() 会真的拉起 cron goroutine，一旦启动就无法靠返回
-// error 回滚，所以表达式非法或 id 重复这类问题必须在启动之前全部挡掉。
-// 任何失败都会把存档挪到 .fix<时间戳>，原路径腾空，启动照常继续。
+// 先整体校验再启动：Add() 拉起 cron goroutine 后无法靠 error 回滚，非法表达式
+// 必须挡在启动之前。任何失败都会把存档挪到 .fix<时间戳>，启动照常继续。
 func (m *manager) Load() error {
 	recs, err := readPersisted(m.path)
 	if err != nil {
@@ -244,8 +240,7 @@ func (m *manager) Load() error {
 			sche_p.enableAt = &now
 		}
 		if err := sche_p.Add(); err != nil {
-			// validate 用的是同一个 parser，走到这里说明表达式在两次解析之间变了，
-			// 属于不可回滚的半加载状态，只能整体挪走重来
+			// validate 用同一 parser，走到这里说明两次解析之间表达式变了，只能整体挪走重来
 			m.Clear()
 			return m.quarantine(err)
 		}
@@ -304,12 +299,12 @@ func NewManager(agentname string, cfg *config.Config, systemprompt string, Skill
 			counter, _ := tiktoken.New((*cfg).Model.Model) //tiktoken 计数器：compaction 阈值判定与 max_tokens 钳制共用；失败为 nil，各自 fail-open
 			opts := []llmagent.Option{
 				llmagent.WithGenerationConfig(model.GenerationConfig{
-					MaxTokens:       &(*cfg).Model.MaxTokens, // 最大生成 token 数，来自配置 maxtokens 字段
+					MaxTokens:       &(*cfg).Model.MaxTokens,
 					Stream:          (*cfg).Model.Stream,
-					ReasoningEffort: (*cfg).Model.ReasoningEffortPtr(), // 思考强度，来自配置 reasoning_effort 字段，留空不下发
+					ReasoningEffort: (*cfg).Model.ReasoningEffortPtr(), // 留空不下发
 				}),
 				llmagent.WithTools(tools),
-				llmagent.WithGlobalInstruction(systemprompt), //系统提示词
+				llmagent.WithGlobalInstruction(systemprompt),
 				llmagent.WithToolSets(toolsets),
 				llmagent.WithRefreshToolSetsOnRun(true),
 				llmagent.WithSkillsLoadedContentInToolResults(true),
@@ -326,16 +321,15 @@ func NewManager(agentname string, cfg *config.Config, systemprompt string, Skill
 				llmagent.WithContextCompactionOversizedToolResultMaxTokens(8192),               // Pass 2: 超大 tool result 首尾保留截断
 				llmagent.WithEnableOnDemandSession(true),                                       // 按需加载被压缩的原始数据（session_load）
 				llmagent.WithContextCompactionTokenCounter(counter),                            //裁剪阈值判定用精确计数：默认 rune/4 对中文低估 3~4 倍，会漏裁
-				llmagent.WithEnableParallelTools(true),                                         //启用并行工具调用，提升工具调用效率
+				llmagent.WithEnableParallelTools(true),
 				agent.SetBeforeModelStatusCallback(nil, &agent.TokenClampConfig{
 					Counter:       counter,
 					ContextWindow: (*cfg).Model.ContextWindow,
 					CfgMaxTokens:  (*cfg).Model.MaxTokens,
 				}), //追加beforeModel状态栏 + 动态max_tokens钳制（公式见 agent/maxtokens.go）
 			}
-			// APIType 校验只做一次。ConfigBaseAgent 内部也按同一字段选模型，但它对
-			// 未知类型是静默不设模型（agent 照样建得出来、跑起来才失败），所以这里
-			// 先挡住，给出可读的配置错误。
+			// ConfigBaseAgent 对未知 APIType 静默不设模型（agent 建得出来、跑起来才失败），
+			// 所以这里先挡住，给出可读的配置错误。
 			apiType := (*cfg).Model.APIType
 			if apiType != "openai" && apiType != "anthropic" {
 				return nil, errors.New("unsupported API type, check the Model.APIType field in your config")

@@ -1,14 +1,9 @@
 package main
 
 // widthcal 终端宽度校准工具：诊断 TUI 表格错位的根因。
-//
-// 用法：go run ./cmd/widthcal
-// 在运行 HyperBot TUI 的同一个终端里执行。
-//
-// 原理：每行内容后面补空格，把结束标记「│←30」钉在【按 x/ansi 测量的
-// 第 30 列】——与 TUI 排版用的是同一套测量。若终端实际渲染宽度一致，
-// 内容行尾应恰好顶到标记；若内容【没到】标记 = 终端渲得比测量窄，
-// 【越过】标记 = 渲得比测量宽。含该字符的表格行就会整体偏移错位。
+// 用法：在运行 HyperBot TUI 的同一终端里执行 go run ./cmd/widthcal。
+// 原理：每行补空格把「│←30」标记钉在按 x/ansi 测量的第 30 列（与 TUI 同一套
+// 测量）。内容行尾没到标记 = 终端渲得比测量窄；越过 = 渲得比测量宽。
 
 import (
 	"fmt"
@@ -36,16 +31,16 @@ func main() {
 	fmt.Println("内容行尾应顶到「│←」标记：没到=终端渲窄了，越过=渲宽了")
 	fmt.Println()
 
-	cal("基准", strings.Repeat("0123456789", 3))            // ASCII 30
-	cal("中文", strings.Repeat("字", 15))                    // CJK×15 = 30
-	cal("全角", strings.Repeat("？", 15))                    // 全角标点×15 = 30
-	cal("对勾", strings.Repeat("✅", 15))                    // emoji×15 = 30
-	cal("警告", strings.Repeat("⚠️", 15))                   // 带变体选择符×15 = 30
-	cal("中点", strings.Repeat("·", 30))                     // 歧义宽计1×30 = 30
-	cal("省略", strings.Repeat("…", 30))                     // 同上
-	cal("箭头", strings.Repeat("→", 30))                     // 同上
-	cal("框线", strings.Repeat("─", 30))                     // 同上
-	cal("混排", "项：Linux，lfz（测试）") // 真实形态混合（≤30列）
+	cal("基准", strings.Repeat("0123456789", 3)) // ASCII 30
+	cal("中文", strings.Repeat("字", 15))         // CJK×15 = 30
+	cal("全角", strings.Repeat("？", 15))         // 全角标点×15 = 30
+	cal("对勾", strings.Repeat("✅", 15))         // emoji×15 = 30
+	cal("警告", strings.Repeat("⚠️", 15))        // 带变体选择符×15 = 30
+	cal("中点", strings.Repeat("·", 30))         // 歧义宽计1×30 = 30
+	cal("省略", strings.Repeat("…", 30))         // 同上
+	cal("箭头", strings.Repeat("→", 30))         // 同上
+	cal("框线", strings.Repeat("─", 30))         // 同上
+	cal("混排", "项：Linux，lfz（测试）")               // 真实形态混合（≤30列）
 
 	fmt.Println()
 	fmt.Println("=== 真实表格复现（glamour 同款配置）===")

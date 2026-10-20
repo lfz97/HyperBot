@@ -1,8 +1,7 @@
 package tui
 
-// wire 集成回归测试：engine 侧 wireRecord 产出的记录形状必须在 TUI 侧完整
-// 解析并渲染出工具块（delta 分片参数续接 + Role=tool 结果配对）。历史上
-// 记录字段类型不匹配曾导致解析失败被静默跳过——所有工具块消失。
+// wire 集成回归测试：engine 侧 wireRecord 的记录形状必须在 TUI 侧完整解析
+// 并渲染出工具块。历史上字段类型不匹配曾导致解析失败被静默跳过——工具块全部消失。
 
 import (
 	"encoding/json"

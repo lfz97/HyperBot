@@ -11,11 +11,9 @@ import (
 )
 
 // composeView 全量渲染：从消息日志整体重组视图文本（无缓存、纯函数式重放，
-// 正确性不依赖任何记账）。每次重组都对全部记录重放状态机（流式尾段、工具缓冲）
-// 并重新渲染，运行在 pull 链的 goroutine 上。
-//
-// 视觉语言对齐 crush：用户消息带 primary 左线、助手块统一左缩进、思考块底色
-// 盒、工具行 "✓ name args"、错误带徽章；块与块之间以空行分隔。
+// 正确性不依赖记账），运行在 pull 链的 goroutine 上。
+// 视觉语言对齐 crush：用户消息 primary 左线、助手块左缩进、思考块底色盒、
+// 工具行 "✓ name args"；块与块之间以空行分隔。
 func (t *TUI) composeView(st *pullState) string {
 	recs := t.fetchRecords()
 	var parts []string
@@ -56,8 +54,8 @@ func (t *TUI) composeView(st *pullState) string {
 				out = renderToolResult(&m, toolBuf, w)
 			} else {
 				bufferToolCalls(&m, toolBuf)
-				// 思考块并入本条输出（定稿自带则用它，否则用流式尾累积的，两者本应同文），
-				// 流式期间与定稿后的观感一致，没有切换跳变。
+				// 思考块并入本条输出：定稿自带则用它，否则用流式尾累积（两者本应同文），
+				// 流式与定稿观感一致无跳变。
 				var body []string
 				if m.ReasoningContent != "" {
 					body = append(body, renderThinking(m.ReasoningContent, w))
@@ -127,10 +125,9 @@ func bufferToolCalls(m *model.Message, toolBuf map[string]*wireToolCall) {
 	}
 }
 
-// renderToolResult 渲染工具块：结果（Role=tool 的框架 message）到达时，按 ToolID
-// 匹配此前缓冲的工具调用（toolView 按 mapper 字段提取参数/结果并按内容类型路由，
-// w 传入做超宽折行）。
-// 无缓冲匹配时与旧版一致：宁可不出工具行，也不凭空渲染。
+// renderToolResult 渲染工具块：结果（Role=tool 的框架 message）到达时，
+// 按 ToolID 匹配此前缓冲的工具调用，交 toolView 渲染。
+// 无匹配时宁可不出工具行，也不凭空渲染。
 func renderToolResult(m *model.Message, toolBuf map[string]*wireToolCall, w int) string {
 	entry := toolBuf[m.ToolID]
 	if entry == nil {
@@ -140,11 +137,9 @@ func renderToolResult(m *model.Message, toolBuf map[string]*wireToolCall, w int)
 	return msgIndent.Render(toolView(entry.name, []byte(entry.args), m.Content, w))
 }
 
-// renderThinking 思考块：弱化左竖线 + 弱化文本（quote 风格，无底色）。
-// 纯函数，流式尾段与定稿同型，观感一致。reasoning 是模型的思考散文，
-// 不走 glamour（结构化 markdown 对它没有增益，纯文本渲染在长思考流式
-// 重放下的成本也低一个量级）；样式的 Width 负责软换行。
-// 宽度预算：w = msgIndent(2) + 边框(1) + 内边距(1) + 内容，行宽不超 viewport。
+// renderThinking 思考块：弱化左竖线 + 弱化文本（quote 风格）。
+// reasoning 是思考散文，不走 glamour（结构化 markdown 无增益，纯文本渲染
+// 成本也低一个量级）；样式的 Width 负责软换行，行宽不超 viewport。
 func renderThinking(r string, w int) string {
 	gw := w - msgIndentW - thinkingFrameW
 	if gw < 10 {
@@ -171,10 +166,8 @@ func flushTail(st *pullState, tailReasoning, tailContent *strings.Builder, w int
 	return strings.Join(parts, "\n\n") + "\n\n"
 }
 
-// userBlock 用户消息：primary 左线 + markdown 渲染（crush UserBlurred +
-// UserMarkdownRenderer——用户输入在 textarea 里手打，保留换行，避免渲染后
-// 和输入时看到的不一样）。宽度预算扣 userBar 的边框+内边距，
-// 行宽不超 viewport。
+// userBlock 用户消息：primary 左线 + markdown 渲染。保留换行，
+// 避免渲染后与输入时所见不一致。
 func userBlock(st *pullState, text string, w int) string {
 	gw := w - userBarFrameW
 	if gw < 10 {
@@ -199,11 +192,9 @@ const thinkingFrameW = 2
 // userBarFrameW 用户消息左线占宽：边框(1) + 内边距(1)。
 const userBarFrameW = 2
 
-// renderBody 用 glamour 渲染助手正文（crush Markdown StyleConfig）。ANSI 输出
-// 直接进 viewport——bubbletea 渲染器本身就是 ANSI 消费者。
-// 宽度预算扣 msgIndent 的 2 列：glamour 按 w-2 排版，加缩进正好 w——
-// 行宽不超 viewport，避免终端在屏幕边缘自行硬换行（预算差几列只影响
-// 排版观感，不再有内容改写层放大它）。
+// renderBody 用 glamour 渲染助手正文，ANSI 输出直接进 viewport。
+// 宽度预算扣 msgIndent 的 2 列：glamour 按 w-2 排版，加缩进正好 w，
+// 行宽不超 viewport、避免终端自行硬换行。
 func renderBody(content string, w int) string {
 	gw := w - msgIndentW
 	if gw < 10 {
@@ -217,11 +208,8 @@ func renderBody(content string, w int) string {
 	return msgIndent.Render(strings.TrimRight(out, "\n"))
 }
 
-// stripGlamourPad 剥掉 glamour 输出首尾的空行（块级 trim）。
-// 不再剥行尾填充：那是为"帧扫描成本"做的投机优化（92% 填充的估算从未
-// 实测），正则剥填充反而连带剥掉闭合 SGR、再手工补 reset——改写内容的
-// 层就是 bug 的产地（规则线错位的教训）。glamour 的行尾填充是不可见的
-// 空格，直接放行；真出现性能瓶颈再按实测数据优化。
+// stripGlamourPad 剥掉 glamour 输出首尾的空行。不剥行尾填充：正则剥填充
+// 会连带剥掉闭合 SGR（曾导致规则线错位）；填充是不可见空格，直接放行。
 func stripGlamourPad(out string) string {
 	return strings.Trim(out, "\n\r")
 }
@@ -244,10 +232,8 @@ func renderNotice(kind, text string) string {
 	}
 }
 
-// composeHint 常驻兜底提示。esc to interrupt 只在运行态出现——
-// ESC 中断仅在 agent 运行期间有效，平时显示它是噪音。
-// 措辞用 commands 而非 slashes/skills：浮层里既有前端内置命令也有引擎技能，
-// "commands" 是唯一能同时覆盖两者的说法（slash 是字符名，不是命令类别名）。
+// composeHint 常驻兜底提示。esc to interrupt 只在运行态出现（平时显示是噪音）；
+// 措辞用 commands：浮层同时含前端内置命令与引擎技能。
 func composeHint(running bool) string {
 	if running {
 		return noticeSub("esc to interrupt · type / for commands")
@@ -269,8 +255,7 @@ func renderFatal(text, style string) string {
 
 // ── glamour 渲染（每次直建）──
 //
-// 不缓存渲染器：单次构建实测 ~28µs（composebench 消融微基准），每帧几十条
-// 消息合计 <1ms，缓存不值得（曾按宽度 memoize，消融判定为冗余已删）。
+// 不缓存渲染器：单次构建实测 ~28µs，每帧合计 <1ms，不值得缓存。
 
 // newGlamourRenderer 构建终端 markdown 渲染器（宽度小于 40 时 glamour 样式
 // 会严重劣化，兜底 80）。
@@ -308,9 +293,7 @@ func renderMarkdownUser(text string, w int) (string, error) {
 
 // ── crush 风格 markdown StyleConfig ──────────────────────
 //
-// 取值对齐 crush 的 quickStyle（charmtone 调色板）：正文 Smoke、标题 Malibu、
-// H1 是 primary 底的徽章、代码块 Char 底 + Chroma 语法色。替换 glamour 的
-// "dark" 预设——预设的配色与本项目的消息视觉语言不搭。
+// 取值对齐 crush 的 quickStyle（charmtone 调色板），替换 glamour "dark" 预设。
 
 const (
 	crushMargin     = 2
@@ -322,8 +305,7 @@ func hexOf(c string) *string { return &c }
 func markdownStyle() ansi.StyleConfig {
 	return ansi.StyleConfig{
 		Document: ansi.StyleBlock{
-			// Sash 最亮档（#ECEBF0）：暗底终端上正文要够亮才醒目
-			// （原 Smoke #BFBBC8 在暗底下衬得发灰）；与输入框文字同档
+			// Sash 最亮档：暗底终端上正文要够亮才醒目（原 Smoke 衬得发灰）
 			StylePrimitive: ansi.StylePrimitive{Color: hexOf("#ECEBF0")},
 		},
 		BlockQuote: ansi.StyleBlock{

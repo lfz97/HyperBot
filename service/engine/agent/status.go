@@ -24,26 +24,19 @@ const (
 	memoryEntryMaxRunes = 200
 )
 
-// Display 是 agent 把文本推给展示端的出口，当前只有 todo 清单（供 TUI 的 TodoBar 显示）。
-// 在 agent 包内声明（1 个方法）——消费方小接口，engine 侧的 *Engine 天然满足；
-// agent 包不感知展示端是谁，也不依赖任何 TUI 类型。
-// 按能力命名而非按当前唯一调用方命名（不叫 TodoTextSink）：以后加别的展示项直接扩方法即可，不用改名。
-// 非交互调用方（如将来的 schedule agent）传 nil：仍然注入 prompt，只是不推 UI。
+// Display 是 agent 把文本推给展示端的小接口（按能力命名，将来加展示项直接扩方法）。
+// 非交互调用方传 nil：仍注入 prompt，只是不推 UI。
 type Display interface {
 	SetTodoText(text string)
 }
 
-// 注入模型调用前callback，在消息末尾追加当前状态栏（时间、工作目录、内存、todo清单、相关记忆）。
-// 注意：追加在末尾而非前置 —— 自动前缀缓存要求请求头部保持稳定，
-// 状态栏每次调用内容变化，放头部会破坏整个前缀缓存（实测：尾部99%命中 vs 头部0）。
-// 使用本功能必须关闭框架的 system 前置重排（openai.WithOptimizeForCache），否则
-// 尾部状态栏会被框架挪回头部、缓存收益失效；关闭位置：service/engine/models/openai.go。
+// 在消息末尾追加当前状态栏（时间、工作目录、内存、todo、相关记忆）。
+// 追加在末尾而非头部：状态栏每次变化，放头部会破坏自动前缀缓存（实测尾部99%命中 vs 头部0）；
+// 因此必须关闭框架的 system 前置重排（openai.WithOptimizeForCache，见 openai.go）。
 // 状态栏不进 session（仅存在于当次请求副本），不污染摘要/上下文压缩。
 //
-// clamp 非 nil 时，在状态栏注入之后做动态 max_tokens 钳制（实现见 maxtokens.go）。
-// 两个动作必须注册在同一个 *model.Callbacks 上：RegisterBeforeModel 是 append 语义，
-// 而 llmagent.WithModelCallbacks 是整体覆盖语义——拆成两个 Option 会互相顶掉。
-// 钳制排在状态栏注入之后：状态栏消息也计入输入。
+// clamp 非 nil 时在注入后做动态 max_tokens 钳制。两个动作必须注册在同一个 *model.Callbacks 上：
+// RegisterBeforeModel 是 append 语义，llmagent.WithModelCallbacks 是整体覆盖语义，拆开会互相顶掉。
 func SetBeforeModelStatusCallback(display Display, clamp *TokenClampConfig) llmagent.Option {
 
 	modelCallbacks := model.NewCallbacks().RegisterBeforeModel(
@@ -54,7 +47,7 @@ func SetBeforeModelStatusCallback(display Display, clamp *TokenClampConfig) llma
 			injectMemoryStatus(ctx, args.Request.Messages, &status)
 
 			args.Request.Messages = append(args.Request.Messages, model.NewSystemMessage(status)) //在末尾追加状态栏
-			clampMaxTokens(ctx, args.Request, clamp) //钳制在状态栏注入之后：状态栏消息也计入输入
+			clampMaxTokens(ctx, args.Request, clamp)                                              //钳制在状态栏注入之后：状态栏消息也计入输入
 			return nil, nil
 		},
 	)
@@ -63,14 +56,11 @@ func SetBeforeModelStatusCallback(display Display, clamp *TokenClampConfig) llma
 
 // 基础状态栏：时间、工作目录、内存。
 func injectBaseStatus(_ context.Context, status *string) {
-	//获取时间
 	datenow := time.Now().Format("2006-01-02 15:04:05")
-	//获取工作目录
 	cwd, err := os.Getwd()
 	if err != nil {
 		cwd = "UNKNOWN"
 	}
-	//获取总内存、当前内存
 	var memTotalStr string
 	var memNowStr string
 	memoryInfo, err := memory.Get()
@@ -84,16 +74,10 @@ func injectBaseStatus(_ context.Context, status *string) {
 	*status += fmt.Sprintf(`[STATUS] TIMENOW: %s , CWD: %s , MEMORY USAGE: %s/%s MB`, datenow, cwd, memNowStr, memTotalStr)
 }
 
-// 追加当前agent的todo清单状态（todo_write写入session state，按invocation branch读取，
-// 无清单时为空串不追加）。清单变化只影响尾部消息，不破坏前缀缓存；
-// 同轮内工具写入后下一跳请求即生效，上下文压缩掉历史后清单也不会丢。
-//
-// 同一份文本推两个去处：注入 prompt 的 [STATUS] 尾部，以及推给 display 让 TodoBar 显示。
-// 因此 todo.go 不需要任何改动，也不需要渲染两份。
-//
-// ⚠️ 空串也要推给 display：清单做完后 TodoStatusBar 返回 ""（todo_write 在全 completed
-// 时自动清空清单），TodoBar 靠这个空串把高度 ResizeItem 回 0。只在非空时推的话，
-// bar 会永远挂着最后一版内容、高度也收不回来。
+// 追加当前 agent 的 todo 清单（无清单时为空串不追加）。清单变化只在尾部，不破坏前缀缓存。
+// 同一份文本推两个去处：prompt 的 [STATUS] 尾部 + display 的 TodoBar。
+// ⚠️ 空串也要推给 display：todo_write 在全部 completed 时返回 ""，TodoBar 靠空串收回高度，
+// 只在非空时推会让 bar 永远挂着最后一版内容。
 func injectTodoStatus(ctx context.Context, display Display, status *string) {
 	todoStatus := functionTools.TodoStatusBar(ctx)
 	if display != nil {
@@ -107,10 +91,8 @@ func injectTodoStatus(ctx context.Context, display Display, status *string) {
 	}
 }
 
-// 根据当前agent推理进度匹配可能相关的记忆：从消息队列尾部回溯抓取本轮 user prompt（头100字）与最近的
-// assistant content（尾100字），拼成 query 去 memory service 检索，最多10条追加到状态栏。
-// 末尾是 user（新一轮）时 assistant 取的是上一轮的回复；末尾是 assistant/tool（ReAct 中途）
-// 时取的是本轮已产出的 assistant content。检索失败或无结果时静默不追加。
+// 从消息尾部回溯拼出检索 query（user 头100字 + 最近 assistant 尾100字），去 memory service
+// 检索最多 10 条追加到状态栏。检索失败或无结果时静默不追加。
 func injectMemoryStatus(ctx context.Context, messages []model.Message, status *string) {
 	inv, ok := agent.InvocationFromContext(ctx)
 	if !ok || inv == nil || inv.MemoryService == nil || inv.Session == nil {
@@ -125,7 +107,7 @@ func injectMemoryStatus(ctx context.Context, messages []model.Message, status *s
 		agentmemory.WithSearchOptions(agentmemory.SearchOptions{
 			Query:               query,
 			MaxResults:          memoryMaxResults,
-			SimilarityThreshold: 0.03, //定义召回评分，默认是0.3，这个评分在这个场景下太苛刻，改成0.03
+			SimilarityThreshold: 0.03, // 默认 0.3 对此场景太苛刻，调低召回
 		}))
 	if err != nil || len(entries) == 0 {
 		return
@@ -154,8 +136,7 @@ func injectMemoryStatus(ctx context.Context, messages []model.Message, status *s
 }
 
 // buildMemoryQuery 从尾到头回溯消息队列，返回 "user头100字 assistant尾100字"。
-// 跳过 system/tool 消息；assistant 仅取文本 content（纯 tool_call 的空消息忽略），
-// 多段 assistant 拼接后再截尾。
+// 跳过 system/tool；assistant 仅取文本 content，多段拼接后再截尾。
 func buildMemoryQuery(messages []model.Message) string {
 	var userPrompt string
 	var assistantParts []string

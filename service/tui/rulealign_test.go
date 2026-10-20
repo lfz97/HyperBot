@@ -1,8 +1,7 @@
 package tui
 
-// 表格规则线对齐回归测试：glamour 排版宽度扣掉 msgIndent 的 2 列
-// （含预算的历史 bug：按 w 排版再叠缩进导致行超宽，被已删除的
-// wrapViewText 重排层硬断丢行首缩进，规则线 ┼ 与正文行 │ 错位 2 列）。
+// 表格规则线对齐回归测试：glamour 排版宽度必须扣掉 msgIndent 的 2 列缩进，
+// 否则规则线 ┼ 与正文行 │ 错位 2 列。
 
 import (
 	"strings"

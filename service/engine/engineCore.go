@@ -9,8 +9,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// GetEngineService 创建引擎实例（轻量：只装配字段，不触盘、不阻塞）。
-// 生命周期统一由 Run 驱动（见 Run 的注释），调用方不再自行编排初始化序列。
+// GetEngineService 创建引擎实例（轻量：只装配字段，不触盘）。生命周期统一由 Run 驱动。
 func GetEngineService(name string) *Engine {
 	return &Engine{
 		Agentname:   name,
@@ -22,7 +21,6 @@ func GetEngineService(name string) *Engine {
 }
 
 // Init 完成环境检查与资产装配（bootstrap），随后构造 runner。
-// 检查器只返回错误与产物；致命呈现（parkWithFatal）是 Engine 的职责。
 func (e *Engine) Init() {
 	env, err := Check(e.Agentname, e)
 	if err != nil {
@@ -38,10 +36,8 @@ func (e *Engine) Init() {
 	e.newRunner()
 }
 
-// Run 启动引擎的完整生命周期：先同步完成初始化（Init），再启动主循环
-// （AgentStart）。主循环的 goroutine 由 AgentStart 内部负责，正常路径下
-// Run 返回时引擎已在后台自主运行；仅当 Init 走到致命终态（parkWithFatal）
-// 时才驻留当前 goroutine。
+// Run 启动引擎完整生命周期：先同步完成 Init，再启动主循环 AgentStart（goroutine 由其内部负责）。
+// 仅当 Init 走到致命终态（parkWithFatal）时才驻留当前 goroutine，否则返回时引擎已后台运行。
 func (e *Engine) Run() {
 	e.Init()
 	e.AgentStart()
@@ -68,22 +64,16 @@ func (e *Engine) absorb(env *BootEnv) {
 	}
 }
 
-// parkWithFatal 置进程终态并永久驻留当前 goroutine。
-// 旧版等价物是 TuiService.ShowXxxAndExit 内部末尾的 select{}，语义必须原样保留：
-//   - 引擎 init 序列打完致命消息后绝不能带着未初始化状态继续往下跑（loadConfig 失败
-//     时 Config_p 仍是 nil，继续走 init 会在别处 panic）；
-//   - 不能在 TUI 回调里 os.Exit——screen.Fini() 在 app.Run() 返回路径上调用，
-//     硬退出会把终端留在 alt-screen + raw mode。
-//
-// pull 之后的分工：引擎置终态 + 驻留；渲染、等待按键、停循环由 TUI 完成。
+// parkWithFatal 置进程终态并永久驻留当前 goroutine；渲染、等待按键、停循环由 TUI 完成。
+// 不能用 os.Exit 替代：TUI 回调里硬退出会把终端留在 alt-screen + raw mode；
+// 也不能带着未初始化状态继续跑（如 loadConfig 失败时 Config_p 仍是 nil，往下走会 panic）。
 func (e *Engine) parkWithFatal(style string, text string, waitKey bool) {
 	e.setFatal(style, text, waitKey)
 	select {}
 }
 
-// AgentStart 启动引擎主循环：goroutine 内读用户输入、分类分发，直到退出。
-// 阻塞语义收敛在引擎内部，调用方无需自行起 goroutine；一轮对话在 turn 里跑
-// （含自动重试），错误预算的状态流转见 errorBudget。
+// AgentStart 启动引擎主循环（goroutine 内读用户输入、分类分发，直到退出），
+// 调用方无需自行起 goroutine。错误预算的状态流转见 errorBudget。
 func (e *Engine) AgentStart() {
 	go e.agentLoop()
 }
@@ -100,8 +90,7 @@ func (e *Engine) agentLoop() {
 		if strings.TrimSpace(line) == "" { //空输入，重新等待（前端已兜底，双保险）
 			continue
 		}
-		//斜杠命令不经过这里：语义与注册表在前端（service/tui/handler.go 的
-		// dispatchSlash），后端只暴露能力接口——字符串 magic word 已废除。
+		//斜杠命令不经过这里：语义与注册表在前端（service/tui/handler.go），后端只暴露能力接口
 		(*e).appendTyped(RecUser, line)
 		e.turn(line)
 	}
@@ -109,8 +98,7 @@ func (e *Engine) agentLoop() {
 
 // ── 斜杠命令的后端能力接口（前端注册表见 service/tui/handler.go）──────
 
-// Shutdown /exit 的引擎侧收尾：释放 runner 与 MCP 连接。置终态与退出由
-// 前端接管（tea.Quit 直接结束进程），引擎不再依赖“观察 fatal”的退出路径。
+// Shutdown /exit 的引擎侧收尾：释放 runner 与 MCP 连接。置终态与退出由前端接管（tea.Quit）。
 func (e *Engine) Shutdown() {
 	if (*e).AgentRunner_p != nil {
 		(*(*e).AgentRunner_p).Runner.Close()
@@ -120,9 +108,8 @@ func (e *Engine) Shutdown() {
 	}
 }
 
-// NewConversation /new：重置 SessionID 开新对话。running 时拒绝——
-// SessionId 读写无锁，turn 进行中重置是 data race；旧版命令经 inputCh
-// 排队自然避开，命令前移到前端后这里显式兜底，拒绝即最小正确实现。
+// NewConversation /new：重置 SessionID 开新对话。running 时拒绝：
+// SessionId 读写无锁，turn 进行中重置是 data race，这里显式兜底。
 func (e *Engine) NewConversation() bool {
 	if e.isRunning() {
 		e.setNotice(NoticeWarning, "agent is running, try /new later")

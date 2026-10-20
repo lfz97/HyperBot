@@ -38,8 +38,7 @@ type schedule struct {
 	eventChan     <-chan *event.Event
 
 	paused atomic.Bool
-	// executing 表示"此刻有一轮正在跑"，与 paused（调度是否启用）是两回事：
-	// paused=false 且 executing=false 就是正常待命，等下一次触发
+	// 与 paused（调度是否启用）是两回事：paused=false 且 executing=false 即正常待命
 	executing atomic.Bool
 }
 

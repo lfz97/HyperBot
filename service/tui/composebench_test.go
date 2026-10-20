@@ -1,21 +1,12 @@
 package tui
 
 // 全量重放性能基准：真实规模会话（20 轮×重内容）测量 composeView 成本。
-// 消融结论（2026-10-13，口径：人的感知，不是秒表）：
-//   - ms 级差异人不可感知——LLM 流式节奏是秒级，网络抖动远大于任何单项成本，
-//     因此所有缓存（chroma 双缓存、glamour 渲染器缓存）全部删除，渲染管线
-//     无全局可变状态。合成重负载（20 轮×重内容）全帧 ~100ms，真实会话通常
-//     个位数到十几 ms，均远低于感知阈值
-//   - compose 节流 + version 跳过保留：那是"没变化就不干活"的架构机制，
-//     不是微优化
-//   - 本基准的真正用途：诊断规模化悬崖——全量重放成本随会话长度线性增长，
-//     数百轮重会话时若真感到卡顿，解法是按记录内容哈希的结果级缓存，
-//     先跑这里拿基线再动手
+// ms 级差异人不可感知，缓存已全部删除；本基准的真正用途是诊断规模化悬崖
+// （全量重放随会话长度线性增长）——数百轮重会话感到卡顿时先跑这里拿基线。
 //
 // 运行：go test ./service/tui/ -run XXX -bench BenchmarkCompose -benchtime 5x -count 3
-//
-// 帧预算参考：composeInterval = 100ms（重组节流），pullInterval = 30ms。
-// 单次 compose 冷成本 < 30ms 即流畅；> 100ms 会可感知卡顿。
+// 帧预算参考：单次 compose 冷成本 < 30ms 流畅；> 100ms 可感知卡顿
+//（composeInterval=100ms、pullInterval=30ms）。
 
 import (
 	"encoding/json"
@@ -26,9 +17,9 @@ import (
 
 	"bytes"
 
+	"charm.land/glamour/v2"
 	"github.com/alecthomas/chroma/v2/formatters"
 	"github.com/alecthomas/chroma/v2/lexers"
-	"charm.land/glamour/v2"
 
 	"trpc.group/trpc-go/trpc-agent-go/model"
 )
@@ -53,8 +44,7 @@ func (f *fakeView) ClearRecords() bool              { return true }
 func (f *fakeView) ListResumeItems() string         { return "[]" }
 func (f *fakeView) CheckoutSession(id string) error { return nil }
 
-// buildSession 构造真实规模的会话：20 轮对话 ×
-// （用户输入 + 思考 + 正文含表格 + 3 个工具调用 + 工具结果含 diff/代码/长输出）。
+// buildSession 构造真实规模的会话：20 轮 ×（用户输入 + 思考 + 表格正文 + 工具调用与结果）。
 func buildSession() []string {
 	var recs []string
 	wire := func(typ string, m model.Message) string {
@@ -129,8 +119,7 @@ func BenchmarkComposeWarm(b *testing.B) {
 
 // ── 消融微基准：把全量重放的成本分解到组件，逐项判定缓存/机制的去留 ──
 
-// BenchmarkGlamourRendererBuild glamour 渲染器单次构建成本。
-// 若删 glamourCache 改为 per-message 直建，每条 markdown 消息每次 compose 付一次。
+// BenchmarkGlamourRendererBuild glamour 渲染器单次构建成本（若改为 per-message 直建的边际成本）。
 func BenchmarkGlamourRendererBuild(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		r, err := glamour.NewTermRenderer(
@@ -155,9 +144,7 @@ func BenchmarkChromaLexerCreate(b *testing.B) {
 	}
 }
 
-// BenchmarkChromaHighlightCold 缓存 miss 的单块高亮边际成本
-// （lexerFor + Tokenise + Format，60 行 Go 代码——hlCache 若删，
-// 每个代码块每次 compose 重付一次）。
+// BenchmarkChromaHighlightCold 缓存 miss 的单块高亮边际成本（lexerFor + Tokenise + Format）。
 func BenchmarkChromaHighlightCold(b *testing.B) {
 	code := strings.Repeat("func handler(n int) error {\n\tif n == 0 {\n\t\treturn nil\n\t}\n\treturn handler(n - 1)\n}\n\n", 6)
 	b.ResetTimer()
@@ -175,8 +162,7 @@ func BenchmarkChromaHighlightCold(b *testing.B) {
 	}
 }
 
-// BenchmarkGlamourRenderBody 单条典型正文（标题+10 行表格+结论段）的
-// glamour 排版成本——全量重放的成本大头（profile ~65%）由此项构成。
+// BenchmarkGlamourRenderBody 单条典型正文的 glamour 排版成本——全量重放的成本大头。
 func BenchmarkGlamourRenderBody(b *testing.B) {
 	var body strings.Builder
 	body.WriteString("# 自检报告\n\n| 检查项 | 状态 | 结果 |\n|---|---|---|\n")

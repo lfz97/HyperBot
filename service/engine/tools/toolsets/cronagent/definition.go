@@ -17,9 +17,8 @@ func (l *CronAgentToolSet) Tools(context.Context) []tool.Tool {
 	return getTools(l.mgr)
 }
 
-// Close 停掉所有 schedule 的调度 goroutine 并取消在跑的那一轮。
-// 刻意不把 mgr 置 nil：Tools() 可能在本方法之后仍被框架调用，置 nil 会让
-// 后续工具调用在 nil manager 上 panic。Clear 也不落盘，存档保持原样。
+// Close 停掉所有 schedule 的调度并取消在跑的那一轮。刻意不把 mgr 置 nil：
+// Tools() 在此之后仍可能被框架调用，置 nil 会在后续调用时 panic。Clear 不落盘，存档保持原样。
 func (l *CronAgentToolSet) Close() error {
 	l.mgr.Clear()
 	return nil

@@ -1,11 +1,8 @@
 package tui
 
-// 斜杠命令注册表：命令语义与维护都在前端，后端只暴露能力接口——不再有经
-// inputCh 的字符串 magic word（引擎侧 engineCore.go 明确不处理斜杠）。
-//
-// 命令、浮层文案、执行体绑在同一条记录里：dispatchSlash 遍历注册表派发，
-// 浮层候选从注册表投影，新增命令只在这一处加一行。分成两份清单会出现
-// 「浮层能选但派发不认识」的静默错配——那种命令会被当普通消息发给模型。
+// 斜杠命令注册表：命令语义与维护都在前端，后端只暴露能力接口（引擎侧
+// 明确不处理斜杠）。命令、浮层文案、执行体绑在同一条记录里——分成两份
+// 清单会出现「浮层能选但派发不认识」的静默错配。
 
 import (
 	tea "charm.land/bubbletea/v2"
@@ -19,9 +16,8 @@ type slashCmd struct {
 	run  func(t *TUI) tea.Cmd
 }
 
-// slashRegistry 内置斜杠命令，顺序即浮层里的展示顺序。
-// NewConversation/ClearRecords 在 running 时拒绝并自行 setNotice，
-// 前端不需要看返回值。
+// slashRegistry 内置斜杠命令，顺序即浮层展示顺序。
+// NewConversation/ClearRecords 在 running 时拒绝并自行 setNotice，前端不看返回值。
 var slashRegistry = []slashCmd{
 	{"/new", "start a new conversation", func(t *TUI) tea.Cmd {
 		t.engine.NewConversation()
@@ -41,9 +37,8 @@ var slashRegistry = []slashCmd{
 	}},
 }
 
-// dispatchSlash 在注册表里查命令并执行。返回 (tea.Cmd, handled)：
-// handled=false 表示不是内置命令，由调用方按普通输入兜底提交给引擎
-// （引擎技能就是这样工作的——技能名发给模型，不由前端拦截）。
+// dispatchSlash 在注册表里查命令并执行；handled=false 表示不是内置命令，
+// 由调用方按普通输入兜底提交给引擎（引擎技能就是这样工作的）。
 func (t *TUI) dispatchSlash(input string) (tea.Cmd, bool) {
 	for _, sc := range slashRegistry {
 		if sc.cmd == input {
@@ -62,9 +57,8 @@ func builtinSlashItems() []slashItem {
 	return items
 }
 
-// fetchSlashItems 浮层候选全量：内置命令在前（高频、数量固定），引擎技能目录
-// 在后（loadSkills 随时可能重建，拉取式天然拿到最新版）。跨界拉取仍只在
-// engine.go 的 fetchSkillItems，这里只负责合并。
+// fetchSlashItems 浮层候选全量：内置命令在前，引擎技能目录在后（拉取式
+// 天然拿到最新版）。跨界拉取只在 engine.go，这里只负责合并。
 func (t *TUI) fetchSlashItems() []slashItem {
 	return append(builtinSlashItems(), t.fetchSkillItems()...)
 }

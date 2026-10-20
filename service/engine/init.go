@@ -40,8 +40,7 @@ type Engine struct {
 	builtinTools        []tool.Tool         //内置function清单，启动时确定，不自动刷新
 	builtinToolsets     []tool.ToolSet      //内置工具集，启动时确定，不自动刷新
 
-	// errBudget 连续错误自动重试预算：策略（max/gap）与状态（streak）同体，
-	// 状态流转见 errorBudget.go 的 errorBudget 类型。
+	// errBudget：连续错误自动重试预算，状态流转见 errorBudget.go
 	errBudget errorBudget
 
 	// ── 对上层 UI 暴露的可观察状态（pull 契约，方法见 uistate.go）──
@@ -78,15 +77,15 @@ func (e *Engine) newRunner() {
 			toolsets = append(toolsets, (*e).builtinToolsets...)
 			toolsets = append(toolsets, (*e).mcpToolsets...)
 			tools = append(tools, (*e).builtinTools...)
-			tools = append(tools, (*e).SqliteMemoryService.Tools()...) //将SqliteMemoryService的工具添加到全局工具列表中，使得Agent能够调用记忆相关的工具
+			tools = append(tools, (*e).SqliteMemoryService.Tools()...) //记忆工具加入全局工具列表，Agent 才能调用
 			counter, _ := tiktoken.New((*(*e).Config_p).Model.Model)   //tiktoken 计数器：compaction 阈值判定与 max_tokens 钳制共用；失败为 nil，各自 fail-open
 			opts := []llmagent.Option{
 				llmagent.WithGenerationConfig(model.GenerationConfig{
-					MaxTokens:       &(*(*e).Config_p).Model.MaxTokens, // 最大生成 token 数，来自配置 maxtokens 字段
+					MaxTokens:       &(*(*e).Config_p).Model.MaxTokens,
 					Stream:          (*(*e).Config_p).Model.Stream,
 					ReasoningEffort: (*(*e).Config_p).Model.ReasoningEffortPtr(), // 思考强度，来自配置 reasoning_effort 字段，留空不下发
-				}),				llmagent.WithTools(tools),
-				llmagent.WithGlobalInstruction((*e).Systemprompt), //系统提示词
+				}), llmagent.WithTools(tools),
+				llmagent.WithGlobalInstruction((*e).Systemprompt),
 				llmagent.WithToolSets(toolsets),
 				llmagent.WithRefreshToolSetsOnRun(true),
 				llmagent.WithSkillsLoadedContentInToolResults(true),
@@ -110,9 +109,8 @@ func (e *Engine) newRunner() {
 					CfgMaxTokens:  (*(*e).Config_p).Model.MaxTokens,
 				}), //追加beforeModel状态栏 + 动态max_tokens钳制（公式见 agent/maxtokens.go）
 			}
-			// APIType 校验只做一次。ConfigBaseAgent 内部也按同一字段选模型，但它对
-			// 未知类型是静默不设模型（agent 照样建得出来、跑起来才失败），所以这里
-			// 先挡住，给出可读的配置错误。
+			// ConfigBaseAgent 对未知 APIType 是静默不设模型（agent 建得出来、跑起来才失败），
+			// 这里先挡住，给出可读的配置错误。
 			apiType := (*(*e).Config_p).Model.APIType
 			if apiType != "openai" && apiType != "anthropic" {
 				return nil, errors.New("unsupported API type, check the Model.APIType field in your config")
@@ -141,7 +139,6 @@ func (e *Engine) refresh() {
 }
 
 func (e *Engine) loadConfig() {
-	//加载配置文件
 	c, err := config.LoadConfig((*e).HyperBotConfigPath)
 	if err != nil {
 		(*e).parkWithFatal(FatalError, fmt.Sprintf("Failed to load config: %v (press any key to exit)", err), true)
@@ -153,9 +150,7 @@ func (e *Engine) loadMCPFromConfig() []tool.ToolSet {
 	latestmcps := []tool.ToolSet{}
 	idx := 0
 	if len((*(*e).Config_p).HttpMcp) != 0 {
-		//读取配置文件中的 MCP 配置，创建 MCP ToolSet 并添加到 Toolsets 中
 		for _, mcpConfig := range (*(*e).Config_p).HttpMcp {
-			//只有配置了 Enabled 字段为 true 的 MCP 配置才会被创建 ToolSet 并添加到 Toolsets 中
 			if mcpConfig.Enabled == true {
 				if mcpConfig.Name == "" { //未配置名称时分配默认名，避免工具前缀冲突
 					mcpConfig.Name = fmt.Sprintf("mcp_%d", idx)
@@ -168,7 +163,6 @@ func (e *Engine) loadMCPFromConfig() []tool.ToolSet {
 		}
 	}
 	if len((*(*e).Config_p).StdinMcp) != 0 {
-		//读取配置文件中的 StdinMcp 配置，创建 StdinMCP ToolSet 并添加到 Toolsets 中
 		for _, stdinMcpConfig := range (*(*e).Config_p).StdinMcp {
 			if stdinMcpConfig.Enabled == true {
 				if stdinMcpConfig.Name == "" {
@@ -190,7 +184,6 @@ func (e *Engine) diffMCPtoolsets(latestmcps []tool.ToolSet) {
 
 	common := []tool.ToolSet{}
 	new := []tool.ToolSet{}
-	//先取新旧的共同清单
 	for _, latestItem := range latestmcps {
 		for _, runningItem := range (*e).mcpToolsets {
 			if runningItem.Name() == latestItem.Name() {
@@ -199,19 +192,16 @@ func (e *Engine) diffMCPtoolsets(latestmcps []tool.ToolSet) {
 		}
 	}
 
-	//如果无共同清单，直接以新的清单为准，当前的全关闭
-	//注意 if/else 互斥不能省：common 为空时下面两段循环体一次都不会执行
-	//（Close 永不发生 → 泄漏；new 组装不出任何东西 → 空清单）
+	//无共同清单：当前的全关闭，直接以新清单为准。
+	//if/else 互斥不能省：common 为空时 else 分支的循环一次都匹配不上，Close 永不发生（泄漏）。
 	if len(common) == 0 {
 		for _, ts := range (*e).mcpToolsets {
 			ts.Close()
 		}
 		(*e).mcpToolsets = latestmcps
 
-		//有共同清单的情况
 	} else {
-		//用当前的清单和共同清单做对比，匹配到同名的就break；遍历到最后都没匹配上，
-		//说明是当前清单独有的，直接关闭
+		//遍历完共同清单都没匹配上 → 当前清单独有，关闭
 		for _, running := range (*e).mcpToolsets {
 			for i := 0; i < len(common); i++ {
 				if common[i].Name() == running.Name() {
@@ -222,8 +212,7 @@ func (e *Engine) diffMCPtoolsets(latestmcps []tool.ToolSet) {
 				}
 			}
 		}
-		//用最新的清单和共同清单做对比，匹配到同名的就break；遍历到最后都没匹配上，
-		//说明是新增的，追加到new
+		//遍历完共同清单都没匹配上 → 新增，追加到 new
 		for _, latest := range latestmcps {
 			for i := 0; i < len(common); i++ {
 				if common[i].Name() == latest.Name() {

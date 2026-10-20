@@ -1,24 +1,8 @@
-// ctxbench — 上下文管理（摘要阈值 / compaction 预算）效果评测。
+// ctxbench — 评测上下文管理（摘要阈值 / compaction 预算）对"会话末态信息保真度"
+// 与 token 成本的影响，选出最优配置。各实验组共享一份内嵌唯一"事实锚点"的确定性
+// 长转录；摘要组走生产路径，保真度按锚点是否存活于末态有效上下文做确定性匹配。
 //
-// 回答的问题：在真实模型、真实摘要提示词、真实生产代码路径下，
-// 不同的摘要触发阈值与 compaction Pass-1 预算，对"会话末态信息保真度"
-// 和 token 成本的影响曲线，从而选出最优配置。
-//
-// 评测方法（配对实验）：
-//   - 一份确定性生成的长会话转录（用户/助手文本 + 工具调用与结果），
-//     内嵌唯一编号的"事实锚点"（叙事事实嵌在文本里、工具事实嵌在
-//     工具结果的首/中/尾）。
-//   - 各实验组共享同一份转录，只变阈值/预算。
-//   - 摘要组走生产路径：session.NewSummarizerWithThreshold + 真实网关模型，
-//     逐轮推进事件，ShouldSummarize 触发即调 Summarize（与 runner 异步
-//     worker 相同的驱动方式）。
-//   - 保真度指标：事实锚点是否存活于"会话末态有效上下文"（最后一次摘要
-//     + 边界之后的尾部事件），确定性字符串匹配，无需 LLM 裁判。
-//   - 成本指标：经计数装饰器统计的每次摘要调用真实 usage。
-//
-// 运行示例：
-//   go run ./cmd/ctxbench -config ~/hyperbot/.hyperbot/hyperbot.yaml -smoke
-//   go run ./cmd/ctxbench -config ~/hyperbot/.hyperbot/hyperbot.yaml
+// 运行示例：go run ./cmd/ctxbench -config ~/hyperbot/.hyperbot/hyperbot.yaml [-smoke]
 package main
 
 import (
@@ -43,9 +27,7 @@ import (
 	fwsess "trpc.group/trpc-go/trpc-agent-go/session"
 )
 
-// ---------------------------------------------------------------------------
-// 转录生成
-// ---------------------------------------------------------------------------
+// ── 转录生成 ──
 
 // 事实锚点：Value 必须在末态上下文中可被唯一匹配。
 type Fact struct {
@@ -115,13 +97,12 @@ func makeTranscript(targetEstTokens int, counter model.TokenCounter) *Transcript
 
 	round := 0
 	for tr.EstTokens < targetEstTokens {
-		// 每轮结构：用户消息(~700t) + 助手文本(~700t) + 工具调用 + 工具结果(~2100t)
-		// 事实分布：叙事事实每 3 轮 1 个（用户/助手交替）；工具事实每 4 轮 1 个。
+		// 每轮：用户消息(~700t) + 助手文本(~700t) + 工具调用 + 工具结果(~2100t)；
+		// 叙事事实每 3 轮 1 个（用户/助手交替），工具事实每 4 轮 1 个。
 		wantNarr := round%3 == 0
 		wantTool := round%4 == 0
 		pos := []string{"tool-head", "tool-mid", "tool-tail"}[(round/4)%3]
 
-		// ── 用户事件 ──
 		userText := filler(rnd, 900)
 		if wantNarr {
 			v := factCode(rnd, "GD")
@@ -131,10 +112,9 @@ func makeTranscript(targetEstTokens int, counter model.TokenCounter) *Transcript
 		addEvent(event.Event{
 			Timestamp: base.Add(time.Duration(round)*time.Minute + 0*time.Second),
 			Author:    "user",
-			Response: &model.Response{Choices: []model.Choice{{Message: model.Message{Role: model.RoleUser, Content: userText}}}},
+			Response:  &model.Response{Choices: []model.Choice{{Message: model.Message{Role: model.RoleUser, Content: userText}}}},
 		}, round)
 
-		// ── 助手文本事件 ──
 		asstText := filler(rnd, 900)
 		if round%3 == 1 {
 			v := factCode(rnd, "VX")
@@ -144,10 +124,9 @@ func makeTranscript(targetEstTokens int, counter model.TokenCounter) *Transcript
 		addEvent(event.Event{
 			Timestamp: base.Add(time.Duration(round)*time.Minute + 10*time.Second),
 			Author:    "assistant",
-			Response: &model.Response{Choices: []model.Choice{{Message: model.Message{Role: model.RoleAssistant, Content: asstText}}}},
+			Response:  &model.Response{Choices: []model.Choice{{Message: model.Message{Role: model.RoleAssistant, Content: asstText}}}},
 		}, round)
 
-		// ── 工具调用事件 ──
 		callID := fmt.Sprintf("call_%05d", round)
 		addEvent(event.Event{
 			Timestamp: base.Add(time.Duration(round)*time.Minute + 20*time.Second),
@@ -163,9 +142,9 @@ func makeTranscript(targetEstTokens int, counter model.TokenCounter) *Transcript
 					},
 				}},
 			}}},
-		}}, round)
+			}}, round)
 
-		// ── 工具结果事件（~2100t，事实嵌在首/中/尾）──
+		// 工具结果 ~2100t，事实嵌在首/中/尾
 		bodyChars := 2800
 		body := filler(rnd, bodyChars)
 		if wantTool {
@@ -225,16 +204,14 @@ func countTokens(ctx context.Context, counter model.TokenCounter, events []event
 	return total, nil
 }
 
-// ---------------------------------------------------------------------------
-// 计数装饰器：包装真实模型客户端，统计每次摘要调用的 usage
-// ---------------------------------------------------------------------------
+// ── 计数装饰器：包装真实模型客户端，统计每次摘要调用的 usage ──
 
 type callLog struct {
-	PromptTokens     int    `json:"prompt_tokens"`
-	CompletionTokens int    `json:"completion_tokens"`
-	InputChars       int    `json:"input_chars"`
+	PromptTokens     int     `json:"prompt_tokens"`
+	CompletionTokens int     `json:"completion_tokens"`
+	InputChars       int     `json:"input_chars"`
 	DurationSec      float64 `json:"duration_sec"`
-	Err              string `json:"err,omitempty"`
+	Err              string  `json:"err,omitempty"`
 }
 
 type countingModel struct {
@@ -289,9 +266,7 @@ func (c *countingModel) stats() (calls []callLog, prompt, completion int) {
 	return append([]callLog(nil), c.calls...), prompt, completion
 }
 
-// ---------------------------------------------------------------------------
-// 实验组
-// ---------------------------------------------------------------------------
+// ── 实验组 ──
 
 type ArmResult struct {
 	Arm            string  `json:"arm"`
@@ -545,8 +520,6 @@ func runBaselineArm(tr *Transcript, counter model.TokenCounter) ArmResult {
 	return r
 }
 
-// runBaselineArm 无干预基线：末态上下文 = 全量事件（信息无损上限参考）。
-
 func pct(x float64) string { return fmt.Sprintf("%.0f%%", x*100) }
 
 func main() {
@@ -599,8 +572,7 @@ func main() {
 	os.MkdirAll(*outDir, 0o755)
 	var results []ArmResult
 
-	// checkpoint 每完成一组立即落盘（JSONL 逐行追加）——进程卡死/被杀时
-	// 已完成组的数据不丢（教训：结果攒内存只在结尾写盘 = 无法安全重启）。
+	// 每组完成立即落盘（JSONL 逐行追加）：进程被杀时已完成组的数据不丢。
 	checkpoint := func(r ArmResult) {
 		results = append(results, r)
 		line, _ := json.Marshal(r)
@@ -726,7 +698,10 @@ func parseFloatList(s string) []float64 {
 	return out
 }
 
-type comboCfg struct{ t float64; b int }
+type comboCfg struct {
+	t float64
+	b int
+}
 
 func parseComboList(s string) []comboCfg {
 	var out []comboCfg

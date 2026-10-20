@@ -1,0 +1,129 @@
+package functionTools
+
+// 模型侧体量预算的回归测试：返回给模型的文本经 JSON 序列化后会放大（非法
+// UTF-8/控制字符每字节 6 字节转义），ReadFile 的窗口与 SearchInFile 的匹配列表
+// 都按 modeltext.Size 度量设防。
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strconv"
+	"testing"
+
+	"HyperBot/service/engine/tools/modeltext"
+)
+
+// inlineJSONSize 返回工具结果经 JSON 序列化后的大小，即模型实际收到的字节数。
+func inlineJSONSize(t *testing.T, res map[string]string) int {
+	t.Helper()
+	b, err := json.Marshal(res)
+	if err != nil {
+		t.Fatalf("marshal result: %v", err)
+	}
+	return len(b)
+}
+
+// 请求超大窗口时，页体量按序列化后大小收缩：合法文本收缩到预算内，二进制文件
+// 收缩得更多；NextOffset 保持分页语义，数据不丢。
+func TestReadFileShrinksWindowToBudget(t *testing.T) {
+	dir := t.TempDir()
+
+	// 64KB 的 'a'：序列化 1:1，64KB 窗口恰好超限 2 字节（引号），减半到 32KB。
+	text := make([]byte, modeltext.MaxInlineBytes)
+	for i := range text {
+		text[i] = 'a'
+	}
+	textPath := filepath.Join(dir, "text.txt")
+	if err := os.WriteFile(textPath, text, 0644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := ReadFile(context.Background(), readFileRequest{Path: textPath, Bytes: 1 << 20})
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if size := inlineJSONSize(t, res); size > modeltext.MaxInlineBytes+64 {
+		t.Fatalf("text page serialized to %d bytes, over budget %d", size, modeltext.MaxInlineBytes)
+	}
+	if res["ReadLength"] == strconv.Itoa(modeltext.MaxInlineBytes) {
+		t.Fatal("window should have been shrunk for the over-budget page")
+	}
+
+	// 分页语义：从 NextOffset 连续续读（trim 掉的截断字节会在下一页补回），
+	// 最终到达 EOF，且每一页都在预算内、页偏移严格前进。
+	binPath := filepath.Join(dir, "bin.dat")
+	bin := make([]byte, 16<<10)
+	for i := range bin {
+		bin[i] = 0xFF
+	}
+	if err := os.WriteFile(binPath, bin, 0644); err != nil {
+		t.Fatal(err)
+	}
+	offset := 0
+	prevNext := -1
+	for page := 0; ; page++ {
+		if page > 10 {
+			t.Fatal("pagination did not reach EOF within 10 pages")
+		}
+		res2, err := ReadFile(context.Background(), readFileRequest{Path: binPath, Bytes: modeltext.MaxInlineBytes, Offset: offset})
+		if err != nil {
+			t.Fatalf("ReadFile: %v", err)
+		}
+		if size := inlineJSONSize(t, res2); size > modeltext.MaxInlineBytes+64 {
+			t.Fatalf("binary page serialized to %d bytes, over budget %d", size, modeltext.MaxInlineBytes)
+		}
+		if n, _ := strconv.Atoi(res2["ReadLength"]); n >= modeltext.MaxInlineBytes {
+			t.Fatalf("binary page should be far smaller than the window, got %d bytes", n)
+		}
+		next, _ := strconv.Atoi(res2["NextOffset"])
+		if next <= prevNext {
+			t.Fatalf("NextOffset did not advance: %d after %d", next, prevNext)
+		}
+		prevNext = next
+		if res2["EOF"] == "true" {
+			if next != len(bin) {
+				t.Fatalf("EOF at NextOffset %d, want %d", next, len(bin))
+			}
+			break
+		}
+		offset = next
+	}
+}
+
+// 匹配列表超预算时截断，并附 Truncated/TotalMatches/Note。
+func TestSearchInFileTruncatesToBudget(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "many.txt")
+	// 2000 行 "match"：每条匹配序列化后 ~60 字节，总量远超 64KB 预算；
+	// 首行放一个唯一的 token 供「少量匹配」用例使用。
+	content := "unique first line\n"
+	for i := 0; i < 2000; i++ {
+		content += "match something\n"
+	}
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := SearchInFile(context.Background(), searchInFileRequest{Path: path, Regex: "match"})
+	if err != nil {
+		t.Fatalf("SearchInFile: %v", err)
+	}
+	if size := inlineJSONSize(t, res); size > modeltext.MaxInlineBytes+4096 {
+		t.Fatalf("search result serialized to %d bytes, over budget %d", size, modeltext.MaxInlineBytes)
+	}
+	if res["Truncated"] != "true" {
+		t.Fatal("expected Truncated = true")
+	}
+	if total, _ := strconv.Atoi(res["TotalMatches"]); total != 2000 {
+		t.Fatalf("TotalMatches = %q, want 2000", res["TotalMatches"])
+	}
+
+	// 少量匹配不受影响：无 Truncated 标记。
+	res2, err := SearchInFile(context.Background(), searchInFileRequest{Path: path, Regex: "unique"})
+	if err != nil {
+		t.Fatalf("SearchInFile: %v", err)
+	}
+	if _, ok := res2["Truncated"]; ok {
+		t.Fatal("small result should not be truncated")
+	}
+}

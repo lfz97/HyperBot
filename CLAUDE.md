@@ -117,7 +117,7 @@ cmd/main.go → boot.Boot() → service/engine + service/tui
 
 工具用法不写进 `systemprompt.md`——参数形状与跨工具引用都由 `tools.go` 的 `function.WithDescription` 和 jsonschema tag 承载（描述跟着工具走，cronagent 复用时也带得上）。prompt 的 `## 2. Command Execution` 只保留"该写什么命令"（OS-aware 选型），不讲"该调哪个工具"。
 
-**MCP Integration**: Configured via `hyperbot.yaml` with support for `sse` and `streamable_http` transport types. Also supports stdin-based MCP via `stdin_mcp` config.
+**MCP Integration**: Configured via `hyperbot.yaml` with support for `sse` and `streamable_http` transport types. Also supports stdin-based MCP via `stdin_mcp` config. 每个可配 `timeout` 字段（单位/秒，沿用 `httptimeout` 惯例，`<=0` 落默认值 `defaultMCPTimeout = 2min`，定义在 `toolsets/mcp.go`）——框架的 `createTimeoutContext` 把超时包在**每次 CallTool 上**（不是连接超时），所以这个值决定单次工具调用上限；长分析型 server（REA 类）务必调大。ESC 打断不受影响：取消在父 ctx 上传播，`context.Canceled` 与超时的 `DeadlineExceeded` 是两条路。两个已知行为：框架的 `WithSessionReconnect` 刻意排除超时（连接失败才重连），超时不会触发重连副作用；`toolsets/mcp.go` 用 `friendlyToolSet` 装饰器把超时错误改写成带时长与出路的文本（「retrying the same call will time out again: use a narrower task, or raise the 'timeout' field」）——框架把工具错误的 `err.Error()` 原文回给模型，裸的 `context deadline exceeded` 只会引来无意义重试。装饰器转发 `ToolMetadata`（`tool.MetadataOf(inner)`，mcpTool 实现了 MetadataProvider，不转发会让框架断言拿到零值元数据），不转发 StreamableCall（mcpTool 无流式形态）。改框架错误文本不可行：无 replace 指令，trpc-agent-go 是远端 pinned 依赖，装饰器是 HyperBot 侧唯一的拦截点。
 
 **Session Memory**: `InMemorySessionService` is stored in `(*e).SessionService_p` (Engine struct). `reload()` (called from the agent factory on every run) refreshes config/tools/skills without touching the session service, so conversation history always survives. If adding a new reload step, keep it before the factory builds the agent.
 
@@ -135,8 +135,8 @@ Auto-generated to `hyperbot.yaml` on first run. Supports:
 - `maxtokens` (int): max generation tokens per request, default 12800 (`config.Model.MaxTokens`, wired into `model.GenerationConfig.MaxTokens` via `WithGenerationConfig` in `service/engine/init.go`)
 - `show_reasoning` (bool): display reasoning/thinking content
 - `stream` (bool): enable streaming output
-- MCP services (SSE or streamable_http)
-- Stdin MCP processes
+- MCP services (SSE or streamable_http) — per-server `timeout` (seconds, per-call limit, default 120)
+- Stdin MCP processes — same `timeout` field
 
 ## Dependencies
 

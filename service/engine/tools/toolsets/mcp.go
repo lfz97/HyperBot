@@ -2,7 +2,12 @@ package toolsets
 
 import (
 	"HyperBot/service/engine/config"
+	"context"
+	"errors"
+	"fmt"
 	"time"
+
+	"trpc.group/trpc-go/trpc-agent-go/tool"
 	"trpc.group/trpc-go/trpc-agent-go/tool/mcp"
 )
 
@@ -19,34 +24,89 @@ func mcpTimeout(seconds int) time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
-func HttpMCP(config config.HttpMCP) *mcp.ToolSet {
+// HttpMCP / StdinMCP 返回包了一层超时错误改写的 ToolSet：框架把工具错误的
+// err.Error() 原文回给模型，「context deadline exceeded」既没说等多久也没说
+// 该怎么办，模型拿到后只会无意义重试（超时按次调用算，重试必然再超时）。
+// 改写成带时长与出路的文本，止住无效重试循环。ESC 打断不受影响：那是父 ctx
+// 的 cancel（context.Canceled），与本包装处理的 DeadlineExceeded 是两条路。
 
-	mcpToolSet := mcp.NewMCPToolSet(
+func HttpMCP(config config.HttpMCP) tool.ToolSet {
+	timeout := mcpTimeout(config.Timeout)
+	inner := mcp.NewMCPToolSet(
 		mcp.ConnectionConfig{
 			Transport:   string(config.Type),
 			ServerURL:   config.Endpoint,
-			Timeout:     mcpTimeout(config.Timeout),
+			Timeout:     timeout,
 			Headers:     config.Headers,
 			Description: config.Description,
 		},
 		mcp.WithName(config.Name), //决定工具前缀 {Name}_{toolName}，多server必须唯一
 		mcp.WithSessionReconnect(3),
 	)
-	return mcpToolSet
+	return &friendlyToolSet{inner: inner, timeout: timeout}
 }
 
-func StdinMCP(config config.StdinMCP) *mcp.ToolSet {
-
-	mcpToolSet := mcp.NewMCPToolSet(
+func StdinMCP(config config.StdinMCP) tool.ToolSet {
+	timeout := mcpTimeout(config.Timeout)
+	inner := mcp.NewMCPToolSet(
 		mcp.ConnectionConfig{
 			Transport:   "stdio",
 			Command:     config.Command,
 			Args:        config.Args,
-			Timeout:     mcpTimeout(config.Timeout),
+			Timeout:     timeout,
 			Description: config.Description,
 		},
 		mcp.WithName(config.Name), //决定工具前缀 {Name}_{toolName}，多server必须唯一
 		mcp.WithSessionReconnect(3),
 	)
-	return mcpToolSet
+	return &friendlyToolSet{inner: inner, timeout: timeout}
+}
+
+// ── 超时错误改写装饰器 ─────────────────────────────────────
+
+// friendlyToolSet 转发 ToolSet 三件套，Tools() 逐个包上 friendlyTool。
+type friendlyToolSet struct {
+	inner   tool.ToolSet
+	timeout time.Duration
+}
+
+func (t *friendlyToolSet) Tools(ctx context.Context) []tool.Tool {
+	var wrapped []tool.Tool
+	for _, tl := range t.inner.Tools(ctx) {
+		if _, ok := tl.(tool.CallableTool); !ok {
+			wrapped = append(wrapped, tl) // 不可调用的声明型工具原样放行
+			continue
+		}
+		wrapped = append(wrapped, &friendlyTool{inner: tl, timeout: t.timeout})
+	}
+	return wrapped
+}
+
+func (t *friendlyToolSet) Close() error { return t.inner.Close() }
+func (t *friendlyToolSet) Name() string { return t.inner.Name() }
+
+// friendlyTool 只包装 Call 的错误路径；ToolMetadata 必须转发——mcpTool 实现了
+// MetadataProvider，不转发会让框架的断言拿到零值元数据（并发安全位等）。
+// StreamableCall 不转发：mcpTool 没有流式形态，本装饰器只用于 MCP 工具集。
+type friendlyTool struct {
+	inner   tool.Tool
+	timeout time.Duration
+}
+
+func (t *friendlyTool) Declaration() *tool.Declaration { return t.inner.Declaration() }
+
+func (t *friendlyTool) ToolMetadata() tool.ToolMetadata { return tool.MetadataOf(t.inner) }
+
+func (t *friendlyTool) Call(ctx context.Context, jsonArgs []byte) (any, error) {
+	res, err := t.inner.(tool.CallableTool).Call(ctx, jsonArgs)
+	// 框架用 %w 包装超时（failed to call tool X: context deadline exceeded），
+	// errors.Is 沿链可判；用户 ESC 产生的是 context.Canceled，不会误伤。
+	if errors.Is(err, context.DeadlineExceeded) {
+		return res, fmt.Errorf(
+			"MCP server call timed out after %s (context deadline exceeded); the operation did not complete. "+
+				"Retrying the same call will time out again: use a narrower task, "+
+				"or raise the 'timeout' field of this MCP server in hyperbot.yaml",
+			t.timeout)
+	}
+	return res, err
 }

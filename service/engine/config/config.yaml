@@ -18,6 +18,7 @@ model:
 
 # MCP 服务配置
 # Type 可选: "sse" 或 "streamable_http"
+# timeout 单位/秒，单次工具调用的超时；不填默认 120。长分析型 server（如逆向、反编译）务必调大
 http_mcp:
   - name: "mcpexec"
     enabled: true
@@ -25,6 +26,7 @@ http_mcp:
     endpoint: "http://127.0.0.1:8080/mcp"
     headers: {}  # 可选，如: {"Authorization": "Bearer xxx"}
     description: "MCP Exec ToolSet for executing commands via HTTP"
+    timeout: 120
 
   # - name: "another-mcp"
   #   enabled: true
@@ -32,6 +34,7 @@ http_mcp:
   #   endpoint: "http://127.0.0.1:8080/mcp"
   #   headers: {}
   #   description: "Another MCP ToolSet example"
+  #   timeout: 600
 
 # 标准输入 MCP 配置
 stdin_mcp:
@@ -40,9 +43,11 @@ stdin_mcp:
     command: "npx"
     args: ["-y", "mcp-exec"]
     description: "MCP Exec ToolSet for executing commands via standard input"
+    timeout: 120
 
   # - name: "another-stdin-mcp"
   #   enabled: true
   #   command: "node"
   #   args: ["path/to/another/mcp"]
   #   description: "Another MCP ToolSet example"
+  #   timeout: 600

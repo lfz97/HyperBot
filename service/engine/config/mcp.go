@@ -14,6 +14,9 @@ type HttpMCP struct {
 	Endpoint    string
 	Headers     map[string]string
 	Description string
+	// Timeout 单次工具调用的超时，单位/秒（沿用 model.httptimeout 惯例）。
+	// 长分析型 server（如逆向工具）务必调大；<=0 用默认值 defaultMCPTimeout。
+	Timeout int
 }
 
 type StdinMCP struct {
@@ -22,4 +25,6 @@ type StdinMCP struct {
 	Command     string
 	Args        []string
 	Description string
+	// Timeout 同 HttpMCP.Timeout
+	Timeout int
 }

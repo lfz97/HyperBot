@@ -21,10 +21,12 @@ type slashCmd struct {
 var slashRegistry = []slashCmd{
 	{"/new", "start a new conversation", func(t *TUI) tea.Cmd {
 		t.engine.NewConversation()
+		t.expand.reset() // 新会话无历史块，展开状态一并清空
 		return nil
 	}},
 	{"/clear", "clear the screen", func(t *TUI) tea.Cmd {
 		t.engine.ClearRecords()
+		t.expand.reset()
 		return nil
 	}},
 	{"/resume", "resume an existing session", func(t *TUI) tea.Cmd {

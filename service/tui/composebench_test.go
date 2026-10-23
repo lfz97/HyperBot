@@ -110,10 +110,10 @@ func BenchmarkComposeWarm(b *testing.B) {
 	t := newBenchTUI()
 	st := newPullState()
 	st.width = 120
-	_ = t.composeView(st) // 预热缓存
+	_, _ = t.composeView(st) // 预热缓存
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = t.composeView(st)
+		_, _ = t.composeView(st)
 	}
 }
 

@@ -99,4 +99,10 @@ func (t *TUI) openResume() {
 
 // checkoutSession 提交弹框选择；错误引擎侧已自行记录，true=成功（据此关框），
 // false=失败（弹框保持可重选）。
-func (t *TUI) checkoutSession(id string) bool { return t.engine.CheckoutSession(id) == nil }
+func (t *TUI) checkoutSession(id string) bool {
+	if t.engine.CheckoutSession(id) == nil {
+		t.expand.reset() // 换会话：展开状态随历史一起作废
+		return true
+	}
+	return false
+}

@@ -10,35 +10,41 @@ import (
 	"trpc.group/trpc-go/trpc-agent-go/model"
 )
 
-// composeView 全量渲染：从消息日志整体重组视图文本（无缓存、纯函数式重放，
+// composeView 全量渲染：从消息日志整体重组视图块（无缓存、纯函数式重放，
 // 正确性不依赖记账），运行在 pull 链的 goroutine 上。
 // 视觉语言对齐 crush：用户消息 primary 左线、助手块左缩进、思考块底色盒、
 // 工具行 "✓ name args"；块与块之间以空行分隔。
-func (t *TUI) composeView(st *pullState) string {
+// 思考块与工具块默认折叠（collapse.go），展开状态经 t.expand 查询；
+// 返回值为视图全文与可折叠块的行号索引（点击命中用）。
+func (t *TUI) composeView(st *pullState) (string, []blockSpan) {
 	recs := t.fetchRecords()
-	var parts []string
+	var blocks []viewBlock
 	if st.bannerDone {
-		parts = append(parts, strings.Trim(st.banner, "\n"))
+		blocks = append(blocks, viewBlock{text: strings.Trim(st.banner, "\n")})
 	}
 	w := textWidth(st.width)
 
 	tailReasoning := &strings.Builder{} // 流式尾段：末尾连续 delta 累积的思考/正文
 	tailContent := &strings.Builder{}
 	toolBuf := map[string]*wireToolCall{} // 工具调用缓冲（随扫描重建）
-	for _, line := range recs {
+	for i, line := range recs {
 		var rec wireRecord
 		if err := json.Unmarshal([]byte(line), &rec); err != nil {
 			continue // 坏行直接跳过（记录是自描述 JSON，正常流程不会出现）
 		}
 
-		var out string
 		if rec.Type == "delta" {
 			var m model.Message
 			if rec.Msg == nil || json.Unmarshal(rec.Msg, &m) != nil {
 				continue
 			}
 			if m.Role == "tool" {
-				out = renderToolResult(&m, toolBuf, w)
+				// 结果以 delta 先到时由它消费缓冲：ID 用该记录序号（重放确定性
+				// 保证后续定稿记录不会再命中缓冲，块不重复）。
+				if entry, result := takeToolResult(&m, toolBuf); entry != nil {
+					id := fmt.Sprintf("tool:%d", i)
+					blocks = append(blocks, viewBlock{id: id, text: t.toolBlock(entry, result, id, w)})
+				}
 			} else {
 				tailReasoning.WriteString(m.ReasoningContent)
 				tailContent.WriteString(m.Content)
@@ -51,45 +57,46 @@ func (t *TUI) composeView(st *pullState) string {
 				continue
 			}
 			if m.Role == "tool" {
-				out = renderToolResult(&m, toolBuf, w)
+				if entry, result := takeToolResult(&m, toolBuf); entry != nil {
+					id := fmt.Sprintf("tool:%d", i)
+					blocks = append(blocks, viewBlock{id: id, text: t.toolBlock(entry, result, id, w)})
+				}
 			} else {
 				bufferToolCalls(&m, toolBuf)
-				// 思考块并入本条输出：定稿自带则用它，否则用流式尾累积（两者本应同文），
-				// 流式与定稿观感一致无跳变。
-				var body []string
+				// 思考块并入本条：定稿自带则用它，否则用流式尾累积（两者本应
+				// 同文），只渲染一次不重复；ID 用定稿记录序号（跨重组稳定）。
+				// 尾段的流式展开在此消费，但清理在 applyFrame 的迁移检测做
+				// （这里绝不能清——重放每帧扫历史记录，见 clearTail 注释）。
+				thinkID := fmt.Sprintf("think:%d", i)
 				if m.ReasoningContent != "" {
-					body = append(body, renderThinking(m.ReasoningContent, w))
+					blocks = append(blocks, viewBlock{id: thinkID,
+						text: t.thinkingBlock(m.ReasoningContent, thinkID, w)})
 				} else if tailReasoning.Len() > 0 {
-					body = append(body, renderThinking(tailReasoning.String(), w))
+					blocks = append(blocks, viewBlock{id: thinkID,
+						text: t.thinkingBlock(tailReasoning.String(), thinkID, w)})
 				}
 				tailReasoning.Reset()
 				if strings.TrimSpace(m.Content) != "" {
-					body = append(body, renderBody(m.Content, w))
+					blocks = append(blocks, viewBlock{text: renderBody(m.Content, w)})
 				}
 				tailContent.Reset()
-				out = strings.Join(body, "\n\n")
 			}
 
 		} else if view := boundaryViews[rec.Type]; view != nil {
 			// 边界记录：流式尾段先于它上屏并清空累积，再拼本块渲染。
-			out = flushTail(st, tailReasoning, tailContent, w) + view(rec.Text, w)
+			// 尾段定下唯一块身份（本记录序号），不是共享伪 ID。
+			blocks = t.flushTailBlocks(blocks, tailReasoning, tailContent, w, fmt.Sprintf("think:%d", i))
+			blocks = append(blocks, viewBlock{text: view(rec.Text, w)})
 		}
-		if out != "" {
-			parts = append(parts, out)
-		}
 	}
-	// 流式尾段 live：按累积内容整体出渲染版（流式期间看到的就是最终形态）
-	if tailReasoning.Len() > 0 {
-		parts = append(parts, renderThinking(tailReasoning.String(), w))
-	}
-	if tailContent.Len() > 0 {
-		parts = append(parts, renderBody(tailContent.String(), w))
-	}
+	// 流式尾段 live：按累积内容整体出渲染版（流式期间看到的就是最终形态）。
+	// 尚无记录序号可依附，用伪 ID（冲刷时清理，见 flushTailBlocks）。
+	blocks = t.flushTailBlocks(blocks, tailReasoning, tailContent, w, tailThinkID)
 	// 终态消息拼在最后（引擎置 fatal 后 park，不再有新记录）
 	if st.lastFatal != nil && st.lastFatal.Text != "" {
-		parts = append(parts, renderFatal(st.lastFatal.Text, st.lastFatal.Style, w))
+		blocks = append(blocks, viewBlock{text: renderFatal(st.lastFatal.Text, st.lastFatal.Style, w)})
 	}
-	return strings.Join(parts, "\n\n") + "\n"
+	return composeBlocks(blocks)
 }
 
 // ── 边界记录渲染（签名统一：文本 + 可用宽 w，一个块一个函数）──
@@ -138,16 +145,17 @@ func bufferToolCalls(m *model.Message, toolBuf map[string]*wireToolCall) {
 	}
 }
 
-// renderToolResult 渲染工具块：结果（Role=tool 的框架 message）到达时，
-// 按 ToolID 匹配此前缓冲的工具调用，交 toolView 渲染。
-// 无匹配时宁可不出工具行，也不凭空渲染。
-func renderToolResult(m *model.Message, toolBuf map[string]*wireToolCall, w int) string {
+// takeToolResult 渲染工具块的第一步：结果（Role=tool 的框架 message）到达时，
+// 按 ToolID 匹配此前缓冲的工具调用并从缓冲消费掉（delta 与定稿谁先到谁消费，
+// 重放确定性保证同一结果只渲染一次）。
+// 无匹配时返回 nil——宁可不出工具行，也不凭空渲染。
+func takeToolResult(m *model.Message, toolBuf map[string]*wireToolCall) (*wireToolCall, string) {
 	entry := toolBuf[m.ToolID]
 	if entry == nil {
-		return ""
+		return nil, ""
 	}
 	delete(toolBuf, m.ToolID)
-	return msgIndent.Render(toolView(entry.name, []byte(entry.args), m.Content, w))
+	return entry, m.Content
 }
 
 // renderThinking 思考块：弱化左竖线 + 弱化文本（quote 风格）。
@@ -159,24 +167,6 @@ func renderThinking(r string, w int) string {
 		gw = 10
 	}
 	return msgIndent.Render(thinkingQuote(gw).Render(r))
-}
-
-// flushTail 渲染流式尾段并清空累积，返回值作为边界记录（user/slash/warn/
-// error/summary）输出的一部分——边界记录到达时，未定稿的流式内容先于它上屏。
-func flushTail(st *pullState, tailReasoning, tailContent *strings.Builder, w int) string {
-	var parts []string
-	if tailReasoning.Len() > 0 {
-		parts = append(parts, renderThinking(tailReasoning.String(), w))
-	}
-	if tailContent.Len() > 0 {
-		parts = append(parts, renderBody(tailContent.String(), w))
-	}
-	tailReasoning.Reset()
-	tailContent.Reset()
-	if len(parts) == 0 {
-		return ""
-	}
-	return strings.Join(parts, "\n\n") + "\n\n"
 }
 
 // userBlock 用户消息：primary 左线 + markdown 渲染。保留换行，
@@ -249,9 +239,9 @@ func renderNotice(kind, text string) string {
 // 措辞用 commands：浮层同时含前端内置命令与引擎技能。
 func composeHint(running bool) string {
 	if running {
-		return noticeSub("esc to interrupt · type / for commands")
+		return noticeSub("esc to interrupt · type / for commands · click ▸ to expand")
 	}
-	return noticeSub("type / for commands")
+	return noticeSub("type / for commands · click ▸ to expand")
 }
 
 // renderFatal 把终态消息按样式上色并折行（引擎只存语义原文与 style 字符串）。

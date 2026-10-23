@@ -29,8 +29,9 @@ type pullState struct {
 	banner        string    // 启动横幅（就绪后进视图头部，只渲染一次）
 	bannerDone    bool
 	lastFatal     *wireFatal
-	view          string // 最近一次重组的视图全文（帧恒携带，重复帧交给框架去重）
-	width         int    // 本轮重组用的组件宽度（glamour 按此换行）
+	view          string   // 最近一次重组的视图全文（帧恒携带，重复帧交给框架去重）
+	spans         []blockSpan // 视图的可折叠块行号索引（与 view 同源同帧）
+	width         int      // 本轮重组用的组件宽度（glamour 按此换行）
 }
 
 func newPullState() *pullState {
@@ -68,6 +69,12 @@ func (t *TUI) pullOnce(w int) (frameMsg, bool) {
 	st := t.pull
 	st.width = w
 
+	// 点击折叠切换：绕过 composeInterval 节流（点击反馈要即时）。
+	if t.forceCompose.CompareAndSwap(true, false) {
+		st.pending = true
+		st.lastCompose = time.Time{}
+	}
+
 	rs, ok := t.fetchRunState()
 	if !ok {
 		return frameMsg{}, false // 坏帧不致盲：下一轮重拉
@@ -99,7 +106,7 @@ func (t *TUI) pullOnce(w int) (frameMsg, bool) {
 		st.pending = false
 		st.lastCompose = time.Now()
 		st.composedWidth = w
-		st.view = t.composeView(st)
+		st.view, st.spans = t.composeView(st)
 	}
 
 	// 通知栏槽位：TTL 内显示通知，否则回落常驻 hint（运行态多一条 esc 提示）。
@@ -107,6 +114,7 @@ func (t *TUI) pullOnce(w int) (frameMsg, bool) {
 
 	return frameMsg{
 		view:    st.view,
+		spans:   st.spans,
 		todo:    todoLines(t.fetchTodoText()),
 		notice:  notice,
 		running: rs.Running,

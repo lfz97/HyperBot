@@ -12,6 +12,7 @@ import (
 
 	"trpc.group/trpc-go/trpc-agent-go/model"
 )
+
 // mm 构造 assistant model.Message（与 engine.wireMsg 序列化后同形）。
 func mm(role, reasoning, content string) model.Message {
 	return model.Message{Role: model.Role(role), ReasoningContent: reasoning, Content: content}
@@ -128,6 +129,30 @@ func TestMouseClickTogglesAndAnchors(t *testing.T) {
 	tu.mouseClickHandler(tea.MouseClickMsg{X: 0, Y: 0, Button: tea.MouseLeft})
 	if tu.anchor != nil || tu.forceCompose.Load() {
 		t.Fatalf("miss click must be a no-op")
+	}
+}
+
+func TestMouseClickBelowViewportIsNoop(t *testing.T) {
+	// 视口下方（todo/输入框/底栏）不是消息区：line = m.Y + YOffset 落在
+	// 视口外但仍属全文的行号上，若无守卫，行号撞上块头就会误切换并设锚。
+	// （历史 bug：无显式守卫，上滚回看时点输入框可误命中屏幕外的块。）
+	tu := NewTui(&fakeView{})
+	tu.vp.SetHeight(10)
+	tu.vp.SetWidth(80)
+	tu.vp.SetContent(strings.Repeat("pad\n", 30))
+
+	// 屏幕行 13 在视口外（height=10）：行号 13 撞块头也必须扑空
+	tu.spans = []blockSpan{{start: 13, id: "tool:99"}}
+	tu.mouseClickHandler(tea.MouseClickMsg{X: 0, Y: 13, Button: tea.MouseLeft})
+	if tu.expand.expanded("tool:99") || tu.anchor != nil {
+		t.Fatalf("click below viewport must be a no-op")
+	}
+
+	// 边界：视口最后一行仍有效
+	tu.spans = []blockSpan{{start: 9, id: "tool:98"}}
+	tu.mouseClickHandler(tea.MouseClickMsg{X: 0, Y: 9, Button: tea.MouseLeft})
+	if !tu.expand.expanded("tool:98") {
+		t.Fatalf("click on last viewport row must still hit")
 	}
 }
 
@@ -272,22 +297,30 @@ func truncAnsi(s string, n int) string {
 	return flat[:n] + "…"
 }
 
-// 折叠态单行块必须落在最宽可用宽内：折叠行不走 hardWrap，超宽会让终端
-// 视觉折行、整屏行号错位（点击命中依赖行号对齐）。
+// 折叠态单行块必须落在本轮视图宽度内：折叠行不走 hardWrap，超宽会让终端
+// 视觉折行、整屏行号错位（点击命中依赖行号对齐）。限宽分 120/40 两档逐行
+// 断言（历史 bug：摘要截断固定 60/80 runes、不跟实际宽度走，窄终端必溢出）。
 func TestCollapsedLinesWithinWidth(t *testing.T) {
-	const w = 120
 	cases := []struct {
-		name string
-		out  string
+		name  string
+		build func(w int) string
 	}{
-		{"折叠思考行", msgIndent.Render(thinkingCollapsedView(strings.Repeat("c", 3000)))},
-		{"折叠工具行-长路径", msgIndent.Render(toolCollapsedView("ReadFile", []byte(`{"Path":"` + strings.Repeat("/", 200) + `f.go"}`)))},
-		{"折叠工具行-长参数", msgIndent.Render(toolCollapsedView("exec", []byte(`{"Process":"bash","Args":["-c","` + strings.Repeat("x", 300) + `"]}`)))},
+		{"折叠思考行", func(_ int) string {
+			return msgIndent.Render(thinkingCollapsedView(strings.Repeat("c", 3000)))
+		}},
+		{"折叠工具行-长路径", func(w int) string {
+			return msgIndent.Render(toolCollapsedView("ReadFile", []byte(`{"Path":"`+strings.Repeat("/", 200)+`f.go"}`), w))
+		}},
+		{"折叠工具行-长参数", func(w int) string {
+			return msgIndent.Render(toolCollapsedView("exec", []byte(`{"Process":"bash","Args":["-c","`+strings.Repeat("x", 300)+`"]}`), w))
+		}},
 	}
-	for _, c := range cases {
-		for i, ln := range strings.Split(c.out, "\n") {
-			if lw := ansi.StringWidth(ln); lw > w {
-				t.Errorf("%s line %d overflows (%d > %d): %q", c.name, i, lw, w, truncAnsi(ln, 60))
+	for _, w := range []int{120, 40} {
+		for _, c := range cases {
+			for i, ln := range strings.Split(c.build(w), "\n") {
+				if lw := ansi.StringWidth(ln); lw > w {
+					t.Errorf("w=%d %s line %d overflows (%d > %d): %q", w, c.name, i, lw, w, truncAnsi(ln, 60))
+				}
 			}
 		}
 	}

@@ -22,13 +22,14 @@ import (
 	"sync"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // tailThinkID 流式尾段思考块的伪 ID。
 const tailThinkID = "tail:think"
 
-// argSummaryMaxRunes 折叠工具行参数摘要的截断长度：摘要 + 缩进 + 头部
-// ("✓ " + 工具名) 须落在最窄可用宽内，取保守值。
+// argSummaryMaxRunes 折叠工具行参数摘要的截断长度上限；真实预算 =
+// min(此值, 本轮视图宽度 - 缩进 - 头部宽)（见 toolArgSummary）。
 const argSummaryMaxRunes = 60
 
 // viewBlock compose 产出的一个渲染块。
@@ -119,36 +120,43 @@ func thinkingExpandedHeader() string {
 // toolBlock 工具块：默认折叠成头部行 + 首个参数摘要；点开后完整 toolView。
 func (t *TUI) toolBlock(entry *wireToolCall, result string, id string, w int) string {
 	if !t.expand.expanded(id) {
-		return msgIndent.Render(toolCollapsedView(entry.name, []byte(entry.args)))
+		return msgIndent.Render(toolCollapsedView(entry.name, []byte(entry.args), w))
 	}
 	return msgIndent.Render(toolView(entry.name, []byte(entry.args), result, w))
 }
 
 // toolCollapsedView 折叠态工具行：✓ name + 首个参数摘要（路径优先），
-// 摘要本身就是"还有内容"的提示。
-func toolCollapsedView(name string, args []byte) string {
+// 摘要本身就是"还有内容"的提示。截断预算按本轮视图宽度 w 算。
+func toolCollapsedView(name string, args []byte, w int) string {
 	head := toolHeader(name)
-	if s := toolArgSummary(name, args); s != "" {
+	if s := toolArgSummary(name, args, w); s != "" {
 		head += "  " + colorText(cFgMostSubtle, s)
 	}
 	return head
 }
 
 // toolArgSummary 折叠态参数摘要：目标路径优先，否则首个参数值。
-// 截断到行宽预算内：折叠行不走 hardWrap（单行块），超宽会让终端视觉
-// 折行、整屏行号错位（点击命中依赖行号对齐）。
-func toolArgSummary(name string, args []byte) string {
+// 折叠行不走 hardWrap（单行块），超宽会让终端视觉折行、整屏行号错位
+// （点击命中依赖行号对齐）——预算必须跟着本轮实际宽度走：预算到 0 就
+// 不出摘要，宁可缺失不溢出。截断用 ansi.Truncate（显示宽度感知）而非
+// rune 数：CJK 路径 60 rune 可顶出远超宽度的列数。
+func toolArgSummary(name string, args []byte, w int) string {
+	budget := min(argSummaryMaxRunes,
+		w-msgIndentW-2-ansi.StringWidth(toolHeader(name)))
+	if budget <= 0 {
+		return ""
+	}
 	obj, ok := decodeJSONObject(args)
 	if !ok {
 		return ""
 	}
 	if p := argPath(obj); p != "" {
-		return truncateRunes(compactLine(p), argSummaryMaxRunes)
+		return ansi.Truncate(compactLine(p), budget, "…")
 	}
 	skip := codeArgFields[name] // 代码内容字段不进摘要（展开态也不展示）
 	for _, r := range argRows(name, args) {
 		if r.key != skip {
-			return r.val // argRows 内部已截断
+			return ansi.Truncate(compactLine(r.val), budget, "…")
 		}
 	}
 	return ""
@@ -222,6 +230,13 @@ func spanByID(spans []blockSpan, id string) (blockSpan, bool) {
 // 触发绕过节流的立即重组。浮层打开时点击归浮层交互，此处让路。
 func (t *TUI) mouseClickHandler(m tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	if m.Button != tea.MouseLeft || t.slashPopup.isVisible() || t.resume.isVisible() {
+		return t, nil
+	}
+	// 视口下方（todo/输入框/底栏）不是消息区：不加守卫时 line = m.Y +
+	// YOffset 会算出视口外但仍属全文的行号，上滚回看时点输入框可能误命中
+	// 屏幕外某行的块头并设锚拽走滚动位置。贴底时行号必然越过全文末尾
+	// 自然扑空，所以常态无感，只有上滚时才咬人——必须有显式守卫。
+	if m.Y >= t.vp.Height() {
 		return t, nil
 	}
 	// viewport 竖向从屏幕第 0 行起（draw 里消息区是纵向第一个块，左右

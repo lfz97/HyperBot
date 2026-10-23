@@ -17,7 +17,7 @@ import (
 var (
 	cPrimary       = lipgloss.Color("#6B50FF") // Charple：用户左线、品牌色
 	cInfo          = lipgloss.Color("#00A4FF") // Malibu：工具名、链接、标题
-	cSuccess       = lipgloss.Color("#00FFB2") // Julep：工具 ✓、成功
+	cSuccess       = lipgloss.Color("#00FFB2") // Julep：成功状态
 	cSuccessSubtle = lipgloss.Color("#12C78F") // Guac：链接文本、成功正文
 	cError         = lipgloss.Color("#EB4268") // Sriracha：错误 tag
 	cWarning       = lipgloss.Color("#F5EF34") // Mustard：警告
@@ -156,24 +156,21 @@ func summaryText(text string, w int) string {
 	return colorLines(cSuccessSubtle, wrapStatusText("summary generated:\n"+text, w))
 }
 
-// ── 工具块头部行（crush toolHeader：状态图标 + info 工具名）──
+// ── 工具块头部行（crush toolHeader：折叠三角 + info 工具名）──
 // 参数行/结果行/内容块由 toolview.go 的 toolView 负责。
 
-// toolHeader 头部行：折叠三角 + 状态图标 + 工具名。
-// 折叠/展开三角是点击提示；失败必须保留 ✗——默认折叠态是唯一可见状态，
-// 不能把失败信号只藏在展开内容里。limit 为去缩进后的可用列数，超长名字
-// 按显示宽度截断：折叠行不折行，溢出会让终端视觉换行、破坏行号命中。
-func toolHeader(name string, failed, expanded bool, limit int) string {
+// toolHeader 头部行：折叠三角 + 工具名。折叠/展开三角是点击提示；
+// 刻意不显示 ✓/✗：框架把工具错误直接写成 Content，没有结构化错误位，
+// 文本枚举必然误判，折叠行只呈现"可展开"这一确定信息。
+// limit 为去缩进后的可用列数，超长名字按显示宽度截断：折叠行不折行，
+// 溢出会让终端视觉换行、破坏行号命中。
+func toolHeader(name string, expanded bool, limit int) string {
 	arrow := "▸"
 	if expanded {
 		arrow = "▾"
 	}
-	icon, iconColor := "✓", cSuccess
-	if failed {
-		icon, iconColor = "✗", cError
-	}
-	prefix := colorText(cFgMostSubtle, arrow) + " " + colorText(iconColor, icon) + " "
-	maxName := limit - 4 // 三角(1)+空格(1)+图标(1)+空格(1)
+	prefix := colorText(cFgMostSubtle, arrow) + " "
+	maxName := limit - 2 // 三角(1)+空格(1)
 	if maxName < 1 {
 		maxName = 1
 	}

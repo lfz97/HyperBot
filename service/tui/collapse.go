@@ -143,27 +143,20 @@ func thinkingExpandedHeader() string {
 // toolBlock 工具块：默认折叠成头部行 + 首个参数摘要；点开后完整 toolView。
 func (t *TUI) toolBlock(entry *wireToolCall, result string, id string, w int) string {
 	if !t.expand.expanded(id) {
-		return msgIndent.Render(toolCollapsedView(entry.name, []byte(entry.args), result, w))
+		return msgIndent.Render(toolCollapsedView(entry.name, []byte(entry.args), w))
 	}
 	return msgIndent.Render(toolView(entry.name, []byte(entry.args), result, w))
 }
 
-// toolCollapsedView 折叠态工具行：▸ + 状态图标 + name + 摘要，失败时摘要
-// 优先展示错误文本（折叠态是默认可见态，失败信号不能藏在展开内容里）。
+// toolCollapsedView 折叠态工具行：▸ name + 首个参数摘要（路径优先），
 // 摘要本身就是"还有内容"的提示。截断预算按本轮视图宽度 w 算。
-func toolCollapsedView(name string, args []byte, result string, w int) string {
-	failed := toolFailed(result)
-	head := toolHeader(name, failed, false, w-msgIndentW)
+// 不在折叠行做成功/失败判定：框架没有结构化错误位，枚举错误文本必然
+// 漏判/误判；结果内容展开后可见，状态图标只会给出不可靠的暗示。
+func toolCollapsedView(name string, args []byte, w int) string {
+	head := toolHeader(name, false, w-msgIndentW)
 	budget := min(argSummaryMaxRunes, w-msgIndentW-2-ansi.StringWidth(head))
-	summary := ""
-	if failed {
-		summary = ansi.Truncate(toolErrorSummary(result), max(0, budget), "…")
-	}
-	if summary == "" {
-		summary = toolArgSummary(name, args, budget)
-	}
-	if summary != "" {
-		head += "  " + colorText(cFgMostSubtle, summary)
+	if s := toolArgSummary(name, args, budget); s != "" {
+		head += "  " + colorText(cFgMostSubtle, s)
 	}
 	return head
 }

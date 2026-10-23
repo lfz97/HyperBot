@@ -309,10 +309,10 @@ func TestCollapsedLinesWithinWidth(t *testing.T) {
 			return msgIndent.Render(thinkingCollapsedView(strings.Repeat("c", 3000)))
 		}},
 		{"折叠工具行-长路径", func(w int) string {
-			return msgIndent.Render(toolCollapsedView("ReadFile", []byte(`{"Path":"`+strings.Repeat("/", 200)+`f.go"}`), "", w))
+			return msgIndent.Render(toolCollapsedView("ReadFile", []byte(`{"Path":"`+strings.Repeat("/", 200)+`f.go"}`), w))
 		}},
 		{"折叠工具行-长参数", func(w int) string {
-			return msgIndent.Render(toolCollapsedView("exec", []byte(`{"Process":"bash","Args":["-c","`+strings.Repeat("x", 300)+`"]}`), "", w))
+			return msgIndent.Render(toolCollapsedView("exec", []byte(`{"Process":"bash","Args":["-c","`+strings.Repeat("x", 300)+`"]}`), w))
 		}},
 	}
 	for _, w := range []int{120, 40} {
@@ -417,30 +417,6 @@ func TestExpandedThinkingIndentAligned(t *testing.T) {
 	if headCol != bodyCol {
 		t.Fatalf("thinking body double-indented: header col %d, body border col %d\n%s",
 			headCol, bodyCol, ansi.Strip(view))
-	}
-}
-
-func TestToolCollapsedFailureStatus(t *testing.T) {
-	tu := NewTui(&fakeView{})
-	failed := tu.toolBlock(
-		&wireToolCall{name: "LocalExec_run", args: `{"Process":"false"}`},
-		`{"Id":"x","Status":"failed","ExitCode":"1","Error":"exit status 1","Output":"boom"}`,
-		"tool:0", 100)
-	flat := ansi.Strip(failed)
-	if !strings.Contains(flat, "✗") {
-		t.Fatalf("failed tool must show ✗ in collapsed row: %q", flat)
-	}
-	if !strings.Contains(flat, "exit status 1") {
-		t.Fatalf("failed tool must surface error summary: %q", flat)
-	}
-
-	ok := tu.toolBlock(
-		&wireToolCall{name: "LocalExec_run", args: `{"Process":"true"}`},
-		`{"Id":"y","Status":"done","ExitCode":"0","Output":"ok"}`,
-		"tool:1", 100)
-	flat = ansi.Strip(ok)
-	if !strings.Contains(flat, "✓") || strings.Contains(flat, "✗") {
-		t.Fatalf("successful tool must show ✓: %q", flat)
 	}
 }
 

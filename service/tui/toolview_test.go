@@ -484,36 +484,3 @@ func TestToolViewTruncationNotMidEscape(t *testing.T) {
 		t.Errorf("escape fragment in truncated display:\n%s", flat)
 	}
 }
-
-func TestToolFailedHeuristics(t *testing.T) {
-	cases := []struct {
-		name   string
-		result string
-		want   bool
-	}{
-		{"localexec failed", `{"Error":"exit status 1","Status":"failed","ExitCode":"1"}`, true},
-		{"localexec done", `{"Error":"","Status":"done","ExitCode":"0"}`, false},
-		{"numeric exit code", `{"ExitCode":2}`, true},
-		{"zero exit code", `{"ExitCode":0}`, false},
-		{"status killed", `{"Status":"killed"}`, true},
-		{"framework error", `Error: callable tool execution failed`, true},
-		{"mcp timeout", `MCP server call timed out after 30s (context deadline exceeded)`, true},
-		{"plain success", `all good`, false},
-		{"error word inside output", `{"Output":"error: not a failure"}`, false},
-		{"empty", ``, false},
-	}
-	for _, c := range cases {
-		if got := toolFailed(c.result); got != c.want {
-			t.Errorf("%s: toolFailed=%v want %v (%q)", c.name, got, c.want, c.result)
-		}
-	}
-
-	// 折叠态对超大结果跳过识别（避免每帧全量解析）；展开态不限长度。
-	big := `{"Error":"boom","Output":"` + strings.Repeat("x", toolFailProbeMax) + `"}`
-	if toolFailed(big) {
-		t.Errorf("collapsed toolFailed must skip oversized results")
-	}
-	if !toolFailedLimited(big, 0) {
-		t.Errorf("expanded toolFailed must inspect oversized results")
-	}
-}

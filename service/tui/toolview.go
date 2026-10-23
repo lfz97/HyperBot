@@ -274,6 +274,122 @@ func resultParts(name string, result string) ([]kvRow, []textBlock) {
 	return []kvRow{{key: "result", val: truncateRunes(compactLine(str), argValueMaxRunes)}}, nil
 }
 
+// ── 失败状态识别 ─────────────────────────────────────────
+
+// toolFailProbeMax 折叠态失败识别的结果长度上限。折叠行每帧重放都要判断，
+// 超大结果（ReadFile 整文件、命令长输出）全量 JSON 解析会拖慢渲染；超过
+// 上限的折叠行按成功处理——漏判只是少一个 ✗，展开后内容仍完整（展开态
+// 调用不限长度，见 toolView）。
+const toolFailProbeMax = 256 << 10
+
+// toolFailed 从工具结果文本推断失败状态。框架把工具返回的 error 直接写成
+// tool message 的 Content（没有结构化状态位），所以只能覆盖已知形态：
+//   - JSON 对象 Error/error 字段非空（localexec 等）
+//   - Status 为 failed/killed/error
+//   - ExitCode 非 0
+//   - 纯文本以错误前缀开头（框架的 "Error: ..." / "tool execution error: ..."
+//     / MCP 超时改写文案）
+//
+// 漏判只会少一个 ✗（展开后仍能看到内容）；误判会把成功标成失败——因此只认
+// 明确信号，不做 "failed" 子串搜索。
+func toolFailed(result string) bool { return toolFailedLimited(result, toolFailProbeMax) }
+
+// toolFailedLimited maxLen<=0 表示不限制长度（展开态用）。
+func toolFailedLimited(result string, maxLen int) bool {
+	s := strings.TrimSpace(result)
+	if s == "" {
+		return false
+	}
+	// 纯文本错误只看开头一小段（框架/MCP 文案都很短）：不 lower 整份结果，
+	// 大输出在折叠态每帧重放时不该再付一次全量转换的成本。
+	head := s
+	if len(head) > 128 {
+		head = head[:128]
+	}
+	lower := strings.ToLower(head)
+	for _, prefix := range []string{
+		"error:", "error ", "failed:", "failed to ", "failure:",
+		"tool execution error:", "tool execution panic:",
+		"mcp server call timed out",
+		"context deadline exceeded", "context canceled",
+	} {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	if maxLen > 0 && len(s) > maxLen {
+		return false
+	}
+	if obj, ok := decodeJSONObject([]byte(s)); ok {
+		for _, k := range []string{"Error", "error", "Err", "err"} {
+			if v, exists := obj[k]; exists && !emptyValue(v) {
+				return true
+			}
+		}
+		for _, k := range []string{"Status", "status"} {
+			if st, ok := obj[k].(string); ok {
+				switch strings.ToLower(strings.TrimSpace(st)) {
+				case "failed", "failure", "error", "killed":
+					return true
+				}
+			}
+		}
+		for _, k := range []string{"ExitCode", "exit_code"} {
+			switch v := obj[k].(type) {
+			case string:
+				if t := strings.TrimSpace(v); t != "" && t != "0" {
+					return true
+				}
+			case float64:
+				if v != 0 {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// toolErrorSummary 失败结果的单行摘要：优先错误字段，其次状态字段；非
+// JSON 结果直接压成单行。空串表示没有可展示的摘要（调用方回落参数摘要）。
+func toolErrorSummary(result string) string {
+	s := strings.TrimSpace(result)
+	if s == "" {
+		return ""
+	}
+	if obj, ok := decodeJSONObject([]byte(s)); ok {
+		for _, k := range []string{"Error", "error", "Err", "err"} {
+			if v, exists := obj[k]; exists && !emptyValue(v) {
+				if line := compactLine(stringValue(v)); line != "" {
+					return line
+				}
+			}
+		}
+		for _, k := range []string{"Status", "status"} {
+			if st, ok := obj[k].(string); ok && strings.TrimSpace(st) != "" {
+				return compactLine(st)
+			}
+		}
+		return ""
+	}
+	return compactLine(s)
+}
+
+// emptyValue 判断 JSON 值是否为空（空串/null/false 视为没有错误内容）。
+// 数字 0 不在此列：ExitCode 的 0 由 toolFailed 单独处理。
+func emptyValue(v any) bool {
+	switch x := v.(type) {
+	case nil:
+		return true
+	case string:
+		return strings.TrimSpace(x) == ""
+	case bool:
+		return !x
+	}
+	s := strings.TrimSpace(stringValue(v))
+	return s == "" || s == "null"
+}
+
 // isMultiline 清洗后含真实换行（≥2 行）即多行内容。
 func isMultiline(s string) bool {
 	return strings.Contains(strings.TrimSpace(s), "\n")
@@ -350,13 +466,16 @@ var diffHeaderVerbs = map[string]string{
 	"Diff":     "Diff",
 }
 
-// toolView 工具块总装：头部行（✓ name）→ 参数行（most-subtle）→ 空行分段
-// → 结果行与内容块（muted）。参数与结果同列对齐，w 为块可用总宽（缩进已扣）。
+// toolView 工具块总装：头部行（▾ + ✓/✗ name）→ 参数行（most-subtle）→
+// 空行分段 → 结果行与内容块（muted）。参数与结果同列对齐，w 为块可用总宽
+// （缩进已扣）。
 func toolView(name string, args []byte, result string, w int) string {
 	avail := w - msgIndentW - 4 // 扣 msgIndent(2) 与块内容 4 空格缩进
 	if avail < 10 {
 		avail = 10
 	}
+	failed := toolFailedLimited(result, 0)
+	header := toolHeader(name, failed, true, w-msgIndentW)
 
 	argsObj, _ := decodeJSONObject(args)
 	path := argPath(argsObj)
@@ -388,7 +507,7 @@ func toolView(name string, args []byte, result string, w int) string {
 	all = append(all, argRowList...)
 	all = append(all, resRows...)
 	if len(all) == 0 && len(blocks) == 0 && len(codeLines) == 0 {
-		return toolHeader(name)
+		return header
 	}
 
 	kw := 0
@@ -434,7 +553,7 @@ func toolView(name string, args []byte, result string, w int) string {
 	outLines = append(outLines, codeLines...)
 
 	lines := make([]string, 0, len(inLines)+len(outLines)+2)
-	lines = append(lines, toolHeader(name))
+	lines = append(lines, header)
 	for _, l := range inLines {
 		lines = append(lines, lineWrap(l, cToolLineIn))
 	}

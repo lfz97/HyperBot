@@ -309,10 +309,10 @@ func TestCollapsedLinesWithinWidth(t *testing.T) {
 			return msgIndent.Render(thinkingCollapsedView(strings.Repeat("c", 3000)))
 		}},
 		{"折叠工具行-长路径", func(w int) string {
-			return msgIndent.Render(toolCollapsedView("ReadFile", []byte(`{"Path":"`+strings.Repeat("/", 200)+`f.go"}`), w))
+			return msgIndent.Render(toolCollapsedView("ReadFile", []byte(`{"Path":"`+strings.Repeat("/", 200)+`f.go"}`), "", w))
 		}},
 		{"折叠工具行-长参数", func(w int) string {
-			return msgIndent.Render(toolCollapsedView("exec", []byte(`{"Process":"bash","Args":["-c","`+strings.Repeat("x", 300)+`"]}`), w))
+			return msgIndent.Render(toolCollapsedView("exec", []byte(`{"Process":"bash","Args":["-c","`+strings.Repeat("x", 300)+`"]}`), "", w))
 		}},
 	}
 	for _, w := range []int{120, 40} {
@@ -367,5 +367,142 @@ func TestApplyFrameAnchorPinsHeaderRow(t *testing.T) {
 	tu.applyFrame(m2)
 	if got := tu.vp.YOffset(); got != 38 { // 不在底部 → 位置保持
 		t.Fatalf("stale anchor must not reapply: YOffset=%d", got)
+	}
+}
+
+func TestStaleFrameDoesNotConsumeAnchor(t *testing.T) {
+	tu := NewTui(&fakeView{})
+	tu.vp.SetHeight(10)
+	tu.vp.SetWidth(80)
+	tu.expand.toggle("tool:1") // 模拟点击后的状态版本
+	ver := tu.expand.version()
+	tu.anchor = &scrollAnchor{id: "tool:1", row: 2, ver: ver}
+
+	// 点击前已在飞的旧帧（版本更小）：不能消费锚——它落的是点击前排版。
+	view := strings.Repeat("line\n", 100)
+	spans := []blockSpan{{start: 40, id: "tool:1"}}
+	tu.applyFrame(frameMsg{view: view, spans: spans, expandVer: ver - 1})
+	if tu.anchor == nil {
+		t.Fatalf("stale frame must not consume anchor")
+	}
+
+	// 点击后重组的帧（版本 >= 锚）才消费锚。
+	tu.vp.SetYOffset(0) // 确保不处于底部，锚定结果不会被底部跟随覆盖
+	tu.applyFrame(frameMsg{view: view, spans: spans, expandVer: ver})
+	if tu.anchor != nil {
+		t.Fatalf("post-click frame must consume anchor")
+	}
+	if got := tu.vp.YOffset(); got != 38 {
+		t.Fatalf("anchor must pin on post-click frame: YOffset=%d want 38", got)
+	}
+}
+
+func TestExpandedThinkingIndentAligned(t *testing.T) {
+	fake := &fakeView{records: []string{
+		engineWireToolRecord(t, "message", mm("assistant", "first line\nsecond line", "")),
+	}}
+	tu := NewTui(fake)
+	tu.pull.width = 80
+	tu.expand.toggle("think:0")
+	view, _ := tu.composeView(tu.pull)
+	lines := strings.Split(ansi.Strip(view), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expanded thinking too short:\n%s", ansi.Strip(view))
+	}
+	headCol := strings.Index(lines[0], "▾")
+	bodyCol := strings.Index(lines[1], "│")
+	if headCol < 0 || bodyCol < 0 {
+		t.Fatalf("missing header/body markers: %q / %q", lines[0], lines[1])
+	}
+	if headCol != bodyCol {
+		t.Fatalf("thinking body double-indented: header col %d, body border col %d\n%s",
+			headCol, bodyCol, ansi.Strip(view))
+	}
+}
+
+func TestToolCollapsedFailureStatus(t *testing.T) {
+	tu := NewTui(&fakeView{})
+	failed := tu.toolBlock(
+		&wireToolCall{name: "LocalExec_run", args: `{"Process":"false"}`},
+		`{"Id":"x","Status":"failed","ExitCode":"1","Error":"exit status 1","Output":"boom"}`,
+		"tool:0", 100)
+	flat := ansi.Strip(failed)
+	if !strings.Contains(flat, "✗") {
+		t.Fatalf("failed tool must show ✗ in collapsed row: %q", flat)
+	}
+	if !strings.Contains(flat, "exit status 1") {
+		t.Fatalf("failed tool must surface error summary: %q", flat)
+	}
+
+	ok := tu.toolBlock(
+		&wireToolCall{name: "LocalExec_run", args: `{"Process":"true"}`},
+		`{"Id":"y","Status":"done","ExitCode":"0","Output":"ok"}`,
+		"tool:1", 100)
+	flat = ansi.Strip(ok)
+	if !strings.Contains(flat, "✓") || strings.Contains(flat, "✗") {
+		t.Fatalf("successful tool must show ✓: %q", flat)
+	}
+}
+
+func TestClearResetsExpandOnlyOnSuccess(t *testing.T) {
+	fake := &fakeView{denyClear: true}
+	tu := NewTui(fake)
+	tu.expand.toggle("think:0")
+	tu.anchor = &scrollAnchor{id: "think:0", row: 1, ver: tu.expand.version()}
+	tu.forceCompose.Store(false)
+
+	// running 拒绝：历史没清，展开态与锚点必须原样保留。
+	tu.dispatchSlash("/clear")
+	if !tu.expand.expanded("think:0") {
+		t.Fatalf("rejected /clear must not reset expand state")
+	}
+	if tu.anchor == nil || tu.forceCompose.Load() {
+		t.Fatalf("rejected /clear must not touch anchor/forceCompose")
+	}
+
+	// 成功：清展开态、清锚、强制立即重组。
+	fake.denyClear = false
+	tu.dispatchSlash("/clear")
+	if tu.expand.expanded("think:0") {
+		t.Fatalf("successful /clear must reset expand state")
+	}
+	if tu.anchor != nil || !tu.forceCompose.Load() {
+		t.Fatalf("successful /clear must clear anchor and force recompose")
+	}
+}
+
+func TestNewKeepsExpandState(t *testing.T) {
+	// /new 只换 session id，不丢消息记录；旧块的展开态继续有效。
+	tu := NewTui(&fakeView{})
+	tu.expand.toggle("think:0")
+	tu.dispatchSlash("/new")
+	if !tu.expand.expanded("think:0") {
+		t.Fatalf("/new must keep expansion state for retained history")
+	}
+
+	// running 拒绝同样不动展开态。
+	fake := &fakeView{denyNew: true}
+	tu = NewTui(fake)
+	tu.expand.toggle("tool:1")
+	tu.dispatchSlash("/new")
+	if !tu.expand.expanded("tool:1") {
+		t.Fatalf("rejected /new must keep expansion state")
+	}
+}
+
+func TestCheckoutSessionResetsExpand(t *testing.T) {
+	tu := NewTui(&fakeView{})
+	tu.expand.toggle("think:0")
+	tu.anchor = &scrollAnchor{id: "think:0", row: 1, ver: tu.expand.version()}
+	tu.forceCompose.Store(false)
+
+	if !tu.checkoutSession("session-1") {
+		t.Fatalf("checkout must succeed")
+	}
+	if tu.expand.expanded("think:0") {
+		t.Fatalf("checkout must reset expand state")
+	}
+	if tu.anchor != nil || !tu.forceCompose.Load() {
+		t.Fatalf("checkout must clear anchor and force recompose")
 	}
 }

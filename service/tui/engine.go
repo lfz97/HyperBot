@@ -58,8 +58,8 @@ func (t *TUI) fetchRecords() []string { return t.engine.Records() }
 func (t *TUI) fetchTodoText() string { return t.engine.TodoText() }
 
 // fetchNotice 组装底部通知文本：槽位在 TTL 内则显示通知，否则回落常驻 hint
-// （运行态多一条 esc 提示）。
-func (t *TUI) fetchNotice(running bool) string {
+// （运行态多一条 esc 提示）。w 用于按终端宽度裁剪 hint，避免底部栏折行。
+func (t *TUI) fetchNotice(running bool, w int) string {
 	var wn wireNotice
 	if err := json.Unmarshal([]byte(t.engine.NoticeJSON()), &wn); err == nil {
 		if setAt, err := time.Parse(time.RFC3339, wn.SetAt); err == nil &&
@@ -67,7 +67,7 @@ func (t *TUI) fetchNotice(running bool) string {
 			return renderNotice(wn.Kind, wn.Text)
 		}
 	}
-	return composeHint(running)
+	return composeHint(running, w)
 }
 
 // fetchSkillItems 拉取并解析引擎技能目录；与内置命令的合并在 slash.go。
@@ -101,7 +101,7 @@ func (t *TUI) openResume() {
 // false=失败（弹框保持可重选）。
 func (t *TUI) checkoutSession(id string) bool {
 	if t.engine.CheckoutSession(id) == nil {
-		t.expand.reset() // 换会话：展开状态随历史一起作废
+		t.resetExpand() // 换会话：展开状态随历史一起作废，并强制立即重组
 		return true
 	}
 	return false

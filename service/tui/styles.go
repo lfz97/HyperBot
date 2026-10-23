@@ -7,7 +7,6 @@ package tui
 // 颜色取值来自 charmbracelet/x/exp/charmtone（与 crush 默认主题一致）。
 
 import (
-	"fmt"
 	"image/color"
 	"strings"
 
@@ -160,9 +159,25 @@ func summaryText(text string, w int) string {
 // ── 工具块头部行（crush toolHeader：状态图标 + info 工具名）──
 // 参数行/结果行/内容块由 toolview.go 的 toolView 负责。
 
-// toolHeader 头部行：✓ 工具名。
-func toolHeader(name string) string {
-	return fmt.Sprintf("%s %s", colorText(cSuccess, "✓"), colorText(cInfo, name))
+// toolHeader 头部行：折叠三角 + 状态图标 + 工具名。
+// 折叠/展开三角是点击提示；失败必须保留 ✗——默认折叠态是唯一可见状态，
+// 不能把失败信号只藏在展开内容里。limit 为去缩进后的可用列数，超长名字
+// 按显示宽度截断：折叠行不折行，溢出会让终端视觉换行、破坏行号命中。
+func toolHeader(name string, failed, expanded bool, limit int) string {
+	arrow := "▸"
+	if expanded {
+		arrow = "▾"
+	}
+	icon, iconColor := "✓", cSuccess
+	if failed {
+		icon, iconColor = "✗", cError
+	}
+	prefix := colorText(cFgMostSubtle, arrow) + " " + colorText(iconColor, icon) + " "
+	maxName := limit - 4 // 三角(1)+空格(1)+图标(1)+空格(1)
+	if maxName < 1 {
+		maxName = 1
+	}
+	return prefix + colorText(cInfo, ansi.Truncate(name, maxName, "…"))
 }
 
 // compactLine 多行文本压成单行：剥 ANSI 与回车（PTY \r\n、颜色码进视图会

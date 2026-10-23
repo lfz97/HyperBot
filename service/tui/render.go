@@ -7,6 +7,7 @@ import (
 
 	"charm.land/glamour/v2"
 	"charm.land/glamour/v2/ansi"
+	xansi "github.com/charmbracelet/x/ansi"
 	"trpc.group/trpc-go/trpc-agent-go/model"
 )
 
@@ -235,13 +236,32 @@ func renderNotice(kind, text string) string {
 	}
 }
 
-// composeHint 常驻兜底提示。esc to interrupt 只在运行态出现（平时显示是噪音）；
-// 措辞用 commands：浮层同时含前端内置命令与引擎技能。
-func composeHint(running bool) string {
+// hintSpinnerW 底部 spinner 固定占宽（圆点轨道 12 列）；hint 必须给它让位。
+const hintSpinnerW = 12
+
+// composeHint 常驻兜底提示。按宽度逐档降级：底部是单行栏，超宽会折行并
+// 改变视口高度（recalcComponentSize 每帧按它算），窄终端宁可少说一句。
+// 每档都是完整可读的提示，不做词中截断。
+func composeHint(running bool, w int) string {
+	avail := w - hintSpinnerW
+	full := "type / for commands · click ▸ to expand"
 	if running {
-		return noticeSub("esc to interrupt · type / for commands · click ▸ to expand")
+		full = "esc to interrupt · " + full
 	}
-	return noticeSub("type / for commands · click ▸ to expand")
+	short := "/ commands · click ▸"
+	if running {
+		short = "esc interrupt · / · click ▸"
+	}
+	tiny := "/ · ▸"
+	if running {
+		tiny = "esc · / · ▸"
+	}
+	for _, h := range []string{full, short, tiny} {
+		if xansi.StringWidth(h) <= avail {
+			return noticeSub(h)
+		}
+	}
+	return noticeSub("▸")
 }
 
 // renderFatal 把终态消息按样式上色并折行（引擎只存语义原文与 style 字符串）。

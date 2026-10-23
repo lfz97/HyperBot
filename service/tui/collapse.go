@@ -15,6 +15,8 @@ package tui
 //
 // 展开状态是全系统第一处"事件循环写、pull goroutine 读"的状态，互斥锁保护，
 // compose 每块渲染时单点查询。默认折叠：key 不存在=折叠，true=用户点开。
+// 状态带单调版本号，帧在 compose 起点记录；点击锚点只认版本不旧于自己的帧
+// （frame.go），避免点击前已在飞的旧帧消费锚点。
 
 import (
 	"fmt"
@@ -50,13 +52,15 @@ type blockSpan struct {
 // 屏幕行，避免展开内容把视口顶得跳动（覆盖 applyViewText 的底部跟随）。
 type scrollAnchor struct {
 	id  string
-	row int // 点击时块头部所在的屏幕行
+	row int    // 点击时块头部所在的屏幕行
+	ver uint64 // 点击后的展开状态版本；更早的帧不得消费（见 applyFrame）
 }
 
 // expandState 思考/工具块的展开状态（默认折叠；true=用户点开）。
 type expandState struct {
-	mu sync.Mutex
-	m  map[string]bool
+	mu  sync.Mutex
+	m   map[string]bool
+	ver uint64 // 每次状态变更 +1；帧记录重组起点的版本，供锚点判新旧
 }
 
 func newExpandState() *expandState { return &expandState{m: map[string]bool{}} }
@@ -74,7 +78,15 @@ func (e *expandState) toggle(id string) bool {
 	defer e.mu.Unlock()
 	v := !e.m[id]
 	e.m[id] = v
+	e.ver++
 	return v
+}
+
+// version 当前展开状态版本（事件循环读）。
+func (e *expandState) version() uint64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.ver
 }
 
 // clearTail 清尾段伪 ID 的展开状态。流式期间的展开是"观看辅助"：跨 delta
@@ -86,24 +98,35 @@ func (e *expandState) clearTail() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	delete(e.m, tailThinkID)
+	e.ver++
 }
 
-// reset 清空（/clear、/new 换会话后调用）。
+// reset 清空（/clear、/resume 换历史后调用）。
 func (e *expandState) reset() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.m = map[string]bool{}
+	e.ver++
+}
+
+// resetExpand 历史被清空/替换后重置展开状态：清锚点并强制下一轮重组，
+// 避免旧视图残留与折叠状态脱节（/clear、/resume 成功路径）。
+func (t *TUI) resetExpand() {
+	t.expand.reset()
+	t.anchor = nil
+	t.forceCompose.Store(true)
 }
 
 // ── compose 侧：折叠渲染 ────────────────────────────────
 
 // thinkingBlock 思考块：默认折叠成单行摘要（流式期间字符数实时增长）；
 // 点开后头部行 + 全文引用盒。头部行恒为块首行（点击热区）。
+// renderThinking 自带 msgIndent，展开态只给头部套缩进，否则正文会双重缩进。
 func (t *TUI) thinkingBlock(r string, id string, w int) string {
 	if !t.expand.expanded(id) {
 		return msgIndent.Render(thinkingCollapsedView(r))
 	}
-	return msgIndent.Render(thinkingExpandedHeader() + "\n" + renderThinking(r, w))
+	return msgIndent.Render(thinkingExpandedHeader()) + "\n" + renderThinking(r, w)
 }
 
 // thinkingCollapsedView 折叠态摘要行：▸ + 字符计数（提示还有内容可展开）。
@@ -120,29 +143,37 @@ func thinkingExpandedHeader() string {
 // toolBlock 工具块：默认折叠成头部行 + 首个参数摘要；点开后完整 toolView。
 func (t *TUI) toolBlock(entry *wireToolCall, result string, id string, w int) string {
 	if !t.expand.expanded(id) {
-		return msgIndent.Render(toolCollapsedView(entry.name, []byte(entry.args), w))
+		return msgIndent.Render(toolCollapsedView(entry.name, []byte(entry.args), result, w))
 	}
 	return msgIndent.Render(toolView(entry.name, []byte(entry.args), result, w))
 }
 
-// toolCollapsedView 折叠态工具行：✓ name + 首个参数摘要（路径优先），
+// toolCollapsedView 折叠态工具行：▸ + 状态图标 + name + 摘要，失败时摘要
+// 优先展示错误文本（折叠态是默认可见态，失败信号不能藏在展开内容里）。
 // 摘要本身就是"还有内容"的提示。截断预算按本轮视图宽度 w 算。
-func toolCollapsedView(name string, args []byte, w int) string {
-	head := toolHeader(name)
-	if s := toolArgSummary(name, args, w); s != "" {
-		head += "  " + colorText(cFgMostSubtle, s)
+func toolCollapsedView(name string, args []byte, result string, w int) string {
+	failed := toolFailed(result)
+	head := toolHeader(name, failed, false, w-msgIndentW)
+	budget := min(argSummaryMaxRunes, w-msgIndentW-2-ansi.StringWidth(head))
+	summary := ""
+	if failed {
+		summary = ansi.Truncate(toolErrorSummary(result), max(0, budget), "…")
+	}
+	if summary == "" {
+		summary = toolArgSummary(name, args, budget)
+	}
+	if summary != "" {
+		head += "  " + colorText(cFgMostSubtle, summary)
 	}
 	return head
 }
 
 // toolArgSummary 折叠态参数摘要：目标路径优先，否则首个参数值。
 // 折叠行不走 hardWrap（单行块），超宽会让终端视觉折行、整屏行号错位
-// （点击命中依赖行号对齐）——预算必须跟着本轮实际宽度走：预算到 0 就
-// 不出摘要，宁可缺失不溢出。截断用 ansi.Truncate（显示宽度感知）而非
-// rune 数：CJK 路径 60 rune 可顶出远超宽度的列数。
-func toolArgSummary(name string, args []byte, w int) string {
-	budget := min(argSummaryMaxRunes,
-		w-msgIndentW-2-ansi.StringWidth(toolHeader(name)))
+// （点击命中依赖行号对齐）——budget 由调用方按本轮实际宽度扣掉头部后传入：
+// 预算到 0 就不出摘要，宁可缺失不溢出。截断用 ansi.Truncate（显示宽度
+// 感知）而非 rune 数：CJK 路径 60 rune 可顶出远超宽度的列数。
+func toolArgSummary(name string, args []byte, budget int) string {
 	if budget <= 0 {
 		return ""
 	}
@@ -247,7 +278,7 @@ func (t *TUI) mouseClickHandler(m tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		return t, nil
 	}
 	t.expand.toggle(id)
-	t.anchor = &scrollAnchor{id: id, row: m.Y}
+	t.anchor = &scrollAnchor{id: id, row: m.Y, ver: t.expand.version()}
 	t.forceCompose.Store(true) // 点击反馈要即时：下一轮 pull 绕过 100ms 节流
 	return t, nil
 }

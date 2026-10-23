@@ -45,7 +45,10 @@ func (t *TUI) applyFrame(m frameMsg) (tea.Model, tea.Cmd) {
 	// 点击锚定（collapse.go）：折叠切换重组后把目标块头部钉回点击时的
 	// 屏幕行，覆盖 applyViewText 的底部跟随——展开上方块时跳底很晃眼。
 	// 锚只消费一次；目标块消失（流式重组重排）则放弃锚定走常规跟随。
-	if a := t.anchor; a != nil {
+	// 版本守卫：点击前已在飞的旧帧（expandVer 更小）不能消费锚点——否则
+	// 它把点击前的排版落到屏上，锚又已销毁，展开块会把视口顶走。旧帧直接
+	// 跳过，锚留给点击后 forceCompose 产出、带新版本的那一帧。
+	if a := t.anchor; a != nil && m.expandVer >= a.ver {
 		t.anchor = nil
 		if s, ok := spanByID(m.spans, a.id); ok {
 			t.vp.SetYOffset(s.start - a.row)

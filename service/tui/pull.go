@@ -29,9 +29,9 @@ type pullState struct {
 	banner        string    // 启动横幅（就绪后进视图头部，只渲染一次）
 	bannerDone    bool
 	lastFatal     *wireFatal
-	view          string   // 最近一次重组的视图全文（帧恒携带，重复帧交给框架去重）
+	view          string      // 最近一次重组的视图全文（帧恒携带，重复帧交给框架去重）
 	spans         []blockSpan // 视图的可折叠块行号索引（与 view 同源同帧）
-	width         int      // 本轮重组用的组件宽度（glamour 按此换行）
+	width         int         // 本轮重组用的组件宽度（glamour 按此换行）
 }
 
 func newPullState() *pullState {

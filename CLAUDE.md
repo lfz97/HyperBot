@@ -91,7 +91,7 @@ cmd/main.go → boot.Boot() → service/engine + service/tui
 
 **Dialog Loop**: `Engine.agentRunIteratively()` manages user input:
 - `/exit` → terminate
-- `/new` → reset session
+- `/new` → reset session + TUI clear（TUI 先 NewConversation 再 ClearRecords；屏幕历史与展开态一起重置）
 - `ESC` → cancel current agent response via `context.WithCancel`
 - text → invoke `agentRunOnce()`
 - error → 退避 `errorSleepGap` 后自动重试，连续 `errorMaxTimes` 次后放弃并把控制权交还用户（`Code` 保持 `Error`，由 `agentRunIteratively` 的 `errorStreak < errorMaxTimes` 判定转入 `else` 兜底分支等输入）

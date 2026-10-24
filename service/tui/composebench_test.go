@@ -26,9 +26,11 @@ import (
 
 // fakeView 固定返回预置记录集的假引擎（只实现基准需要的部分）。
 type fakeView struct {
-	records   []string
-	denyNew   bool // NewConversation 模拟 running 拒绝
-	denyClear bool // ClearRecords 模拟 running 拒绝
+	records    []string
+	denyNew    bool // NewConversation 模拟 running 拒绝
+	denyClear  bool // ClearRecords 模拟 running 拒绝
+	newCalls   int
+	clearCalls int
 }
 
 func (f *fakeView) Version() uint64                 { return 1 }
@@ -41,8 +43,8 @@ func (f *fakeView) SkillItemsJSON() string          { return "[]" }
 func (f *fakeView) SubmitInput(line string) bool    { return true }
 func (f *fakeView) Interrupt() bool                 { return true }
 func (f *fakeView) Shutdown()                       {}
-func (f *fakeView) NewConversation() bool           { return !f.denyNew }
-func (f *fakeView) ClearRecords() bool              { return !f.denyClear }
+func (f *fakeView) NewConversation() bool           { f.newCalls++; return !f.denyNew }
+func (f *fakeView) ClearRecords() bool              { f.clearCalls++; return !f.denyClear }
 func (f *fakeView) ListResumeItems() string         { return "[]" }
 func (f *fakeView) CheckoutSession(id string) error { return nil }
 

@@ -64,6 +64,12 @@ func (t *TUI) applyFrame(m frameMsg) (tea.Model, tea.Cmd) {
 			return t, tea.Quit
 		}
 	}
+
+	// 首次启动待配置：帧携带预填值（pull 侧一次性信号），打开常驻配置页。
+	if m.bootField != nil {
+		t.cfgPage.open(m.bootField)
+	}
+
 	return t, tea.Batch(cmds...)
 }
 

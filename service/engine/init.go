@@ -43,6 +43,12 @@ type Engine struct {
 	// errBudget：连续错误自动重试预算，状态流转见 errorBudget.go
 	errBudget errorBudget
 
+	// 启动状态（BootXxx 常量，经 FirstStartupJSON 暴露给 TUI）：
+	// booting → （首次启动）config → ready，或 booting → ready。
+	// firstStartupFields 是 config 态下配置页的预填值快照。
+	bootState          string
+	firstStartupFields map[string]string
+
 	// ── 对上层 UI 暴露的可观察状态（pull 契约，方法见 uistate.go）──
 	mu        sync.Mutex // 串行化引擎各 goroutine 的写入与 UI goroutine 的读取
 	records   []string

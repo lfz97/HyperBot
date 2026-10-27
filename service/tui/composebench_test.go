@@ -47,6 +47,10 @@ func (f *fakeView) NewConversation() bool           { f.newCalls++; return !f.de
 func (f *fakeView) ClearRecords() bool              { f.clearCalls++; return !f.denyClear }
 func (f *fakeView) ListResumeItems() string         { return "[]" }
 func (f *fakeView) CheckoutSession(id string) error { return nil }
+func (f *fakeView) FirstStartupJSON() string        { return `{"state":"ready"}` }
+func (f *fakeView) ApplyFirstStartupConfig(vals map[string]string) error {
+	return nil
+}
 
 // buildSession 构造真实规模的会话：20 轮 ×（用户输入 + 思考 + 表格正文 + 工具调用与结果）。
 func buildSession() []string {

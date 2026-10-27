@@ -5,34 +5,18 @@ package engine
 
 import (
 	"HyperBot/service/engine/config"
-	m "HyperBot/service/engine/memory"
-	s "HyperBot/service/engine/session"
-	functionTools "HyperBot/service/engine/tools/functions"
-	"HyperBot/service/engine/tools/toolsets/cronagent"
-	"HyperBot/service/engine/tools/toolsets/localexec"
-	"embed"
 	"fmt"
 	stdlog "log"
 	"os"
-	"os/user"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"trpc.group/trpc-go/trpc-agent-go/log"
-	"trpc.group/trpc-go/trpc-agent-go/memory"
-	"trpc.group/trpc-go/trpc-agent-go/session"
-	"trpc.group/trpc-go/trpc-agent-go/skill"
-	"trpc.group/trpc-go/trpc-agent-go/tool"
 	mcp "trpc.group/trpc-go/trpc-mcp-go"
 )
-
-//go:embed prompt/*
-var fs embed.FS
 
 // 定义配置文件夹中的各种配置文件名称
 const (
@@ -45,18 +29,14 @@ const (
 	outputDir            string = "output"
 )
 
-// summarySink 本文件对摘要展示端的全部需求（Engine 以 AppendSummary 实现）。
-type summarySink interface {
-	AppendSummary(text string)
-}
-
 // bootNotice 启动期间收集的非致命提示（absorb 时经 setNotice 上屏）。
 type bootNotice struct {
 	Kind string
 	Text string
 }
 
-// BootEnv 环境检查与资产装配的产物，Engine 吸收后即可构造 runner。
+// BootEnv 环境检查的产物：只含路径、日志句柄与非致命提示；
+// 运行时对象（Config/服务/工具/技能仓库）由 Engine 在 absorb 后装配（见 assemble.go）。
 type BootEnv struct {
 	CWD                string //进程工作目录
 	ExeDir             string //可执行文件目录，资产锚点（config/log/output 跟随二进制）
@@ -64,22 +44,15 @@ type BootEnv struct {
 	HyperBotConfigPath string
 	SkillFolderPath    string
 	LogFile            *os.File
-	NeedRestart        bool //首跑创建了默认配置文件：须改完配置重启
-
-	Config          *config.Config
-	Systemprompt    string
-	SessionService  session.Service
-	MemoryService   memory.Service
-	BuiltinTools    []tool.Tool
-	BuiltinToolsets []tool.ToolSet
-	SkillRepo       *skill.FSRepository
+	ConfigCreated      bool //首跑创建了默认配置文件：进入首次启动配置流程（TUI 配置页收集模型配置）
 
 	Notices []bootNotice
 }
 
-// Check 跑完整的启动检查与资产装配。任何一步失败都返回带步骤语义的
+// Check 跑完整的启动检查：路径存在性、默认配置/技能目录落盘、日志重定向。
+// 不实例化任何运行时对象。任何一步失败都返回带步骤语义的
 // error，由调用方决定如何呈现（parkWithFatal）。
-func Check(agentName string, sink summarySink) (*BootEnv, error) {
+func Check() (*BootEnv, error) {
 	env := &BootEnv{}
 
 	// ① 可执行文件所在目录：一切资产的锚点
@@ -110,7 +83,7 @@ func Check(agentName string, sink summarySink) (*BootEnv, error) {
 	// ③ 框架日志重定向到文件：Check 与 TUI 并发启动，越早静音 stderr，日志污染 TUI 的窗口越小
 	env.redirectFrameworkLog()
 
-	// ④ 配置文件：不存在则写入默认模板，本次启动到此为止（须改完配置重启）
+	// ④ 配置文件：不存在则写入默认模板，本次启动进入首次启动配置流程
 	env.HyperBotConfigPath = filepath.Join(env.ConfigFolderPath, HyperBotConfig)
 	if _, err := os.Stat(env.HyperBotConfigPath); err != nil {
 		if !os.IsNotExist(err) {
@@ -125,7 +98,7 @@ func Check(agentName string, sink summarySink) (*BootEnv, error) {
 		if _, err := fd.WriteString(cfg); err != nil {
 			return nil, fmt.Errorf("failed to write default config file: %w", err)
 		}
-		env.NeedRestart = true
+		env.ConfigCreated = true
 		return env, nil
 	}
 
@@ -141,105 +114,7 @@ func Check(agentName string, sink summarySink) (*BootEnv, error) {
 		env.Notices = append(env.Notices, bootNotice{NoticeSuccess, "skills folder not found, created default"})
 	}
 
-	// ⑥ 加载配置文件
-	cfg, err := config.LoadConfig(env.HyperBotConfigPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load config file: %w", err)
-	}
-	env.Config = cfg
-
-	// ⑦ 系统提示词（模板占位符替换）
-	env.buildSystemPrompt(agentName)
-
-	// ⑧ 会话服务：默认 SQLite（.hyperbot/session.db，与 memory.db 同目录），会话跨进程持久化；
-	// 创建失败按原因降级内存服务（降级不阻断启动，原因经 Notices 上屏）
-	env.SessionService = env.buildSessionService(sink)
-
-	// ⑨ sqlite 记忆服务
-	memoryService, err := m.NewSQLiteMemoryService(filepath.Join(env.ConfigFolderPath, memoryDBFileName))
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize sqlite memory service: %w", err)
-	}
-	env.MemoryService = memoryService
-
-	// ⑩ 内置工具与工具集
-	tools, sets, err := builtinAssets(env, agentName)
-	if err != nil {
-		return nil, err
-	}
-	env.BuiltinTools = tools
-	env.BuiltinToolsets = sets
-
-	// ⑪ 技能仓库（忽略加载错误，调用方判空）
-	env.SkillRepo, _ = skill.NewFSRepository(env.SkillFolderPath)
-
 	return env, nil
-}
-
-// buildSessionService 构建会话服务：默认 SQLite 持久化（<CWD>/.hyperbot/session.db）。
-// 会话按工作目录归属：同 CWD 的多实例共享同一 db（WAL 等参数支撑并发读写），不同 CWD 各自独立。
-// 创建失败降级为内存服务（不阻断启动）：目录不存在则建目录重试一次，其余原因直接降级。
-// "路径不存在"用 os.Stat 判定而非解析驱动错误：go-sqlite3 的 CantOpen 不保证 errors.Is 到 fs.ErrNotExist。
-func (env *BootEnv) buildSessionService(sink summarySink) session.Service {
-	dbPath := filepath.Join(env.CWD, HyperBotConfigFolder, sessionDBFileName)
-
-	svc, err := s.NewSQLiteSessionService(dbPath, env.Config.Model, sink)
-	if err == nil {
-		return svc
-	}
-
-	if _, statErr := os.Stat(filepath.Dir(dbPath)); os.IsNotExist(statErr) {
-		if mkErr := os.MkdirAll(filepath.Dir(dbPath), os.ModePerm); mkErr != nil {
-			env.Notices = append(env.Notices, bootNotice{NoticeWarning, fmt.Sprintf(
-				"sqlite session db directory create failed (%v), fallback to in-memory session service", mkErr)})
-			return s.NewMemorySessionService(env.Config.Model, sink)
-		}
-		svc, err = s.NewSQLiteSessionService(dbPath, env.Config.Model, sink)
-		if err == nil {
-			return svc
-		}
-	}
-
-	env.Notices = append(env.Notices, bootNotice{NoticeWarning, fmt.Sprintf(
-		"sqlite session service failed (%v), fallback to in-memory session service", err)})
-	return s.NewMemorySessionService(env.Config.Model, sink)
-}
-
-// builtinAssets 内置 function 工具与工具集（localexec + cron agent）。
-func builtinAssets(env *BootEnv, agentName string) ([]tool.Tool, []tool.ToolSet, error) {
-	var tools []tool.Tool
-	var sets []tool.ToolSet
-
-	sets = append(sets, localexec.LocalExec())
-
-	// 用独立的 agent 名，避免遥测里 cron 的自主运行和主对话混在同一个 (app, agent) 对下
-	cronToolset, err := cronagent.CronAgent(
-		agentName+"_cron",
-		env.Config,
-		env.Systemprompt,
-		env.SkillFolderPath,
-		env.ConfigFolderPath,
-	)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to initialize cron agent: %w", err)
-	}
-	// 存档加载失败是非致命的：坏文件已被挪到 .fix<时间戳>，空集合可以正常启动
-	if loadErr := cronToolset.LoadError(); loadErr != nil {
-		stdlog.Printf("failed to load cron agent store: %v", loadErr)
-		env.Notices = append(env.Notices, bootNotice{NoticeWarning, "cron agent config broken, moved to .fix"})
-	}
-	sets = append(sets, cronToolset)
-
-	fileopsTools := functionTools.GetFileOperationsTools()
-	fileSystemTools := functionTools.GetFileSystemTools()
-	dateTools := functionTools.GetDateTools()
-	todoTools := functionTools.GetTodoTools() // 框架内置 todo_write：任务清单，状态存 session，跨轮持久化
-	tools = append(tools, fileopsTools...)
-	tools = append(tools, fileSystemTools...)
-	tools = append(tools, dateTools...)
-	tools = append(tools, todoTools...)
-
-	return tools, sets, nil
 }
 
 // redirectFrameworkLog 将框架/mcp/标准库的日志输出重定向到 hyperbot.log。
@@ -278,43 +153,4 @@ func (env *BootEnv) redirectFrameworkLog() {
 
 	//重定向标准库 log 到文件（避免 gse 等第三方库的日志污染终端）
 	stdlog.SetOutput(logFile)
-}
-
-// buildSystemPrompt 读取系统提示词模板并替换其中的占位符。
-func (env *BootEnv) buildSystemPrompt(agentName string) {
-	systemprompt_b, _ := fs.ReadFile("prompt/systemprompt.md")
-	prompt := string(systemprompt_b)
-	prompt = strings.ReplaceAll(prompt, "{{NAME}}", agentName)
-	// {{DATE}}/{{CWD}} 不注入：已由 BeforeModel 状态栏每次调用刷新提供
-	zone, _ := time.Now().Zone()
-	prompt = strings.ReplaceAll(prompt, "{{TIMEZONE}}", fmt.Sprintf("%s (%s)", time.Now().Location().String(), zone))
-
-	prompt = strings.ReplaceAll(prompt, "{{OSTYPE}}", runtime.GOOS)
-
-	prompt = strings.ReplaceAll(prompt, "{{AARCH}}", runtime.GOARCH)
-
-	homeDir, _ := os.UserHomeDir()
-	prompt = strings.ReplaceAll(prompt, "{{HOME}}", homeDir)
-
-	prompt = strings.ReplaceAll(prompt, "{{TMPDIR}}", os.TempDir())
-
-	u, _ := user.Current()
-	prompt = strings.ReplaceAll(prompt, "{{CURRENTUSER}}", u.Username)
-
-	hostName, _ := os.Hostname()
-	prompt = strings.ReplaceAll(prompt, "{{HOSTNAME}}", hostName)
-
-	prompt = strings.ReplaceAll(prompt, "{{CONFIGPATH}}", env.ConfigFolderPath)
-
-	prompt = strings.ReplaceAll(prompt, "{{HyperBotConfig}}", HyperBotConfig)
-	prompt = strings.ReplaceAll(prompt, "{{SkillsFolder}}", SkillsFolder)
-	prompt = strings.ReplaceAll(prompt, "{{HyperBotLogFile}}", HyperBotLogFile)
-	//输出目录（锚定 ExeDir，与 localexec/tooloutput 的 spill 目录保持一致）
-	outputPath := filepath.Join(env.ExeDir, outputDir)
-	prompt = strings.ReplaceAll(prompt, "{{OUTPUTDIR}}", outputPath)
-
-	//todo_write 工具使用说明（框架 tool/todo.DefaultToolPrompt，随框架版本走，不在提示词里硬编码）
-	prompt = strings.ReplaceAll(prompt, "{{TODO_PROMPT}}", functionTools.GetTodoToolPrompt())
-
-	env.Systemprompt = prompt
 }

@@ -16,26 +16,12 @@ import (
 )
 
 const (
-	pwdToolName   string = "PWD"
-	cdToolName    string = "CD"
 	lsToolName    string = "LS"
 	mkdirToolName string = "Mkdir"
 	cpToolName    string = "CP"
 	mvToolName    string = "MV"
 	globToolName  string = "Glob"
 )
-
-// 获取当前工作目录
-func PWD(ctx context.Context, req struct {
-}) (map[string]string, error) {
-	path, err := os.Getwd()
-	if err != nil {
-		return nil, err
-	}
-	return map[string]string{
-		"PWD": path,
-	}, nil
-}
 
 // fileInfo 是 LS 返回的单条目录项信息
 type fileInfo struct {
@@ -78,26 +64,6 @@ func LS(ctx context.Context, req struct {
 	}
 	return map[string]string{
 		"Files": string(jsonBytes),
-	}, nil
-}
-
-// 切换当前工作目录
-func CD(ctx context.Context, req struct {
-	Path string `json:"Path" jsonschema:"description=Path of the directory to change into."`
-}) (map[string]string, error) {
-	if req.Path == "" {
-		req.Path = "."
-	}
-	err := os.Chdir(req.Path)
-	if err != nil {
-		return nil, err
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return nil, err
-	}
-	return map[string]string{
-		"CwdNow": cwd,
 	}, nil
 }
 
@@ -241,16 +207,6 @@ func Glob(ctx context.Context, req struct {
 
 // 获取文件系统相关工具集合
 func GetFileSystemTools() []tool.Tool {
-	pwdtool := function.NewFunctionTool(
-		PWD,
-		function.WithName(pwdToolName),
-		function.WithDescription("Get the current working directory."),
-	)
-	cdtool := function.NewFunctionTool(
-		CD,
-		function.WithName(cdToolName),
-		function.WithDescription("Change the current working directory."),
-	)
 	lstool := function.NewFunctionTool(
 		LS,
 		function.WithName(lsToolName),
@@ -276,5 +232,5 @@ func GetFileSystemTools() []tool.Tool {
 		function.WithName(globToolName),
 		function.WithDescription("Search for file names by regular expression, with a configurable root directory and search depth."),
 	)
-	return []tool.Tool{pwdtool, cdtool, lstool, mkdirTool, copyTool, mvTool, globTool}
+	return []tool.Tool{lstool, mkdirTool, copyTool, mvTool, globTool}
 }

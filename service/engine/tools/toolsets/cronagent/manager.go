@@ -280,7 +280,6 @@ func NewManager(agentname string, cfg *config.Config, systemprompt string, Skill
 	var builtinTools []tool.Tool
 	builtinTools = append(builtinTools, functionTools.GetFileOperationsTools()...)
 	builtinTools = append(builtinTools, functionTools.GetFileSystemTools()...)
-	builtinTools = append(builtinTools, functionTools.GetDateTools()...)
 	builtinTools = append(builtinTools, functionTools.GetTodoTools()...)
 
 	SkillRepo, err := skill.NewFSRepository(SkillFolderPath)

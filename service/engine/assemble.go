@@ -104,11 +104,9 @@ func (e *Engine) buildBuiltinAssets() error {
 
 	fileopsTools := functionTools.GetFileOperationsTools()
 	fileSystemTools := functionTools.GetFileSystemTools()
-	dateTools := functionTools.GetDateTools()
 	todoTools := functionTools.GetTodoTools() // 框架内置 todo_write：任务清单，状态存 session，跨轮持久化
 	tools = append(tools, fileopsTools...)
 	tools = append(tools, fileSystemTools...)
-	tools = append(tools, dateTools...)
 	tools = append(tools, todoTools...)
 
 	e.builtinTools = tools

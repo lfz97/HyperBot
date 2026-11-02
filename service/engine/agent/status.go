@@ -30,14 +30,20 @@ type Display interface {
 	SetTodoText(text string)
 }
 
-// 在消息末尾追加当前状态栏（时间、工作目录、内存、todo、相关记忆）。
+// FlightReporter 把在途后台任务摘要追加到状态栏（engine 实现，见 engine/flight.go）。
+// 传 nil 时跳过该段注入——Worker 不关心兄弟任务的进度。
+type FlightReporter interface {
+	AppendFlightStatus(ctx context.Context, status *string)
+}
+
+// 在消息末尾追加当前状态栏（时间、工作目录、内存、todo、相关记忆、在途任务）。
 // 追加在末尾而非头部：状态栏每次变化，放头部会破坏自动前缀缓存（实测尾部99%命中 vs 头部0）；
 // 因此必须关闭框架的 system 前置重排（openai.WithOptimizeForCache，见 openai.go）。
 // 状态栏不进 session（仅存在于当次请求副本），不污染摘要/上下文压缩。
 //
 // clamp 非 nil 时在注入后做动态 max_tokens 钳制。两个动作必须注册在同一个 *model.Callbacks 上：
 // RegisterBeforeModel 是 append 语义，llmagent.WithModelCallbacks 是整体覆盖语义，拆开会互相顶掉。
-func SetBeforeModelStatusCallback(display Display, clamp *TokenClampConfig) llmagent.Option {
+func SetBeforeModelStatusCallback(display Display, flight FlightReporter, clamp *TokenClampConfig) llmagent.Option {
 
 	modelCallbacks := model.NewCallbacks().RegisterBeforeModel(
 		func(ctx context.Context, args *model.BeforeModelArgs) (*model.BeforeModelResult, error) {
@@ -45,6 +51,28 @@ func SetBeforeModelStatusCallback(display Display, clamp *TokenClampConfig) llma
 			injectBaseStatus(ctx, &status)
 			injectTodoStatus(ctx, display, &status)
 			injectMemoryStatus(ctx, args.Request.Messages, &status)
+			if flight != nil {
+				flight.AppendFlightStatus(ctx, &status)
+			}
+
+			args.Request.Messages = append(args.Request.Messages, model.NewSystemMessage(status)) //在末尾追加状态栏
+			clampMaxTokens(ctx, args.Request, clamp)                                              //钳制在状态栏注入之后：状态栏消息也计入输入
+			return nil, nil
+		},
+	)
+	return llmagent.WithModelCallbacks(modelCallbacks)
+}
+
+// SetWorkerStatusCallback 只注入基础状态栏（时间、工作目录、内存）+ max_tokens 钳制。
+// Worker 是无记忆的一次性执行者：不读主对话的 todo 清单、不做记忆检索、
+// 不关心在途的兄弟任务——那些是主 agent 的全局视野，混进 Worker 的请求
+// 只会稀释它对单一任务的注意力。
+func SetWorkerStatusCallback(clamp *TokenClampConfig) llmagent.Option {
+
+	modelCallbacks := model.NewCallbacks().RegisterBeforeModel(
+		func(ctx context.Context, args *model.BeforeModelArgs) (*model.BeforeModelResult, error) {
+			var status string
+			injectBaseStatus(ctx, &status)
 
 			args.Request.Messages = append(args.Request.Messages, model.NewSystemMessage(status)) //在末尾追加状态栏
 			clampMaxTokens(ctx, args.Request, clamp)                                              //钳制在状态栏注入之后：状态栏消息也计入输入

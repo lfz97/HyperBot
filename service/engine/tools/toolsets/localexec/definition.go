@@ -7,7 +7,7 @@ import (
 
 // LocalExecToolSet 的 name 为空串（见 LocalExec）：框架的 NamedToolSet 对空名
 // 工具集不加前缀，工具以 mapper.go 里登记的名字原样暴露给模型。
-// cronagent/MCP 工具集保留前缀，不会与本工具集裸名冲突。
+// MCP 工具集保留前缀，不会与本工具集裸名冲突。
 type LocalExecToolSet struct {
 	name string
 	mgr  *Manager

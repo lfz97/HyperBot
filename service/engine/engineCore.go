@@ -39,17 +39,18 @@ func (e *Engine) Init() {
 		return
 	}
 	if env.ConfigCreated {
-		e.enterFirstStartup()
+		// 快照模板 model 块为配置页预填值并进入 config 态（成对写入见 setBootState）。
+		e.setBootState(BootConfigNeeded, templateModelFields(e.Config_p.Model))
 		return
 	}
-	e.setBootState(BootReady)
+	e.setBootState(BootReady, nil)
 }
 
 // flush 释放上一轮装配的运行时资产后重跑 ⑥–⑪ + newRunner。
 // 幂等：不改变语义状态，重复调用只是把资产按当前配置再重建一遍，结果收敛。
 // 首次启动配置提交后整条装配路径重跑：引擎无需知道哪些组件快照了 config
-// （session service 的 summarizer 拷贝了 config.Model 值、cron agent 冻结了
-// config 指针——整体重建一次性全部覆盖）。仅可在无回合进行中时调用
+// （session service 的 summarizer 拷贝了 config.Model 值——整体重建一次性
+// 全部覆盖）。仅可在无回合进行中时调用
 // （首次启动的配置页是模态的，天然满足；装配错误由调用方决定呈现方式）。
 func (e *Engine) flush() error {
 	e.releaseRuntime()
@@ -57,6 +58,7 @@ func (e *Engine) flush() error {
 		return err
 	}
 	e.buildSystemPrompt()
+	e.buildWorkerPrompt()
 	e.SessionService_p = e.buildSessionService()
 	if err := e.buildMemoryService(); err != nil {
 		return err
@@ -65,13 +67,21 @@ func (e *Engine) flush() error {
 		return err
 	}
 	e.loadSkills()
-	e.newRunner()
-	return nil
+	return e.newRunner()
 }
 
 // releaseRuntime 关闭当前运行时资产（nil 安全：首次调用无事可放）。
-// runner 持有 session service 引用，二者一起放；cron 工具集有调度器须显式停。
+// 顺序同 Shutdown：先停 taskService（取消并等待在跑的 Worker，它们还在使用
+// MCP 工具集与 localexec 作业表），再放 runner 与工具集；worker 原子指针一并
+// 清空，防止 flush 间隙的 spawn 拿到引用旧一代资产的实例。
+// session service 接口自带 Close（内存/SQLite 实现均满足）。
 func (e *Engine) releaseRuntime() {
+	if e.taskService != nil {
+		e.taskService.Close()
+		e.taskService = nil
+	}
+	e.taskTools = nil
+	e.worker.Store(nil)
 	if e.AgentRunner_p != nil {
 		(*e.AgentRunner_p).Runner.Close()
 		e.AgentRunner_p = nil
@@ -110,8 +120,7 @@ func (e *Engine) ApplyFirstStartupConfig(vals map[string]string) error {
 		return err
 	}
 	e.newSessionID()
-	e.firstStartupFields = nil
-	e.setBootState(BootReady)
+	e.setBootState(BootReady, nil) // 成对写：清空预填值 + 推进状态，同一临界区（裸写 firstStartupFields 是数据竞争）
 	e.setStartupInfo(e.startupInfoLines())
 	return nil
 }
@@ -204,7 +213,12 @@ func (e *Engine) agentLoop() {
 // ── 斜杠命令的后端能力接口（前端注册表见 service/tui/handler.go）──────
 
 // Shutdown /exit 的引擎侧收尾：释放 runner 与 MCP 连接。置终态与退出由前端接管（tea.Quit）。
+// taskService 最先关：它会取消并等待在跑的 Worker 退出，之后才能安全关闭
+// 它们正在使用的 MCP 工具集与 localexec 作业表。
 func (e *Engine) Shutdown() {
+	if (*e).taskService != nil {
+		(*e).taskService.Close()
+	}
 	if (*e).AgentRunner_p != nil {
 		(*(*e).AgentRunner_p).Runner.Close()
 	}

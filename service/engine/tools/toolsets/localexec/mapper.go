@@ -1,7 +1,7 @@
 package localexec
 
 // 工具名统一 Command* 家族前缀，语义自解释；工具集名为空时框架不再加
-// LocalExec_ 前缀，这里登记的名字就是模型看到的名字（cronagent/MCP 仍带前缀）。
+// LocalExec_ 前缀，这里登记的名字就是模型看到的名字（MCP 仍带前缀）。
 const (
 	runToolName       = "CommandRun"
 	statusToolName    = "CommandStatus"

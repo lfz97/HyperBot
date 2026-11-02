@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"HyperBot/service/engine/agent"
 	"HyperBot/service/engine/config"
 	"HyperBot/service/engine/tools/toolsets"
 	"context"
@@ -10,16 +9,17 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	ag "trpc.group/trpc-go/trpc-agent-go/agent"
 	"trpc.group/trpc-go/trpc-agent-go/agent/llmagent"
+	"trpc.group/trpc-go/trpc-agent-go/agent/taskrun/inprocess"
 	"trpc.group/trpc-go/trpc-agent-go/memory"
-	"trpc.group/trpc-go/trpc-agent-go/model"
-	"trpc.group/trpc-go/trpc-agent-go/model/tiktoken"
 	"trpc.group/trpc-go/trpc-agent-go/runner"
 	"trpc.group/trpc-go/trpc-agent-go/session"
 	"trpc.group/trpc-go/trpc-agent-go/skill"
 	"trpc.group/trpc-go/trpc-agent-go/tool"
+	taskruntask "trpc.group/trpc-go/trpc-agent-go/tool/taskrun"
 )
 
 type Engine struct {
@@ -36,9 +36,17 @@ type Engine struct {
 	FrameworkLogFile_p  *os.File            // 保存日志文件句柄，防止被 GC 回收
 	SqliteMemoryService memory.Service      // sqlite记忆服务
 	Systemprompt        string              //agent的系统提示词
+	WorkerPrompt        string              //Worker（后台任务 agent）的系统提示词
 	mcpToolsets         []tool.ToolSet      //agent挂载的工具集，每轮自动更新
 	builtinTools        []tool.Tool         //内置function清单，启动时确定，不自动刷新
 	builtinToolsets     []tool.ToolSet      //内置工具集，启动时确定，不自动刷新
+
+	// taskrun 后台任务面：主 agent 经 taskTools 派 Worker，每个 Worker 跑在
+	// 独立 child session 里。worker 是原子发布的当代实例——工厂只做原子读，
+	// 构造永远发生在 refresh（主 goroutine）上，并发 spawn 不会重复 reload。
+	taskService *inprocess.Service
+	taskTools   *taskruntask.Tools
+	worker      atomic.Pointer[llmagent.LLMAgent]
 
 	// errBudget：连续错误自动重试预算，状态流转见 errorBudget.go
 	errBudget errorBudget
@@ -46,6 +54,7 @@ type Engine struct {
 	// 启动状态（BootXxx 常量，经 FirstStartupJSON 暴露给 TUI）：
 	// booting → （首次启动）config → ready，或 booting → ready。
 	// firstStartupFields 是 config 态下配置页的预填值快照。
+	// 两个字的写入只经 setBootState（同一临界区成对写），别处裸写即数据竞争。
 	bootState          string
 	firstStartupFields map[string]string
 
@@ -70,64 +79,29 @@ type Agentrunner struct {
 	SessionId string
 }
 
-func (e *Engine) newRunner() {
-	var Runner runner.Runner
-	Runner = runner.NewRunnerWithAgentFactory(
+// newRunner 构造 runner（双具名 agent）与 taskrun 后台任务面。返回 error 由
+// 调用方按语境处理：Init（引擎 goroutine）可 parkWithFatal，ApplyFirstStartupConfig
+// （TUI 事件循环 goroutine）只可 setFatal——不能在 TUI goroutine 上驻留。
+func (e *Engine) newRunner() error {
+	Runner := runner.NewRunnerWithAgentFactory(
 		(*e).Agentname,
 		(*e).Agentname,
 		func(ctx context.Context, ro ag.RunOptions) (ag.Agent, error) {
-			(*e).refresh()
-			var Agent_p *llmagent.LLMAgent
-			toolsets := []tool.ToolSet{}
-			tools := []tool.Tool{}
-			toolsets = append(toolsets, (*e).builtinToolsets...)
-			toolsets = append(toolsets, (*e).mcpToolsets...)
-			tools = append(tools, (*e).builtinTools...)
-			tools = append(tools, (*e).SqliteMemoryService.Tools()...) //记忆工具加入全局工具列表，Agent 才能调用
-			counter, _ := tiktoken.New((*(*e).Config_p).Model.Model)   //tiktoken 计数器：compaction 阈值判定与 max_tokens 钳制共用；失败为 nil，各自 fail-open
-			opts := []llmagent.Option{
-				llmagent.WithGenerationConfig(model.GenerationConfig{
-					MaxTokens:       &(*(*e).Config_p).Model.MaxTokens,
-					Stream:          (*(*e).Config_p).Model.Stream,
-					ReasoningEffort: (*(*e).Config_p).Model.ReasoningEffortPtr(), // 思考强度，来自配置 reasoning_effort 字段，留空不下发
-				}), llmagent.WithTools(tools),
-				llmagent.WithGlobalInstruction((*e).Systemprompt),
-				llmagent.WithToolSets(toolsets),
-				llmagent.WithRefreshToolSetsOnRun(true),
-				llmagent.WithSkillsLoadedContentInToolResults(true),
-				//仅注入知识，不注入执行工具的能力，统一通过localexec执行
-				llmagent.WithSkills((*e).SkillRepo),
-				llmagent.WithSkillToolProfile(
-					llmagent.SkillToolProfileKnowledgeOnly,
-				),
-				llmagent.WithAddSessionSummary(true),                                           //启用上下文压缩注入
-				llmagent.WithSessionSummaryInjectionMode(llmagent.SessionSummaryInjectionUser), //摘要注入到user message，不与system prompt中的SOP规则竞争优先级
-				llmagent.WithSyncSummaryIntraRun(true),                                         //在同一次对话中同步更新摘要
-				llmagent.WithEnableContextCompaction(true),                                     // 启用 tool result 压缩（Pass 1+2）
-				llmagent.WithContextCompactionToolResultMaxTokens(8192),                        // Pass 1 预算：历史 tool result >8K 才换 placeholder（默认1024过激：实测真实结果 p50=191/p99=3.7K，8192 覆盖99.7%；与 Pass 2 对齐成一条规则：≤8K 原文，>8K 首尾截断）
-				llmagent.WithContextCompactionOversizedToolResultMaxTokens(8192),               // Pass 2: 超大 tool result 首尾保留截断
-				llmagent.WithEnableOnDemandSession(true),                                       // 按需加载被压缩的原始数据（session_load）
-				llmagent.WithContextCompactionTokenCounter(counter),                            //裁剪阈值判定用精确计数：默认 rune/4 对中文低估 3~4 倍，会漏裁
-				llmagent.WithEnableParallelTools(true),                                         //启用并行工具调用，提升工具调用效率
-				agent.SetBeforeModelStatusCallback(e, &agent.TokenClampConfig{
-					Counter:       counter,
-					ContextWindow: (*(*e).Config_p).Model.ContextWindow,
-					CfgMaxTokens:  (*(*e).Config_p).Model.MaxTokens,
-				}), //追加beforeModel状态栏 + 动态max_tokens钳制（公式见 agent/maxtokens.go）
+			if err := (*e).refresh(); err != nil {
+				return nil, err
 			}
-			// ConfigBaseAgent 对未知 APIType 是静默不设模型（agent 建得出来、跑起来才失败），
-			// 这里先挡住，给出可读的配置错误。
-			apiType := (*(*e).Config_p).Model.APIType
-			if apiType != "openai" && apiType != "anthropic" {
-				return nil, errors.New("unsupported API type, check the Model.APIType field in your config")
-			}
-			Agent_p = agent.ConfigBaseAgent(
-				(*e).Agentname,
-				(*(*e).Config_p).Model,
-				opts,
-			)
-			return Agent_p, nil
+			return e.initMainAgent()
 		},
+		// Worker 用独立工厂，且不 refresh：它返回 refresh 已经构造好的那一代实例。
+		// 这样 worker 的构造永远发生在 refresh 的同一 goroutine 上，spawn 只做一次原子读，
+		// 不会出现 N 个并发 spawn 各自重载配置/刷新 MCP。
+		runner.WithAgentFactory(workerAgentName, func(ctx context.Context, ro ag.RunOptions) (ag.Agent, error) {
+			worker := (*e).worker.Load()
+			if worker == nil {
+				return nil, errors.New("worker is not initialized")
+			}
+			return worker, nil
+		}),
 		runner.WithSessionService((*e).SessionService_p),
 		runner.WithMemoryService((*e).SqliteMemoryService),
 	)
@@ -135,13 +109,37 @@ func (e *Engine) newRunner() {
 		Runner: Runner,
 		Stream: (*(*e).Config_p).Model.Stream,
 	}
+
+	// agent 级后台任务：主 agent 用它派 Worker，每个 Worker 跑在自己的 child session 里。
+	// 必须在 runner 之后构造——Service 直接持有 runner。
+	service, err := inprocess.NewService(Runner)
+	if err != nil {
+		return fmt.Errorf("failed to initialize task run service: %w", err)
+	}
+	// 不能挂 turn 的 ctx：turn 结束不该杀掉还在跑的 run。
+	service.Start(context.Background())
+	tools := taskruntask.NewTools(
+		service,
+		taskruntask.WithDefaultAgentName(workerAgentName),
+		taskruntask.WithSessionService((*e).SessionService_p), // 打开 read_task_run_transcript
+	)
+	(*e).taskService = service
+	(*e).taskTools = &tools
+	return nil
 }
 
-// 刷新配置文件，MCP工具集，SKILL仓库
-func (e *Engine) refresh() {
+// 刷新配置文件，MCP工具集，SKILL仓库，并重建当代 Worker（原子发布）。
+// 返回 error 时由调用方（agent 工厂）转发给 runner，按错误预算重试/交还用户。
+func (e *Engine) refresh() error {
 	e.loadConfig()
 	e.refreshMCPFromConfig()
 	e.loadSkills()
+	worker, err := e.initWorker()
+	if err != nil {
+		return err
+	}
+	(*e).worker.Store(worker)
+	return nil
 }
 
 func (e *Engine) loadConfig() {

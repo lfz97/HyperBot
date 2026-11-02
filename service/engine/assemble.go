@@ -9,11 +9,9 @@ import (
 	m "HyperBot/service/engine/memory"
 	s "HyperBot/service/engine/session"
 	functionTools "HyperBot/service/engine/tools/functions"
-	"HyperBot/service/engine/tools/toolsets/cronagent"
 	"HyperBot/service/engine/tools/toolsets/localexec"
 	"embed"
 	"fmt"
-	stdlog "log"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -77,37 +75,19 @@ func (e *Engine) buildMemoryService() error {
 	return nil
 }
 
-// buildBuiltinAssets 内置 function 工具与工具集（localexec + cron agent）（⑩）。
+// buildBuiltinAssets 内置 function 工具与工具集（localexec）（⑩）。
+// 主 agent 与 Worker 共享这份清单；todo_write / 记忆 / taskrun 调度面是主 agent
+// 的专属工具，由 members.go 的装配路径按角色追加，Worker 不持有。
 func (e *Engine) buildBuiltinAssets() error {
 	var tools []tool.Tool
 	var sets []tool.ToolSet
 
 	sets = append(sets, localexec.LocalExec())
 
-	// 用独立的 agent 名，避免遥测里 cron 的自主运行和主对话混在同一个 (app, agent) 对下
-	cronToolset, err := cronagent.CronAgent(
-		e.Agentname+"_cron",
-		e.Config_p,
-		e.Systemprompt,
-		e.SkillFolderPath,
-		e.ConfigFolderPath,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to initialize cron agent: %w", err)
-	}
-	// 存档加载失败是非致命的：坏文件已被挪到 .fix<时间戳>，空集合可以正常启动
-	if loadErr := cronToolset.LoadError(); loadErr != nil {
-		stdlog.Printf("failed to load cron agent store: %v", loadErr)
-		e.setNotice(NoticeWarning, "cron agent config broken, moved to .fix")
-	}
-	sets = append(sets, cronToolset)
-
 	fileopsTools := functionTools.GetFileOperationsTools()
 	fileSystemTools := functionTools.GetFileSystemTools()
-	todoTools := functionTools.GetTodoTools() // 框架内置 todo_write：任务清单，状态存 session，跨轮持久化
 	tools = append(tools, fileopsTools...)
 	tools = append(tools, fileSystemTools...)
-	tools = append(tools, todoTools...)
 
 	e.builtinTools = tools
 	e.builtinToolsets = sets
@@ -117,7 +97,18 @@ func (e *Engine) buildBuiltinAssets() error {
 // buildSystemPrompt 读取系统提示词模板并替换其中的占位符（⑦）。
 func (e *Engine) buildSystemPrompt() {
 	systemprompt_b, _ := fs.ReadFile("prompt/systemprompt.md")
-	prompt := string(systemprompt_b)
+	e.Systemprompt = e.applyPromptPlaceholders(string(systemprompt_b))
+}
+
+// buildWorkerPrompt 读取 Worker 提示词并替换占位符：环境块与主 agent 同款替换，
+// Worker 模板只使用其中的环境/安全/执行段落，不含 todo 与记忆段落。
+func (e *Engine) buildWorkerPrompt() {
+	workerprompt_b, _ := fs.ReadFile("prompt/workerprompt.md")
+	e.WorkerPrompt = e.applyPromptPlaceholders(string(workerprompt_b))
+}
+
+// applyPromptPlaceholders 把环境占位符替换进提示词模板（主/Worker 共用同一套替换）。
+func (e *Engine) applyPromptPlaceholders(prompt string) string {
 	prompt = strings.ReplaceAll(prompt, "{{NAME}}", e.Agentname)
 	// {{DATE}}/{{CWD}} 不注入：已由 BeforeModel 状态栏每次调用刷新提供
 	zone, _ := time.Now().Zone()
@@ -150,5 +141,5 @@ func (e *Engine) buildSystemPrompt() {
 	//todo_write 工具使用说明（框架 tool/todo.DefaultToolPrompt，随框架版本走，不在提示词里硬编码）
 	prompt = strings.ReplaceAll(prompt, "{{TODO_PROMPT}}", functionTools.GetTodoToolPrompt())
 
-	e.Systemprompt = prompt
+	return prompt
 }

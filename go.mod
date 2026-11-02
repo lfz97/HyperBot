@@ -18,7 +18,6 @@ require (
 	github.com/openai/openai-go v1.12.0
 	github.com/otiai10/copy v1.14.1
 	github.com/pmezard/go-difflib v1.0.0
-	github.com/robfig/cron/v3 v3.0.1
 	go.uber.org/zap v1.28.0
 	gopkg.in/yaml.v2 v2.4.0
 	trpc.group/trpc-go/trpc-agent-go v1.11.1-0.20260820131707-cdaece75b478

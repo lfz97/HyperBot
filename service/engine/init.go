@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"HyperBot/service/engine/observability"
 	ag "trpc.group/trpc-go/trpc-agent-go/agent"
 	"trpc.group/trpc-go/trpc-agent-go/agent/llmagent"
 	"trpc.group/trpc-go/trpc-agent-go/agent/taskrun/inprocess"
@@ -23,23 +24,24 @@ import (
 )
 
 type Engine struct {
-	Config_p            *config.Config      //yaml配置
-	Agentname           string              //Agent名称
-	CWD                 string              //当前工作目录（os.Getwd()）
-	ExeDir              string              //可执行文件所在目录，资产锚点
-	ConfigFolderPath    string              //配置文件夹路径
-	HyperBotConfigPath  string              //配置文件路径
-	SkillFolderPath     string              //技能文件夹路径
-	SkillRepo           *skill.FSRepository //技能仓库
-	AgentRunner_p       *Agentrunner        //Runner，全局唯一
-	SessionService_p    session.Service     //会话服务，包含自动摘要功能
-	FrameworkLogFile_p  *os.File            // 保存日志文件句柄，防止被 GC 回收
-	SqliteMemoryService memory.Service      // sqlite记忆服务
-	Systemprompt        string              //agent的系统提示词
-	WorkerPrompt        string              //Worker（后台任务 agent）的系统提示词
-	mcpToolsets         []tool.ToolSet      //agent挂载的工具集，每轮自动更新
-	builtinTools        []tool.Tool         //内置function清单，启动时确定，不自动刷新
-	builtinToolsets     []tool.ToolSet      //内置工具集，启动时确定，不自动刷新
+	Config_p            *config.Config                //yaml配置
+	Agentname           string                        //Agent名称
+	CWD                 string                        //当前工作目录（os.Getwd()）
+	ExeDir              string                        //可执行文件所在目录，资产锚点
+	ConfigFolderPath    string                        //配置文件夹路径
+	HyperBotConfigPath  string                        //配置文件路径
+	SkillFolderPath     string                        //技能文件夹路径
+	SkillRepo           *skill.FSRepository           //技能仓库
+	AgentRunner_p       *Agentrunner                  //Runner，全局唯一
+	SessionService_p    session.Service               //会话服务，包含自动摘要功能
+	FrameworkLogFile_p  *os.File                      // 保存日志文件句柄，防止被 GC 回收
+	SqliteMemoryService memory.Service                // sqlite记忆服务
+	ob                  observability.ObserverService //可观测服务
+	Systemprompt        string                        //agent的系统提示词
+	WorkerPrompt        string                        //Worker（后台任务 agent）的系统提示词
+	mcpToolsets         []tool.ToolSet                //agent挂载的工具集，每轮自动更新
+	builtinTools        []tool.Tool                   //内置function清单，启动时确定，不自动刷新
+	builtinToolsets     []tool.ToolSet                //内置工具集，启动时确定，不自动刷新
 
 	// taskrun 后台任务面：主 agent 经 taskTools 派 Worker，每个 Worker 跑在
 	// 独立 child session 里。worker 是原子发布的当代实例——工厂只做原子读，

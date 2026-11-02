@@ -7,8 +7,10 @@ import (
 	"strings"
 
 	"HyperBot/service/engine/config"
+	"HyperBot/service/engine/observability"
 
 	"github.com/google/uuid"
+	"trpc.group/trpc-go/trpc-agent-go/log"
 )
 
 // GetEngineService 创建引擎实例（轻量：只装配字段，不触盘）。生命周期统一由 Run 驱动。
@@ -37,6 +39,24 @@ func (e *Engine) Init() {
 	if err := e.flush(); err != nil {
 		e.parkWithFatal(FatalError, err.Error(), true)
 		return
+	}
+	if (*e).Config_p.Observability.Enabled {
+		obs := (*e).Config_p.Observability
+		ob := observability.NewObservabilityService(observability.ServiceType(obs.Service), obs.Public, obs.Secret, obs.Host, obs.Insecure)
+		if ob == nil {
+			e.setNotice(NoticeWarning, fmt.Sprintf("observability service %q is not supported, tracing disabled", obs.Service))
+		} else if err := ob.Start(); err != nil {
+			// 软失败：观测后端不可用不阻断聊天（对比 parkWithFatal 的硬失败路径）。
+			// 配置层错误（host/key 缺失等）在这里零反馈会让人以为 tracing 开着。
+			e.setNotice(NoticeWarning, fmt.Sprintf("observability start failed (%v): tracing disabled", err))
+		} else {
+			// 成功才发布 e.ob——Shutdown 的 nil 判定因此语义准确。
+			// 注意 langfuse.Start 成功 ≠ 后端可达（启动路径无网络 I/O），
+			// 首批导出失败只会进 hyperbot.log（见 observability/langfuse.go
+			// 的 otel.SetErrorHandler）。
+			(*e).ob = ob
+			e.setNotice(NoticeSuccess, "langfuse tracing enabled")
+		}
 	}
 	if env.ConfigCreated {
 		// 快照模板 model 块为配置页预填值并进入 config 态（成对写入见 setBootState）。
@@ -215,6 +235,8 @@ func (e *Engine) agentLoop() {
 // Shutdown /exit 的引擎侧收尾：释放 runner 与 MCP 连接。置终态与退出由前端接管（tea.Quit）。
 // taskService 最先关：它会取消并等待在跑的 Worker 退出，之后才能安全关闭
 // 它们正在使用的 MCP 工具集与 localexec 作业表。
+// ob 最后停：在跑 Worker 的 span 要先 End，尾批 flush 才完整（Stop 自带
+// 5s 超时，Langfuse 不可达不会挂住 /exit；失败仅日志）。
 func (e *Engine) Shutdown() {
 	if (*e).taskService != nil {
 		(*e).taskService.Close()
@@ -224,6 +246,11 @@ func (e *Engine) Shutdown() {
 	}
 	for _, toolset := range (*e).mcpToolsets {
 		toolset.Close()
+	}
+	if (*e).ob != nil {
+		if err := (*e).ob.Stop(); err != nil {
+			log.Default.Warnf("observability shutdown: %v", err)
+		}
 	}
 }
 

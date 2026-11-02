@@ -47,6 +47,7 @@ cmd/main.go → boot.Boot() → service/engine + service/tui
     │   ├── config/          (config.go Config 结构+LoadConfig; mcp.go SSE/streamable_http+stdin MCP 配置; template.go embed)
     │   ├── memory/          (sqlite.go SQLite 记忆服务工厂)
     │   ├── models/          (openai.go/anthropic.go 模型适配器，DeepSeek 变体自动检测)
+    │   ├── observability/   (observability.go ObserverService 接口 + langfuse.go Langfuse trace 启停/收尾)
     │   ├── prompt/          (systemprompt.md + workerprompt.md embedFS)
     │   ├── session/         (memSessionService.go 摘要会话; summarizer.go; prompt/ 摘要模板)
     │   └── tools/
@@ -149,6 +150,7 @@ Auto-generated to `hyperbot.yaml` on first run. Supports:
 - `stream` (bool): enable streaming output
 - MCP services (SSE or streamable_http) — per-server `timeout` (seconds, per-call limit, default 120)
 - Stdin MCP processes — same `timeout` field
+- `observability` block (langfuse trace 上报，默认 `enabled: false`)：`service`(仅 "langfuse")/`host`(host:port 无 scheme)/`public`/`secret`/`insecure`/`enabled`；留空字段回落 `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`/`LANGFUSE_HOST` 环境变量；启用后对话内容会上报 Langfuse；本段改动需重启进程生效
 
 ## Dependencies
 
@@ -171,6 +173,7 @@ Auto-generated to `hyperbot.yaml` on first run. Supports:
 - Tests: `service/engine/uistate_test.go`（引擎 wire 契约）+ `service/tui/render_test.go`（渲染/按键/pull，fakeEngine 桩）
 - Skills are loaded from `skills/` directory in Knowledge-Only mode (commands go through LocalExec)
 - Framework logs are redirected to `hyperbot.log` to avoid TUI interference
+- **Langfuse 可观测性（`service/engine/observability/`）** — `ObserverService` 接口 + langfuse 实现，装在 `Engine.Init`（flush 之后、setBootState 之前）。三条硬约束：① **`langfuse.Start` 每进程只能调一次**——框架对已存在的 SDK provider 走 `RegisterSpanProcessor` 追加分支，二次调用所有 span 双份导出，所以刻意不进 `flush()` 重建链（改配置需重启）；② **`otel.SetErrorHandler` 必须设**（`langfuse.go` Start 里已设）——OTel 默认错误 handler 自建 `log.New(os.Stderr)`，bootstrap 的 `stdlog.SetOutput` 重定向拦不住它，alt-screen 下后台导出持续失败会撕碎 TUI，已导流进框架 `log.Default`（= hyperbot.log）；③ **`Stop` 自带 5s 超时**——收尾是同步上传（OTLP client 10s 请求超时 × retry 退避），无 deadline 会挂住 `/exit`；且 ctx 必须新鲜，不能传已取消的 turn ctx。`Shutdown` 里 ob 排在 taskService/runner/MCP 之后（在跑 Worker 的 span 先 End，尾批 flush 才完整）。Init 三分支各推一条 notice：未知 service → warning、Start 失败 → warning（软失败不 `parkWithFatal`：观测后端不可用不阻断聊天）、成功 → success（注意 `Start` 成功 ≠ 后端可达，启动路径无网络 I/O，导出失败只进 hyperbot.log）。yaml 非空字段转 `Option`、框架内部先读 env 再应用 opts——"yaml 优先、env 兜底"无需合并逻辑。
 - **帮助浮层动态项** — 默认项（ctrl+k、/new、/exit）在 `helps.refresh()` 里写死（`service/tui/helps.go`），技能项每次打开浮层时从引擎 `HelpItemsJSON()` 拉取（`loadSkills` 随时可能重建列表）。浮层样式延续 charm demo：居中圆角盒（色 62）、上下选择、enter 把指令插入输入框。
 - **embedFS case sensitivity** - `//go:embed` + `ReadFile` paths are case-sensitive on Linux. File named `systemprompt.md` but code reading `systemPrompt.md` silently returns empty string (error ignored with `_`). Always match exact file name case between `go:embed` glob patterns and `ReadFile` calls.
 - **`model/anthropic` 子模块版本对齐** — 根模块与 `model/anthropic` 子模块在 go.mod 中独立锁版本，升级根模块不会带上子模块修复。DeepSeek anthropic 端点要求 object schema 的 properties 非 null；无参 MCP 工具在旧版（v1.11.2 及更早）下序列化为 `"properties":null` 导致 400。升级时必须显式同时升级两者到含修复版本（#2501，commit cdaece75；现锁 `v1.11.1-0.20260820131707-cdaece75b478`）

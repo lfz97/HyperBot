@@ -25,7 +25,7 @@ go build -o HyperBot ./cmd
 ./HyperBot
 ```
 
-首次运行自动生成 `.hyperbot/hyperbot.yaml`，填入 API Key 后重启即可。
+首次运行自动生成 `.hyperbot/hyperbot.yaml` 并弹出 TUI 配置页，填入模型信息提交即可使用；也可按 ESC 退出，手动编辑配置文件后再次运行（完整字段见[配置](#配置)）。
 
 **常用操作**：
 
@@ -58,24 +58,10 @@ scp -r .hyperbot user@host:/opt/hyperbot/
 
 ## 配置
 
-`.hyperbot/hyperbot.yaml` 首次运行自动生成。两种配置方式：
+`.hyperbot/hyperbot.yaml` 首次运行自动生成（文件不带注释，字段说明以本文为准）。两种配置方式：
 
 - **TUI 配置页**：首次启动自动弹出，填模型四项（model / baseurl / apikey / apitype）提交即可，其余字段取模板默认值
-- **手动编辑**：直接改 `hyperbot.yaml`，保存后下一轮对话自动生效（无需重启）；完整字段见下方示例
-
-核心字段：
-
-```yaml
-model:
-  model: "deepseek-reasoner"      # 模型名
-  baseurl: "https://api.deepseek.com"
-  apikey: "your-api-key"
-  apitype: "openai"               # openai 或 anthropic
-  contextwindow: 64000            # 上下文窗口，须 ≤ 模型实际限制
-  anthropicAuthHeaderTransfer: false  # true=Authorization Bearer 认证，false=X-Api-Key 认证
-  stream: true                    # 流式输出
-  maxtokens: 12800                # 每次请求的最大生成 token 数，默认 12800
-```
+- **手动编辑**：直接改 `hyperbot.yaml`，保存后下一轮对话自动生效（无需重启；observability 段除外，需重启进程）。完整字段见下方[完整配置示例](#完整配置示例)
 
 ### MCP 工具接入
 
@@ -111,11 +97,38 @@ stdin_mcp:
 
 MCP 配置改动下一轮对话自动生效（每轮自动重载配置与工具集），无需重启。
 
+### 可观测性（可选）
+
+默认关闭，配置 `.hyperbot/hyperbot.yaml` 的 `observability` 段即可开启（改动需重启进程生效）：
+
+```yaml
+observability:
+  service: "langfuse"
+  host: "cloud.langfuse.com:443"   # 自建实例用 host:port，并设 insecure: true
+  public: ""                       # 留空则读 LANGFUSE_PUBLIC_KEY
+  secret: ""                       # 留空则读 LANGFUSE_SECRET_KEY
+  insecure: false
+  enabled: true
+```
+
+开启后每次模型调用与工具调用都会作为 trace 上报。上下文压缩触发时，trace 中额外出现两个阶段 span：
+
+- `llmflow.context_compaction.create_summary` — 摘要生成
+- `llmflow.context_compaction.rebuild` — 压缩后请求重建
+
+压缩的最终结果（`success` / `no_update` / `summary_error` / `rebuild_unavailable` / `persistence_error` / `post_count_error`）以结构化日志写入 `hyperbot.log`，可直接检索：
+
+```bash
+grep "Pre-LLM context compaction result" hyperbot.log
+```
+
+> 启用后对话内容会上报 Langfuse 服务器；敏感对话建议只使用自部署实例。
+
 ### 完整配置示例
 
 ```yaml
 user:
-  userid: "3f5c0041-557b-43e2-8ac4-a1fb5ac01a1e"   # 首次运行自动生成的 UUID
+  userid: "8f14e45f-ea3b-4c2d-9a76-5c1f0a2b3c4d"   # 首次运行自动生成的 UUID
 model:
   model: "deepseek-reasoner"
   baseurl: "https://api.deepseek.com"
@@ -143,7 +156,7 @@ stdin_mcp:                         # 可选，不配就删掉这段
     args: ["mcp-server-fetch"]
     description: "示例 stdio MCP server"
     timeout: 120
-observability:                     # Langfuse trace 上报，默认关闭，详见下文
+observability:                     # Langfuse trace 上报，默认关闭，见上文「可观测性」
   service: "langfuse"
   host: ""
   public: ""
@@ -164,33 +177,6 @@ observability:                     # Langfuse trace 上报，默认关闭，详�
 | `[IN-FLIGHT]` | 后台任务运行状态 |
 
 状态块只存在于当次请求副本，**不写入会话历史**，不会污染自动摘要与上下文压缩；Worker 只注入 `[STATUS]` 基础段。追加在尾部而不是头部，是为了让稳定前缀命中自动前缀缓存（状态块每轮都变，放头部会让缓存归零）——这也是关闭框架 system 前置重排（`openai.WithOptimizeForCache(false)`）的原因。
-
-## 可观测性（可选）
-
-默认关闭，配置 `.hyperbot/hyperbot.yaml` 的 `observability` 段即可开启（改动需重启进程生效）：
-
-```yaml
-observability:
-  service: "langfuse"
-  host: "cloud.langfuse.com:443"   # 自建实例用 host:port，并设 insecure: true
-  public: ""                       # 留空则读 LANGFUSE_PUBLIC_KEY
-  secret: ""                       # 留空则读 LANGFUSE_SECRET_KEY
-  insecure: false
-  enabled: true
-```
-
-开启后每次模型调用与工具调用都会作为 trace 上报。上下文压缩触发时，trace 中额外出现两个阶段 span：
-
-- `llmflow.context_compaction.create_summary` — 摘要生成
-- `llmflow.context_compaction.rebuild` — 压缩后请求重建
-
-压缩的最终结果（`success` / `no_update` / `summary_error` / `rebuild_unavailable` / `persistence_error` / `post_count_error`）以结构化日志写入 `hyperbot.log`，可直接检索：
-
-```bash
-grep "Pre-LLM context compaction result" hyperbot.log
-```
-
-> 启用后对话内容会上报 Langfuse 服务器；敏感对话建议只使用自部署实例。
 
 ## 许可证
 

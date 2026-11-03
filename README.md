@@ -60,7 +60,7 @@ scp -r .hyperbot user@host:/opt/hyperbot/
 
 `.hyperbot/hyperbot.yaml` 首次运行自动生成。两种配置方式：
 
-- **TUI 配置页**：首次启动自动弹出，填模型四项（model / baseurl / apikey / apitype）提交即可。注意：提交会把配置文件**整体重写，注释不保留**
+- **TUI 配置页**：首次启动自动弹出，填模型四项（model / baseurl / apikey / apitype）提交即可，其余字段取模板默认值
 - **手动编辑**：直接改 `hyperbot.yaml`，保存后下一轮对话自动生效（无需重启）；完整字段见下方示例
 
 核心字段：
@@ -128,8 +128,21 @@ model:
   httptimeout: 3600                # HTTP 请求超时（秒）
   show_reasoning: false            # 显示推理内容
   reasoning_effort: max            # 思考强度 low/medium/high/max，留空不下发
-http_mcp: []                       # 按需添加，见上文「MCP 工具接入」
-stdin_mcp: []
+http_mcp:                          # 可选，不配就删掉这段
+  - enabled: true
+    name: "my-tools"               # 全局唯一，决定工具前缀 {name}_{toolName}
+    type: "streamable_http"        # sse 或 streamable_http
+    endpoint: "http://127.0.0.1:8080/mcp"
+    headers: {}                    # 可选，如: {"Authorization": "Bearer xxx"}
+    description: "示例 HTTP MCP server"
+    timeout: 120
+stdin_mcp:                         # 可选，不配就删掉这段
+  - enabled: true
+    name: "fetch"
+    command: "uvx"
+    args: ["mcp-server-fetch"]
+    description: "示例 stdio MCP server"
+    timeout: 120
 observability:                     # Langfuse trace 上报，默认关闭，详见下文
   service: "langfuse"
   host: ""

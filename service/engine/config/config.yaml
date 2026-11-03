@@ -1,24 +1,19 @@
-#用户配置
 user:
   userid: "{USERID}"
 
-# 模型配置
 model:
   model: "deepseek-reasoner"
   baseurl: "https://api.deepseek.com"
   apikey: "your-api-key"
-  apitype: "openai" # openai 或者 anthropic
-  contextwindow: 64000 # 上下文窗口，参考模型文档，影响自动摘要触发时机
-  anthropicAuthHeaderTransfer: false # anthropic 认证方式：true: Bearer；false: X-Api-Key
-  stream: true # 流式输出
-  maxtokens: 12800 # 单次请求最大生成 token 数
-  httptimeout: 3600 # 单位/秒
-  show_reasoning: false # 显示推理内容
-  reasoning_effort: max # 思考强度 low/medium/high/max，留空不下发
+  apitype: "openai"
+  anthropicAuthHeaderTransfer: false
+  contextwindow: 64000
+  stream: true
+  maxtokens: 12800
+  httptimeout: 3600
+  show_reasoning: false
+  reasoning_effort: max
 
-# 可观测性（Langfuse，默认关闭，改动需重启进程）
-# host 为 host:port 格式（无 https:// 前缀）；public/secret/host 留空时
-# 可用环境变量 LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY / LANGFUSE_HOST
 observability:
   service: "langfuse"
   host: ""
@@ -26,23 +21,3 @@ observability:
   secret: ""
   insecure: false
   enabled: false
-
-# MCP 服务配置（可选，默认不启用，按需取消注释）
-# name 必须唯一（决定工具前缀 {name}_{toolName}）；timeout 单位/秒，
-# 不填默认 120，长耗时 server 务必调大
-#http_mcp:
-#  - enabled: true
-#    name: "example"
-#    type: "streamable_http" # sse 或 streamable_http
-#    endpoint: "http://127.0.0.1:8080/mcp"
-#    headers: {} # 可选，如: {"Authorization": "Bearer xxx"}
-#    description: "示例 HTTP MCP server"
-#    timeout: 120
-
-#stdin_mcp:
-#  - enabled: true
-#    name: "example"
-#    command: "npx"
-#    args: ["-y", "mcp-exec"]
-#    description: "示例 stdio MCP server"
-#    timeout: 120

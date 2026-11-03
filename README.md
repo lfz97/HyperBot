@@ -135,11 +135,11 @@ model:
   apikey: "your-api-key"
   apitype: "openai"                # openai 或 anthropic
   anthropicAuthHeaderTransfer: false   # anthropic 认证方式：true=Bearer；false=X-Api-Key
-  contextwindow: 64000             # 上下文窗口，影响自动摘要触发时机
+  contextwindow: 1000000              # 上下文窗口，影响自动摘要触发时机
   stream: true                     # 流式输出
-  maxtokens: 12800                 # 单次请求最大生成 token 数
+  maxtokens: 25600                 # 单次请求最大生成 token 数（Claude 3.5 及更老模型需 ≤8192）
   httptimeout: 3600                # HTTP 请求超时（秒）
-  show_reasoning: false            # 显示推理内容
+  show_reasoning: true             # 显示推理内容
   reasoning_effort: max            # 思考强度 low/medium/high/max，留空不下发
 http_mcp:                          # 可选，不配就删掉这段
   - enabled: true

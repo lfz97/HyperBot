@@ -29,7 +29,7 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config file: %v", err)
 	}
 	if YamlConfig.Model.MaxTokens == 0 {
-		YamlConfig.Model.MaxTokens = 12800
+		YamlConfig.Model.MaxTokens = 25600
 	}
 	return &YamlConfig, nil
 }

@@ -8,19 +8,17 @@ model:
   baseurl: "https://api.deepseek.com"
   apikey: "your-api-key"
   apitype: "openai" # openai 或者 anthropic
-  contextwindow: 64000 # 上下文窗口大小，请参考模型文档设置，影响自动摘要功能的触发时机
-  anthropicAuthHeaderTransfer: false # 如果true，那么通过Authorization: Bearer认证，如果为false，通过X-Api-Key认证
-  stream: true # 是否开启流式输出，开启后可以实时看到模型的推理过程和工具调用信息
-  maxtokens: 12800 # 每次请求的最大生成 token 数，默认 12800
+  contextwindow: 64000 # 上下文窗口，参考模型文档，影响自动摘要触发时机
+  anthropicAuthHeaderTransfer: false # anthropic 认证方式：true: Bearer；false: X-Api-Key
+  stream: true # 流式输出
+  maxtokens: 12800 # 单次请求最大生成 token 数
   httptimeout: 3600 # 单位/秒
-  show_reasoning: false   # 显示推理内容，默认 false（不显示）
-  reasoning_effort: max # 思考强度档位，取决于提供商支持（如 DeepSeek v4 仅 high/max），留空则不下发该参数
+  show_reasoning: false # 显示推理内容
+  reasoning_effort: max # 思考强度 low/medium/high/max，留空不下发
 
-# 可观测性（Langfuse trace 上报，默认关闭）：启用后每次模型调用/工具调用自动上报
-# host 为 host:port 格式（不带 https:// 前缀）：云端 cloud.langfuse.com:443，本地 localhost:3000（须 insecure: true）
-# public/secret/host 留空的字段可用环境变量提供：LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY / LANGFUSE_HOST
-# 注意：启用后对话内容会上报 Langfuse 服务器，敏感对话建议只用自部署实例
-# service 当前仅支持 "langfuse"；本段配置改动需重启进程生效
+# 可观测性（Langfuse，默认关闭，改动需重启进程）
+# host 为 host:port 格式（无 https:// 前缀）；public/secret/host 留空时
+# 可用环境变量 LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY / LANGFUSE_HOST
 observability:
   service: "langfuse"
   host: ""
@@ -28,38 +26,23 @@ observability:
   secret: ""
   insecure: false
   enabled: false
-# MCP 服务配置
-# Type 可选: "sse" 或 "streamable_http"
-# timeout 单位/秒，单次工具调用的超时；不填默认 120。长分析型 server（如逆向、反编译）务必调大
-http_mcp:
-  - name: "mcpexec"
-    enabled: true
-    type: "sse"
-    endpoint: "http://127.0.0.1:8080/mcp"
-    headers: {}  # 可选，如: {"Authorization": "Bearer xxx"}
-    description: "MCP Exec ToolSet for executing commands via HTTP"
-    timeout: 120
 
-  # - name: "another-mcp"
-  #   enabled: true
-  #   type: "streamable_http"
-  #   endpoint: "http://127.0.0.1:8080/mcp"
-  #   headers: {}
-  #   description: "Another MCP ToolSet example"
-  #   timeout: 600
+# MCP 服务配置（可选，默认不启用，按需取消注释）
+# name 必须唯一（决定工具前缀 {name}_{toolName}）；timeout 单位/秒，
+# 不填默认 120，长耗时 server 务必调大
+#http_mcp:
+#  - enabled: true
+#    name: "example"
+#    type: "streamable_http" # sse 或 streamable_http
+#    endpoint: "http://127.0.0.1:8080/mcp"
+#    headers: {} # 可选，如: {"Authorization": "Bearer xxx"}
+#    description: "示例 HTTP MCP server"
+#    timeout: 120
 
-# 标准输入 MCP 配置
-stdin_mcp:
-  - name: "stdin-tool"
-    enabled: true
-    command: "npx"
-    args: ["-y", "mcp-exec"]
-    description: "MCP Exec ToolSet for executing commands via standard input"
-    timeout: 120
-
-  # - name: "another-stdin-mcp"
-  #   enabled: true
-  #   command: "node"
-  #   args: ["path/to/another/mcp"]
-  #   description: "Another MCP ToolSet example"
-  #   timeout: 600
+#stdin_mcp:
+#  - enabled: true
+#    name: "example"
+#    command: "npx"
+#    args: ["-y", "mcp-exec"]
+#    description: "示例 stdio MCP server"
+#    timeout: 120

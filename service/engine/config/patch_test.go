@@ -97,20 +97,18 @@ func TestUpdateModelFieldsTemplate(t *testing.T) {
 		t.Fatalf("values not applied: %+v", cfg.Model)
 	}
 
-	//模板默认段与未提交字段保留（{USERID} 直写模板属预期，替换发生在 bootstrap）
+	//模板默认段与未提交字段保留（{USERID} 直写模板属预期，替换发生在 bootstrap；
+	//模板 mcp 段默认全注释，应为空列表——不默认挂不存在的 server）
 	if cfg.User.UserID != "{USERID}" {
 		t.Errorf("user block lost: %+v", cfg.User)
 	}
 	if cfg.Model.ContextWindow != 64000 || !cfg.Model.Stream || cfg.Model.MaxTokens != 12800 {
 		t.Fatalf("untouched model fields changed: %+v", cfg.Model)
 	}
-	if len(cfg.HttpMcp) != 1 || cfg.HttpMcp[0].Endpoint != "http://127.0.0.1:8080/mcp" {
-		t.Errorf("http_mcp block lost: %+v", cfg.HttpMcp)
-	}
-	if len(cfg.StdinMcp) != 1 || cfg.StdinMcp[0].Command != "npx" || len(cfg.StdinMcp[0].Args) != 2 {
-		t.Errorf("stdin_mcp block lost: %+v", cfg.StdinMcp)
-	}
 	if cfg.Observability.Service != "langfuse" {
 		t.Errorf("observability block lost: %+v", cfg.Observability)
+	}
+	if len(cfg.HttpMcp) != 0 || len(cfg.StdinMcp) != 0 {
+		t.Errorf("mcp blocks should be empty by default: %+v %+v", cfg.HttpMcp, cfg.StdinMcp)
 	}
 }

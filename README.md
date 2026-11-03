@@ -58,7 +58,12 @@ scp -r .hyperbot user@host:/opt/hyperbot/
 
 ## 配置
 
-`.hyperbot/hyperbot.yaml` 首次运行自动生成，核心字段：
+`.hyperbot/hyperbot.yaml` 首次运行自动生成。两种配置方式：
+
+- **TUI 配置页**：首次启动自动弹出，填模型四项（model / baseurl / apikey / apitype）提交即可。注意：提交会把配置文件**整体重写，注释不保留**
+- **手动编辑**：直接改 `hyperbot.yaml`，保存后下一轮对话自动生效（无需重启）；完整字段见下方示例
+
+核心字段：
 
 ```yaml
 model:
@@ -72,7 +77,67 @@ model:
   maxtokens: 12800                # 每次请求的最大生成 token 数，默认 12800
 ```
 
-MCP 服务通过 `mcp`（HTTP）和 `stdin_mcp`（子进程）列表配置。其余选项见自动生成的配置文件内注释。
+### MCP 工具接入
+
+MCP server 在配置文件的两个列表里声明，`enabled: true` 的挂载为工具集：
+
+```yaml
+# HTTP 传输：sse / streamable_http
+http_mcp:
+  - enabled: true
+    name: "my-tools"              # 必须全局唯一，决定工具前缀 {name}_{toolName}
+    type: "streamable_http"       # sse 或 streamable_http
+    endpoint: "http://127.0.0.1:8080/mcp"
+    headers: {"Authorization": "Bearer xxx"}   # 可选，自定义请求头
+    description: "示例 HTTP MCP server"
+    timeout: 120                  # 单次工具调用超时（秒）
+
+# stdio 传输：每个 server 一个子进程
+stdin_mcp:
+  - enabled: true
+    name: "fetch"
+    command: "uvx"
+    args: ["mcp-server-fetch"]
+    description: "示例 stdio MCP server"
+    timeout: 120
+```
+
+| 字段 | 说明 |
+|------|------|
+| `enabled` | `false` 则不挂载，条目保留在配置里 |
+| `name` | 全局唯一；工具实际调用名带 `{name}_` 前缀，避免多 server 工具重名 |
+| `type` | `sse` 或 `streamable_http`（仅 http_mcp） |
+| `timeout` | **单次工具调用**的上限（秒），不是连接超时；不填默认 120，长耗时 server（扫描/分析类）务必调大 |
+
+MCP 配置改动下一轮对话自动生效（每轮自动重载配置与工具集），无需重启。
+
+### 完整配置示例
+
+```yaml
+user:
+  userid: "3f5c0041-557b-43e2-8ac4-a1fb5ac01a1e"   # 首次运行自动生成的 UUID
+model:
+  model: "deepseek-reasoner"
+  baseurl: "https://api.deepseek.com"
+  apikey: "your-api-key"
+  apitype: "openai"                # openai 或 anthropic
+  anthropicAuthHeaderTransfer: false   # anthropic 认证方式：true=Bearer；false=X-Api-Key
+  contextwindow: 64000             # 上下文窗口，影响自动摘要触发时机
+  stream: true                     # 流式输出
+  maxtokens: 12800                 # 单次请求最大生成 token 数
+  httptimeout: 3600                # HTTP 请求超时（秒）
+  show_reasoning: false            # 显示推理内容
+  reasoning_effort: max            # 思考强度 low/medium/high/max，留空不下发
+http_mcp: []                       # 按需添加，见上文「MCP 工具接入」
+stdin_mcp: []
+observability:                     # Langfuse trace 上报，默认关闭，详见下文
+  service: "langfuse"
+  host: ""
+  public: ""
+  secret: ""
+  insecure: false
+  enabled: false
+```
 
 ## 状态栏附加（Status Block）
 

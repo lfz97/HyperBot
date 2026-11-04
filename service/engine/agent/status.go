@@ -23,7 +23,6 @@ import (
 const (
 	memoryQuerySentences = 5
 	memoryChannelResults = 5 // 每路 5 条，双路合计最多 10 条
-	memoryEntryMaxRunes  = 200
 )
 
 // Display 是 agent 把文本推给展示端的小接口（按能力命名，将来加展示项直接扩方法）。
@@ -253,8 +252,7 @@ func appendMemoryChannel(sb *strings.Builder, label string, entries []*agentmemo
 		if maxScore > 0 {
 			percentage = int(entry.Score/maxScore*100 + 0.5)
 		}
-		body := cutAtSentence(entryText(entry), memoryEntryMaxRunes)
-		sb.WriteString(fmt.Sprintf("\n- 可能与当前相关（%d%%）：%s", percentage, body))
+		sb.WriteString(fmt.Sprintf("\n- 可能与当前相关（%d%%）：%s", percentage, entryText(entry)))
 	}
 }
 
@@ -281,39 +279,4 @@ func entryText(e *agentmemory.Entry) string {
 		return ""
 	}
 	return strings.Join(strings.Fields(e.Memory.Memory), " ")
-}
-
-// cutAtSentence 在 maxRunes 内按 UAX #29 句边界截断：优先取不超过上限的最后
-// 一个边界；没有则放宽到 1.5 倍取第一个，仍没有才硬切，避免注入半句诱发补全。
-func cutAtSentence(s string, maxRunes int) string {
-	r := []rune(s)
-	if len(r) <= maxRunes {
-		return s
-	}
-	relaxed := min(len(r), maxRunes*3/2)
-	cutIn, cutRelaxed := 0, 0
-	rest, state := s, -1
-	consumed := 0
-	for rest != "" {
-		var seg string
-		seg, rest, state = uniseg.FirstSentenceInString(rest, state)
-		if seg == "" {
-			break
-		}
-		consumed += len([]rune(seg))
-		if consumed <= maxRunes {
-			cutIn = consumed
-		} else if consumed <= relaxed && cutRelaxed == 0 {
-			cutRelaxed = consumed
-		} else {
-			break
-		}
-	}
-	if cutIn > 0 {
-		return string(r[:cutIn])
-	}
-	if cutRelaxed > 0 {
-		return string(r[:cutRelaxed])
-	}
-	return string(r[:maxRunes])
 }

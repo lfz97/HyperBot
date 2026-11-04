@@ -8,35 +8,6 @@ import (
 	"trpc.group/trpc-go/trpc-agent-go/model"
 )
 
-func TestCutAtSentence(t *testing.T) {
-	cases := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{"短文本原样", "短句。", "短句。"},
-		{"上限内取最后一个句末标点", strings.Repeat("前", 150) + "句子结束。后面还有内容继续填充。" + strings.Repeat("后", 60), strings.Repeat("前", 150) + "句子结束。后面还有内容继续填充。"},
-		{"版本号和小数点不是句末", strings.Repeat("前", 150) + "。版本 v1.11.0 发布之后废弃了旧路径" + strings.Repeat("后", 60), strings.Repeat("前", 150) + "。"},
-	}
-	for _, c := range cases {
-		if got := cutAtSentence(c.in, memoryEntryMaxRunes); got != c.want {
-			t.Errorf("%s: got %q want %q", c.name, got, c.want)
-		}
-	}
-}
-
-func TestCutAtSentenceRelaxedThenHard(t *testing.T) {
-	noBoundary := strings.Repeat("字", 200) + strings.Repeat("中", 40) + "。结尾"
-	got := cutAtSentence(noBoundary, memoryEntryMaxRunes)
-	if want := strings.Repeat("字", 200) + strings.Repeat("中", 40) + "。"; got != want {
-		t.Errorf("relaxed: got %d runes want %d runes", len([]rune(got)), len([]rune(want)))
-	}
-	allNoBoundary := strings.Repeat("字", 500)
-	if got := cutAtSentence(allNoBoundary, memoryEntryMaxRunes); len([]rune(got)) != 200 {
-		t.Errorf("hard cut: got %d runes want 200", len([]rune(got)))
-	}
-}
-
 func TestBuildMemoryQueriesUsesCurrentTurnReasoningTail(t *testing.T) {
 	userPrompt := "完成当前任务" + strings.Repeat("并保留完整约束", 30)
 	messages := []model.Message{
@@ -88,6 +59,14 @@ func TestBuildMemoryQueriesDoesNotCrossTurn(t *testing.T) {
 
 func newEntry(id, text string, score float64) *agentmemory.Entry {
 	return &agentmemory.Entry{ID: id, Memory: &agentmemory.Memory{Memory: text}, Score: score}
+}
+
+func TestRenderMemoryEntriesKeepsLongBody(t *testing.T) {
+	longBody := strings.Repeat("完整记忆", 100)
+	block, _ := renderMemoryEntries([]*agentmemory.Entry{newEntry("long", longBody, 0.8)}, nil, false)
+	if !strings.Contains(block, longBody) {
+		t.Fatalf("long memory was truncated: got %d runes, want %d", len([]rune(block)), len([]rune(longBody)))
+	}
 }
 
 func TestRenderMemoryEntriesLabelsChannelsAndNormalizesSeparately(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -118,7 +119,7 @@ func injectTodoStatus(ctx context.Context, display Display, status *string) {
 	}
 }
 
-// 每次模型调用独立检索：用户完整输入召回相似任务，当前轮最近 reasoning 的尾部
+// 每次模型调用独立检索：用户完整输入召回相似任务，当前轮所有 reasoning 的尾部
 // 五句召回执行现场经验。reasoning 不存在时只查用户输入，不使用 content 兜底。
 func injectMemoryStatus(ctx context.Context, messages []model.Message, status *string) {
 	inv, ok := agent.InvocationFromContext(ctx)
@@ -159,22 +160,21 @@ func injectMemoryStatus(ctx context.Context, messages []model.Message, status *s
 	appendStatusBlock(status, block)
 }
 
-// buildMemoryQueries 只采样当前轮：从尾向前遇到最近 user 即停，避免带入上一轮。
-// 只读取最近 assistant 的 ReasoningContent；该字段为空时不回看更早 assistant。
+// buildMemoryQueries 收集当前轮所有 assistant 的 reasoning，遇到最近 user 即停。
 func buildMemoryQueries(messages []model.Message) (string, string) {
-	var reasoningQuery string
-	seenAssistant := false
+	var reasoningParts []string
 	for i := len(messages) - 1; i >= 0; i-- {
 		msg := messages[i]
 		switch msg.Role {
 		case model.RoleUser:
 			if content := strings.TrimSpace(msg.Content); content != "" {
-				return content, reasoningQuery
+				slices.Reverse(reasoningParts)
+				reasoning := strings.Join(reasoningParts, " ")
+				return content, tailSentences(reasoning, memoryQuerySentences)
 			}
 		case model.RoleAssistant:
-			if !seenAssistant {
-				seenAssistant = true
-				reasoningQuery = tailSentences(msg.ReasoningContent, memoryQuerySentences)
+			if reasoning := strings.TrimSpace(msg.ReasoningContent); reasoning != "" {
+				reasoningParts = append(reasoningParts, reasoning)
 			}
 		}
 	}

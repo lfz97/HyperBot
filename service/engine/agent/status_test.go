@@ -37,16 +37,16 @@ func TestCutAtSentenceRelaxedThenHard(t *testing.T) {
 	}
 }
 
-func TestBuildMemoryQueriesUsesLatestReasoningTail(t *testing.T) {
+func TestBuildMemoryQueriesUsesCurrentTurnReasoningTail(t *testing.T) {
 	userPrompt := "完成当前任务" + strings.Repeat("并保留完整约束", 30)
 	messages := []model.Message{
 		{Role: model.RoleAssistant, ReasoningContent: "上一轮推理不能进入查询。"},
 		{Role: model.RoleUser, Content: userPrompt},
-		{Role: model.RoleAssistant, ReasoningContent: "较早的推理也不能进入查询。"},
+		{Role: model.RoleAssistant, ReasoningContent: "第一句。第二句。第三句。"},
 		{
 			Role:             model.RoleAssistant,
 			Content:          "这个对外正文不能进入查询。",
-			ReasoningContent: "第一句。第二句。第三句。第四句。第五句。第六句。",
+			ReasoningContent: "第四句。第五句。第六句。第七句。",
 		},
 	}
 
@@ -54,22 +54,22 @@ func TestBuildMemoryQueriesUsesLatestReasoningTail(t *testing.T) {
 	if userQuery != userPrompt {
 		t.Errorf("user query was truncated or changed: %q", userQuery)
 	}
-	want := "第二句。 第三句。 第四句。 第五句。 第六句。"
+	want := "第三句。 第四句。 第五句。 第六句。 第七句。"
 	if reasoningQuery != want {
 		t.Errorf("reasoning query mismatch: got %q want %q", reasoningQuery, want)
 	}
 }
 
-func TestBuildMemoryQueriesDoesNotFallbackToContentOrEarlierReasoning(t *testing.T) {
+func TestBuildMemoryQueriesSkipsEmptyReasoningWithoutContentFallback(t *testing.T) {
 	messages := []model.Message{
 		{Role: model.RoleUser, Content: "排查当前故障"},
-		{Role: model.RoleAssistant, ReasoningContent: "较早推理不能兜底。"},
-		{Role: model.RoleAssistant, Content: "最新正文也不能兜底。"},
+		{Role: model.RoleAssistant, ReasoningContent: "较早推理仍然纳入。"},
+		{Role: model.RoleAssistant, Content: "最新正文不能兜底。"},
 	}
 
 	userQuery, reasoningQuery := buildMemoryQueries(messages)
-	if userQuery != "排查当前故障" || reasoningQuery != "" {
-		t.Fatalf("expected user query only, got user=%q reasoning=%q", userQuery, reasoningQuery)
+	if userQuery != "排查当前故障" || reasoningQuery != "较早推理仍然纳入。" {
+		t.Fatalf("unexpected queries: user=%q reasoning=%q", userQuery, reasoningQuery)
 	}
 }
 

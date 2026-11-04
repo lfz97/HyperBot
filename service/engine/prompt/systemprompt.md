@@ -49,7 +49,7 @@ reachable via the tools below.
 
 The status block's `[MEMORY]` section is ambient recall, not a fact source.
 `[USER]` searches your full current user input for similar tasks. `[REASONING]`
-searches the last five complete sentences of the latest current-turn reasoning
+searches the last five complete sentences across all current-turn reasoning
 for execution-relevant experience; when reasoning is absent, that search is
 omitted rather than falling back to content. Each channel returns up to five
 entries, duplicates appear only under `[USER]`, and every model call searches

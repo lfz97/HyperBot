@@ -159,9 +159,9 @@ Auto-generated to `hyperbot.yaml` on first run. Supports:
 - **bubbles/v2** v2.2.1 (`charm.land/bubbles/v2`): textarea/viewport/spinner/cursor 组件
 - **lipgloss/v2** v2.0.6 (`charm.land/lipgloss/v2`): 样式与拼版（JoinVertical/JoinHorizontal/Compositor 浮层）
 - **glamour** v2.0.1 (`charm.land/glamour/v2`): Markdown → ANSI renderer (Dracula theme, OSC 8 hyperlinks)
-- **trpc-agent-go** v1.11.1-0.20260820131707-cdaece75b478: Agent framework core（含 #2501 修复；注意：session/summary 摘要机制在 v1.11 有重构，改动前对比两版行为）
-- **trpc-agent-go/model/anthropic** v1.11.1-0.20260820131707-cdaece75b478: Anthropic model adapter（独立子模块，须单独升级）
-- **trpc-agent-go/model/tiktoken** v1.11.0: Tiktoken-based token counter (replaces SimpleTokenCounter default)
+- **trpc-agent-go** v1.12.0: Agent framework core（正式版 tag；session/summary 摘要机制在 v1.11 有重构，改动前对比两版行为）
+- **trpc-agent-go/model/anthropic** v1.12.0: Anthropic model adapter（独立子模块，须单独升级）
+- **trpc-agent-go/model/tiktoken** v1.12.0: Tiktoken-based token counter (replaces SimpleTokenCounter default)
 - **trpc-mcp-go** v0.0.18: MCP tool protocol support（独立于 agent-go 版本，可单独升降）
 - **openai-go** v1.12.0: OpenAI API SDK
 - **anthropic-sdk-go** v1.66.0: Anthropic API SDK
@@ -177,7 +177,7 @@ Auto-generated to `hyperbot.yaml` on first run. Supports:
 - **Langfuse 可观测性（`service/engine/observability/`）** — `ObserverService` 接口 + langfuse 实现，装在 `Engine.Init`（flush 之后、setBootState 之前）。三条硬约束：① **`langfuse.Start` 每进程只能调一次**——框架对已存在的 SDK provider 走 `RegisterSpanProcessor` 追加分支，二次调用所有 span 双份导出，所以刻意不进 `flush()` 重建链（改配置需重启）；② **`otel.SetErrorHandler` 必须设**（`langfuse.go` Start 里已设）——OTel 默认错误 handler 自建 `log.New(os.Stderr)`，bootstrap 的 `stdlog.SetOutput` 重定向拦不住它，alt-screen 下后台导出持续失败会撕碎 TUI，已导流进框架 `log.Default`（= hyperbot.log）；③ **`Stop` 自带 5s 超时**——收尾是同步上传（OTLP client 10s 请求超时 × retry 退避），无 deadline 会挂住 `/exit`；且 ctx 必须新鲜，不能传已取消的 turn ctx。`Shutdown` 里 ob 排在 taskService/runner/MCP 之后（在跑 Worker 的 span 先 End，尾批 flush 才完整）。Init 三分支各推一条 notice：未知 service → warning、Start 失败 → warning（软失败不 `parkWithFatal`：观测后端不可用不阻断聊天）、成功 → success（注意 `Start` 成功 ≠ 后端可达，启动路径无网络 I/O，导出失败只进 hyperbot.log）。yaml 非空字段转 `Option`、框架内部先读 env 再应用 opts——"yaml 优先、env 兜底"无需合并逻辑。
 - **帮助浮层动态项** — 默认项（ctrl+k、/new、/exit）在 `helps.refresh()` 里写死（`service/tui/helps.go`），技能项每次打开浮层时从引擎 `HelpItemsJSON()` 拉取（`loadSkills` 随时可能重建列表）。浮层样式延续 charm demo：居中圆角盒（色 62）、上下选择、enter 把指令插入输入框。
 - **embedFS case sensitivity** - `//go:embed` + `ReadFile` paths are case-sensitive on Linux. File named `systemprompt.md` but code reading `systemPrompt.md` silently returns empty string (error ignored with `_`). Always match exact file name case between `go:embed` glob patterns and `ReadFile` calls.
-- **`model/anthropic` 子模块版本对齐** — 根模块与 `model/anthropic` 子模块在 go.mod 中独立锁版本，升级根模块不会带上子模块修复。DeepSeek anthropic 端点要求 object schema 的 properties 非 null；无参 MCP 工具在旧版（v1.11.2 及更早）下序列化为 `"properties":null` 导致 400。升级时必须显式同时升级两者到含修复版本（#2501，commit cdaece75；现锁 `v1.11.1-0.20260820131707-cdaece75b478`）
+- **`model/anthropic` 子模块版本对齐** — 根模块与 `model/anthropic` 子模块在 go.mod 中独立锁版本，升级根模块不会带上子模块修复。DeepSeek anthropic 端点要求 object schema 的 properties 非 null；无参 MCP 工具在旧版（v1.11.2 及更早）下序列化为 `"properties":null` 导致 400。升级时必须显式同时升级两者到含修复版本（#2501，commit cdaece75；现锁 `v1.12.0` 正式版）
 - **Skills identity contamination** - The deployed `skills/` folder (`~/.hyperbot/skills/`) contains OpenClaw skill files (self-improving-agent, find-skills, etc.) that reference "OpenClaw", "Claude Code", "clawdhub". When loaded via `llmagent.WithSkills()`, these contaminate the agent's identity. Use only HyperBot-specific skills or keep the folder empty.
 - **[MEMORY] 验证口径** — 每跳日志记录两路 query、各渠道注入数量、记忆 ID 与原始分；用真实会话重放比较召回结果，不凭 agent 内省判断效果。查询采样、跨轮边界、跨渠道去重和相对分均锁进 `status_test.go`。
 - **bracketed paste** - bubbletea v2 默认启用 bracketed paste，终端粘贴的整段文本（含换行）以 `tea.PasteMsg` 到达，`Update` 里转发给 textarea 处理。

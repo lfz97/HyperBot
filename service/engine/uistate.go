@@ -196,7 +196,9 @@ func (e *Engine) setRunning(running bool) {
 	e.mu.Unlock()
 }
 
-// setFatal 设置进程终态（配套 parkWithFatal 的驻留由调用方完成）。
+// setFatal 设置进程终态（TUI 轮询 runState.Fatal 渲染终态屏，waitKey 决定
+// 是否等待按键后退出）。当前唯一运行期调用点是 ApplyFirstStartupConfig
+// 的 flush 失败（启动链路的错误走返回值，不进此状态）。
 func (e *Engine) setFatal(style, text string, waitKey bool) {
 	e.mu.Lock()
 	e.runState.Fatal = &Fatal{Text: text, Style: style, WaitKey: waitKey}

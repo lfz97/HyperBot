@@ -34,9 +34,9 @@ func GetEngineService(name string) *Engine {
 // 模态的、无对话）。
 // 错误处理分两类路径，不混用机制：启动路径由调用方（boot.go）同步处理——
 // 错误直接上抛，main 打印退出（此时 TUI 未启动、终端未进 raw mode，
-// 无需 fatal 态渲染，故此处不再 setFatal）；TUI 运行期的致命路径
-// （refresh 的 parkWithFatal、ApplyFirstStartupConfig 的 flush 失败）
-// 才走 setFatal 由 TUI 渲染终态。
+// 无需 fatal 态渲染，故此处不再 setFatal）；TUI 运行期的致命路径只剩
+// ApplyFirstStartupConfig 的 flush 失败——setFatal 由 TUI 渲染终态；
+// 热重载失败（refresh/loadConfig）是软失败，告警降级不置终态。
 func (e *Engine) Init() error {
 	env, err := Check()
 	if err != nil {
@@ -52,7 +52,7 @@ func (e *Engine) Init() error {
 		if ob == nil {
 			e.setNotice(NoticeWarning, fmt.Sprintf("observability service %q is not supported, tracing disabled", obs.Service))
 		} else if err := ob.Start(); err != nil {
-			// 软失败：观测后端不可用不阻断聊天（对比 parkWithFatal 的硬失败路径）。
+			// 软失败：观测后端不可用不阻断聊天（对比启动/重装配的硬失败 error 链路）。
 			// 配置层错误（host/key 缺失等）在这里零反馈会让人以为 tracing 开着。
 			e.setNotice(NoticeWarning, fmt.Sprintf("observability start failed (%v): tracing disabled", err))
 		} else {
@@ -147,7 +147,7 @@ func (e *Engine) ApplyFirstStartupConfig(vals map[string]string) error {
 	}
 	if err := e.flush(); err != nil {
 		// 写回成功但装配失败：引擎已不可用，置终态交给 TUI 任意键退出。
-		// 不能 parkWithFatal：本方法在 TUI 事件循环 goroutine 上调用，驻留会冻死渲染。
+		// 只 setFatal 不驻留：本方法在 TUI 事件循环 goroutine 上调用，驻留会冻死渲染。
 		e.setFatal(FatalError, err.Error(), true)
 		return err
 	}
@@ -202,14 +202,11 @@ func (e *Engine) absorb(env *BootEnv) {
 	}
 }
 
-// parkWithFatal 置进程终态并永久驻留当前 goroutine；渲染、等待按键、停循环由 TUI 完成。
-// 不能用 os.Exit 替代：TUI 回调里硬退出会把终端留在 alt-screen + raw mode。
-// 仅供无法向上返回错误的深处路径使用（loadConfig/refresh：跑在 runner 的
-// 工厂 goroutine 上）；能返回错误的一律走 setFatal+return（见 Init/Run）。
-func (e *Engine) parkWithFatal(style string, text string, waitKey bool) {
-	e.setFatal(style, text, waitKey)
-	select {}
-}
+// parkWithFatal 已删除：唯一调用点 loadConfig 改为软失败（沿用上一代配置+
+// 告警，见 init.go）。goroutine 永久驻留会让 turn 永不结束、输入永久拒绝——
+// 对话以整个进程退出收场，比"本轮降级跑在旧配置上"代价大一个量级。
+// TUI 运行期的致命路径只剩 ApplyFirstStartupConfig 的 flush 失败：
+// setFatal + return（不驻留，TUI 渲染终态），无需 park 形态。
 
 // agentLoop 已删除：输入消费从"常驻循环读 channel"改为"SubmitInput 直通"。
 // 它的串行化职责由 SubmitInput 的同步占坑（tryClaimRunning）承接，其余遗留

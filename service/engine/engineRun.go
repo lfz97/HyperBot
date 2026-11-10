@@ -17,22 +17,20 @@ type AgentError struct {
 	PartialOutput string
 }
 
-// turn 跑一轮对话：调 runner 流式执行，失败时按错误预算自动重试（纠正 prompt + 退避）；
+// turn 跑一轮对话：调 runner 流式执行，失败时按重试控制器自动重试（纠正 prompt + 退避）；
 // 预算耗尽则交还用户，等下一次输入充值。中断（Esc→Interrupt）不充值：已注册的 run
-// 由 runner.Cancel 立即终止；注册表空窗（退避间隙）的取消意图由 pendingCancel
-// 在下一个 Run 边界生效（见 uistate.go Interrupt）。
+// 由 runner.Cancel 立即终止；注册表空窗（退避间隙）的取消意图由 retry.cancelRequested
+// 在退避 tick / Run 边界生效（见 uistate.go Interrupt 与 retry_controller.go）。
 // 占坑（running）与 requestID 记账均由 SubmitInput 同步完成，这里只负责执行与收尾。
 func (e *Engine) turn(prompt string, reqID string) {
 	// defer 复位是 panic 安全：runOnce 跑的是框架代码，panic 时指示器不能永远转下去。
-	// endTurn 单临界区清 pendingCancel+running 的理由见其注释。
+	// endTurn 单临界区清 retry 瞬态+running 的理由见其注释。
 	defer (*e).endTurn()
 
 	for {
-		if (*e).consumePendingCancel() {
-			// 取消意图兑现。保留的负载场景是错误预算退避 sleep：上一轮 run 已注销、
-			// 下一轮未发起，Cancel 查无此 run——这是秒级空窗，且旧实现（ctx 桥接）
-			// 覆盖过此处，删掉即 Esc 在重试期失效（退避里的模型调用照跑）。
-			// 注册前 <3ms 窗口只是顺带覆盖，不是保留理由。
+		if e.consumeCancelRequested() {
+			// 取消意图兑现（Run 边界消费点）：覆盖退避结束后的下轮重试
+			// 与注册表空窗的 Esc。负载场景分析见 retry_controller.go。
 			(*e).setNotice(NoticeCancelled, "")
 			return
 		}
@@ -44,14 +42,14 @@ func (e *Engine) turn(prompt string, reqID string) {
 			// 取消的提示兜底：完成事件（RunOutcome）的投递会被已取消的 ctx
 			// 掐断（框架 EmitEventWithTimeout 在 ctx done 后丢事件，实测 WARN
 			// 可见），runOnce 里的 RunOutcome 检测因此不可靠。Interrupt 置位的
-			// pendingCancel 是取消意图的可靠记账，在成功分支消费它：
+			// cancelRequested 是取消意图的可靠记账，在成功分支消费它：
 			// run 被取消 → 此刻必然残留 true；正常完成 → 无残留不误报。
-			if (*e).consumePendingCancel() {
+			if e.consumeCancelRequested() {
 				(*e).setNotice(NoticeCancelled, "")
 			}
 			return
 		}
-		n, exhausted := (*e).errBudget.fail()
+		n, exhausted := (*e).retryFail()
 		if exhausted {
 			// 放弃自动重试，把控制权交还用户：SubmitInput 回到可占坑状态，下一次提交
 			// 用户输入时充值。预算不在这里充值——耗尽只可能由零输出失败触发。
@@ -59,14 +57,39 @@ func (e *Engine) turn(prompt string, reqID string) {
 			return
 		}
 		// 必须在 Sleep 之前打：sleep 期间引擎不收输入，用户需要知道程序在等什么。
-		(*e).appendTyped("warn", fmt.Sprintf("retrying in %ds (attempt %d/%d)...", (*e).errBudget.backoff()/time.Second, n, (*e).errBudget.limit()))
-		time.Sleep((*e).errBudget.backoff())
+		(*e).appendTyped("warn", fmt.Sprintf("retrying in %ds (attempt %d/%d)...", (*e).retryBackoff()/time.Second, n, (*e).retryLimit()))
+		// 退避可中断：以 tick 粒度响应取消意图（Esc 在退避里的生效延迟
+		// 从"等满整个 gap"降到 ≤tick），取消则本轮直接收尾。
+		if !e.retrySleep((*e).retryBackoff()) {
+			(*e).setNotice(NoticeCancelled, "")
+			return
+		}
 		// 纠正 prompt：把错误与已产出的部分输出喂回去，让模型调整后续输出。
 		if err.PartialOutput != "" {
 			prompt = fmt.Sprintf("之前的对话发生了错误，错误信息是: %s, 之前的输出内容是: %s, 请基于这些信息调整你的回答并继续完成对话", err.Error, err.PartialOutput)
 		} else {
 			prompt = fmt.Sprintf("之前的对话发生了错误，错误信息是: %s, 请基于这个信息调整你的回答并继续完成对话", err.Error)
 		}
+	}
+}
+
+// retrySleep 退避等待，期间以 tick 粒度检查取消意图；被取消返回 false。
+// tick 取 200ms：Esc 生效延迟上界，远小于最小退避间隔（默认 3s）。
+func (e *Engine) retrySleep(d time.Duration) bool {
+	const tick = 200 * time.Millisecond
+	deadline := time.Now().Add(d)
+	for {
+		remain := time.Until(deadline)
+		if remain <= 0 {
+			return true
+		}
+		if e.consumeCancelRequested() {
+			return false
+		}
+		if remain > tick {
+			remain = tick
+		}
+		time.Sleep(remain)
 	}
 }
 
@@ -122,7 +145,7 @@ func (e *Engine) agentRunOnce(Ctx context.Context, userPrompt string, reqID stri
 		}
 		if (*event).Response != nil && len((*(*event).Response).Choices) > 0 {
 
-			(*e).errBudget.recharge() // 收到任何带 Choices 的 Response 事件（含流式部分块）即归零。
+			(*e).retryRecharge() // 收到任何带 Choices 的 Response 事件（含流式部分块）即归零。
 			for _, choice := range (*(*event).Response).Choices {
 
 				(*e).emitChoice(choice, (*(*event).Response).IsPartial)

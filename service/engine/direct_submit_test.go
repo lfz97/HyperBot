@@ -235,3 +235,33 @@ func TestInterruptIdleReturnsFalse(t *testing.T) {
 		t.Fatal("非运行期 Interrupt 必须返回 false")
 	}
 }
+
+func TestRetryControllerRegeneratedPerTurn(t *testing.T) {
+	fake := newFakeManagedRunner()
+	e := newDirectSubmitEngine(fake)
+
+	// 手工污染上一轮遗留状态（模拟极端场景：取消后未清场的残留）
+	e.mu.Lock()
+	e.retry.streak = 2
+	e.retry.retrying = true
+	e.retry.cancelRequested = true
+	e.mu.Unlock()
+
+	if !e.SubmitInput("next") {
+		t.Fatal("提交必须成功")
+	}
+	// 重铸同步发生（SubmitInput 内、go turn 前）：此刻状态必须已归零
+	e.mu.Lock()
+	staleStreak, staleRetrying, staleCancel := e.retry.streak, e.retry.retrying, e.retry.cancelRequested
+	e.mu.Unlock()
+	if staleStreak != 0 || staleRetrying || staleCancel {
+		t.Fatalf("重铸未生效: streak=%d retrying=%v cancel=%v", staleStreak, staleRetrying, staleCancel)
+	}
+
+	<-fake.runCalled // 上一轮的取消意图不误杀本轮
+	fake.closeCurrent()
+	waitIdle(t, e)
+	if got := noticeKind(t, e); got == NoticeCancelled {
+		t.Fatal("上一轮取消意图泄漏：本轮被误取消")
+	}
+}

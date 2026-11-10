@@ -50,8 +50,9 @@ type Engine struct {
 	taskTools   *taskruntask.Tools
 	worker      atomic.Pointer[llmagent.LLMAgent]
 
-	// errBudget：连续错误自动重试预算，状态流转见 errorBudget.go
-	errBudget errorBudget
+	// retry：重试控制器。构造期不注入——每轮 turn 由 SubmitInput 重铸
+	// （跨轮零残留），状态流转见 retry_controller.go
+	retry retryController
 
 	// 启动状态（BootXxx 常量，经 FirstStartupJSON 暴露给 TUI）：
 	// booting → （首次启动）config → ready，或 booting → ready。
@@ -74,12 +75,8 @@ type Engine struct {
 	// ── turn 生命周期记账（e.mu 守护，成对读写在 uistate.go 的 helper）──
 	// curRequestID 是当前 turn 的 requestID（请求粒度）：由 SubmitInput 铸造、
 	// 错误重试沿用同一个。Interrupt 据此调 runner.Cancel 精确终止在途 run。
+	// 取消意图与重试观察态在 retry（retry_controller.go），不在此处。
 	curRequestID string
-	// pendingCancel 是"取消意图"粘滞位：Esc 落在 runner 注册表空窗（注册前
-	// <3ms 窗口或重试退避间隙，Cancel 查不到 run）时置位，由 turn 在下一个
-	// Run 边界消费。必须在 endTurn 的同一临界区内与 running 一起复位——
-	// 拆开会让 Interrupt 在两步之间置位的意图泄漏到下一轮（详见 endTurn）。
-	pendingCancel bool
 }
 
 type Agentrunner struct {

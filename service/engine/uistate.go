@@ -62,7 +62,8 @@ type Fatal struct {
 // RunState 运行状态快照（幂等，last-write-wins）。
 type RunState struct {
 	Running bool   `json:"running"`
-	Fatal   *Fatal `json:"fatal"` // 非 nil 表示进程应结束
+	Retrying bool  `json:"retrying"` // 退避/重试阶段（观察态，TUI 可显示"重试中"）
+	Fatal   *Fatal `json:"fatal"`    // 非 nil 表示进程应结束
 }
 
 // SkillItem 帮助页的一行（JSON 形状 {"cmd","desc"}）。
@@ -169,11 +170,17 @@ func (e *Engine) emitChoice(choice model.Choice, isPartial bool) {
 
 // ── 运行状态 ─────────────────────────────────────────────
 
-// RunStateJSON 返回运行状态快照 JSON（{"running":bool,"fatal":{...}|null}）。
+// RunStateJSON 返回运行状态快照 JSON（{"running":bool,"retrying":bool,"fatal":{...}|null}）。
+// retrying 从 retry 控制器合并（同一临界区，避免与 fail/recharge 竞争）。
 func (e *Engine) RunStateJSON() string {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-	b, err := json.Marshal(e.runState)
+	rs := RunState{
+		Running:  e.runState.Running,
+		Retrying: e.retry.retrying,
+		Fatal:    e.runState.Fatal,
+	}
+	e.mu.Unlock()
+	b, err := json.Marshal(rs)
 	if err != nil {
 		return "{}"
 	}
@@ -334,14 +341,19 @@ func (e *Engine) setSkillItems(items []SkillItem) {
 func (e *Engine) SubmitInput(line string) bool {
 	if strings.TrimSpace(line) == "" {
 		//空输入：充值预算即返（前端已兜底，双保险；不占坑不发起 turn）
-		(*e).errBudget.recharge()
+		(*e).retryRecharge()
 		return true
 	}
 	if !e.tryClaimRunning() {
 		return false
 	}
+	// 每轮重铸重试控制器：构造期不注入、跨轮零残留（streak/观察态/取消意图
+	// 全部归零）。必须与占坑同序同步执行——重铸若发生在 turn 内（异步），
+	// 落在"占坑完成→重铸完成"间隙的 Esc 会写在旧控制器上被重铸丢弃。
+	// 与 Interrupt 同在 TUI 事件循环（单 goroutine），此处不存在交错。
+	e.newTurnRetry()
 	//任何用户输入都充值错误预算（挪自原 agentLoop；占坑成功后失败路径只剩 turn 内部）
-	(*e).errBudget.recharge()
+	(*e).retryRecharge()
 	(*e).appendTyped(RecUser, line)
 	// requestID 请求粒度，调用方铸造：一次用户请求一个 ID，错误重试沿用
 	// （见 turn 注释），事件流/Langfuse 可整轮归因。同步铸好并记账——
@@ -354,23 +366,26 @@ func (e *Engine) SubmitInput(line string) bool {
 
 // Interrupt 提交一次中断（前端 Esc 时调用）。两级生效：
 //  1. runner.Cancel(curRequestID)——run 已注册（绝大多数时刻），框架内传播取消；
-//  2. pendingCancel 粘滞位——Esc 落在 runner 注册表空窗（注册前窗口或重试退避
-//     间隙，Cancel 查不到）时由 turn 在下一个 Run 边界消费。
+//  2. retry.cancelRequested 取消意图——Esc 落在 runner 注册表空窗（注册前
+//     窗口或重试退避间隙，Cancel 查不到）时由退避 tick / Run 边界 / turn
+//     成功收尾消费（消费点分析见 retry_controller.go）。
 // 非运行期返回 false 可安全忽略。返回值语义是"信号已接收"，不是"已停止"——
 // 停止判定只认 TUI 帧拉取的 running 状态（Esc 丢失于空窗时指示器继续转，
 // 用户再按一次即命中已注册的 run，无需显式重试逻辑）。
+// cancelRequested 无条件置位（不以 retrying 做门槛）：主动取消的完成事件
+// 投递会被已取消 ctx 掐断，NoticeCancelled 兜底链全靠此标志（见 turn 注释）。
 func (e *Engine) Interrupt() bool {
 	e.mu.Lock()
 	if !e.runState.Running {
 		e.mu.Unlock()
 		return false
 	}
-	e.pendingCancel = true
+	e.retry.cancelRequested = true
 	id := e.curRequestID
 	e.mu.Unlock()
 
 	if id != "" && (*e).AgentRunner_p != nil && (*(*e).AgentRunner_p).Runner != nil {
-		(*(*e).AgentRunner_p).Runner.Cancel(id) //注册表命中则立即生效；miss 交给 pendingCancel
+		(*(*e).AgentRunner_p).Runner.Cancel(id) //注册表命中则立即生效；miss 交给取消意图
 	}
 	return true
 }
@@ -390,23 +405,58 @@ func (e *Engine) tryClaimRunning() bool {
 	return true
 }
 
-// endTurn 收尾 turn：pendingCancel 与 running 必须同一临界区复位。拆开的活窗口：
-// 先放 running 再清 pending 之间，Interrupt 会重新置位一个永远无人消费的
-// 取消意图，泄漏到下一轮导致下一条输入被立即取消。顺序反过来同理。
+// endTurn 收尾 turn：清 retry 瞬态（防 idle 期残留 retrying 的错误显示）并复位
+// running，同一临界区。跨轮泄漏已由 SubmitInput 的每轮重铸根除，这里的同临界区
+// 是防御深度（重铸前若有任何直写路径残留，收尾清场兜底）。
 func (e *Engine) endTurn() {
 	e.mu.Lock()
-	e.pendingCancel = false
+	e.retry.resetTransient()
 	e.runState.Running = false
 	e.mu.Unlock()
 }
 
-// consumePendingCancel 读取并清除取消意图（turn 在每个 Run 边界调用）。
-func (e *Engine) consumePendingCancel() bool {
+// consumeCancelRequested 读取并清除取消意图（退避 tick、Run 边界、turn
+// 成功收尾三个消费点共用；读即清）。
+func (e *Engine) consumeCancelRequested() bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	pending := e.pendingCancel
-	e.pendingCancel = false
-	return pending
+	requested := e.retry.cancelRequested
+	e.retry.cancelRequested = false
+	return requested
+}
+
+// ── retry 状态的引擎级锁入口（结构体方法不自带锁，理由见 retry_controller.go）──
+
+// newTurnRetry 重铸本轮重试控制器：策略取默认值，一切状态归零。
+// 调用点仅 SubmitInput（占坑后同步执行，理由见其注释）。
+func (e *Engine) newTurnRetry() {
+	e.mu.Lock()
+	e.retry = newRetryController(defaultErrorMaxTimes, defaultErrorSleepGap)
+	e.mu.Unlock()
+}
+
+func (e *Engine) retryFail() (n int, exhausted bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.retry.fail()
+}
+
+func (e *Engine) retryRecharge() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.retry.recharge()
+}
+
+func (e *Engine) retryBackoff() time.Duration {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.retry.backoff()
+}
+
+func (e *Engine) retryLimit() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.retry.limit()
 }
 
 // setCurRequestID 记账当前 Run 的 requestID（turn 逐次尝试时更新）。

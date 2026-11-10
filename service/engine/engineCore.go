@@ -18,8 +18,9 @@ func GetEngineService(name string) *Engine {
 	return &Engine{
 		Agentname: name,
 		notice:    notice{Kind: NoticeNone},
-		errBudget: newErrorBudget(defaultErrorMaxTimes, defaultErrorSleepGap),
 		bootState: BootBooting,
+		// retry 不在此构造：每轮 turn 由 SubmitInput 重铸（跨轮零残留），
+		// 见 uistate.go newTurnRetry。
 	}
 }
 
@@ -221,7 +222,7 @@ func (e *Engine) parkWithFatal(style string, text string, waitKey bool) {
 
 // agentLoop 已删除：输入消费从"常驻循环读 channel"改为"SubmitInput 直通"。
 // 它的串行化职责由 SubmitInput 的同步占坑（tryClaimRunning）承接，其余遗留
-// 职责各自归位：errBudget 充值与用户记录在 SubmitInput，会话 ID 与横幅在 Run。
+// 职责各自归位：retry 充值与用户记录在 SubmitInput，会话 ID 与横幅在 Run。
 
 // ── 斜杠命令的后端能力接口（前端注册表见 service/tui/handler.go）──────
 

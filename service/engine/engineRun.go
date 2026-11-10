@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
-
 	"trpc.group/trpc-go/trpc-agent-go/agent"
 	"trpc.group/trpc-go/trpc-agent-go/model"
 )
@@ -21,26 +19,26 @@ type AgentError struct {
 
 // turn 跑一轮对话：调 runner 流式执行，失败时按错误预算自动重试（纠正 prompt + 退避）；
 // 预算耗尽则交还用户，等下一次输入充值。中断（Esc→Interrupt）不充值：已注册的 run
-// 由 runner.Cancel 立即终止；注册表空窗（注册前窗口/退避间隙）的取消意图由
-// pendingCancel 在下一个 Run 边界生效（见 uistate.go Interrupt）。
-// 占坑（running）由 SubmitInput 同步完成，这里只负责收尾。
-func (e *Engine) turn(prompt string) {
+// 由 runner.Cancel 立即终止；注册表空窗（退避间隙）的取消意图由 pendingCancel
+// 在下一个 Run 边界生效（见 uistate.go Interrupt）。
+// 占坑（running）与 requestID 记账均由 SubmitInput 同步完成，这里只负责执行与收尾。
+func (e *Engine) turn(prompt string, reqID string) {
 	// defer 复位是 panic 安全：runOnce 跑的是框架代码，panic 时指示器不能永远转下去。
 	// endTurn 单临界区清 pendingCancel+running 的理由见其注释。
 	defer (*e).endTurn()
 
 	for {
 		if (*e).consumePendingCancel() {
-			// Esc 落在空窗的取消意图：在这里兑现（注册前窗口实测 <3ms，
-			// 更常见于退避 sleep 期间——错误预算重试间隙里 runner 侧没有在途 run）。
+			// 取消意图兑现。保留的负载场景是错误预算退避 sleep：上一轮 run 已注销、
+			// 下一轮未发起，Cancel 查无此 run——这是秒级空窗，且旧实现（ctx 桥接）
+			// 覆盖过此处，删掉即 Esc 在重试期失效（退避里的模型调用照跑）。
+			// 注册前 <3ms 窗口只是顺带覆盖，不是保留理由。
 			(*e).setNotice(NoticeCancelled, "")
 			return
 		}
-		// 每次尝试是一个独立请求：requestID 逐次重铸并记账（Interrupt 据此 Cancel；
-		// 失败的 run 已注销，同 ID 复用虽无冲突，但逐次重铸让 requestID 与
-		// "一次 Run"严格一一对应，事件流 event.RequestID 可据此归轮）。
-		reqID := uuid.NewString()
-		(*e).setCurRequestID(reqID)
+		// reqID 请求粒度（SubmitInput 铸造，错误重试沿用）：失败的 run 在 Run
+		// 返回错误前已注销，同 ID 复用无冲突；极端竞速撞上上一轮收尾的
+		// "already running" 会走错误预算自愈（退避 3s 远大于收尾时长）。
 		err := e.agentRunOnce(context.Background(), prompt, reqID)
 		if err == nil { //正常结束，或被用户取消
 			// 取消的提示兜底：完成事件（RunOutcome）的投递会被已取消的 ctx

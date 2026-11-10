@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"HyperBot/service/engine/config"
 	"trpc.group/trpc-go/trpc-agent-go/model"
 )
@@ -341,7 +343,12 @@ func (e *Engine) SubmitInput(line string) bool {
 	//任何用户输入都充值错误预算（挪自原 agentLoop；占坑成功后失败路径只剩 turn 内部）
 	(*e).errBudget.recharge()
 	(*e).appendTyped(RecUser, line)
-	go e.turn(line)
+	// requestID 请求粒度，调用方铸造：一次用户请求一个 ID，错误重试沿用
+	// （见 turn 注释），事件流/Langfuse 可整轮归因。同步铸好并记账——
+	// Interrupt 从提交时刻起就有可 Cancel 的目标，不依赖 turn 的起跑时序。
+	reqID := uuid.NewString()
+	(*e).setCurRequestID(reqID)
+	go e.turn(line, reqID)
 	return true
 }
 

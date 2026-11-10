@@ -191,7 +191,7 @@ func TestPendingCancelConsumedAtRunBoundary(t *testing.T) {
 	if got := len(fake.cancelIDs()); got != 0 {
 		t.Fatalf("无 requestID 时不该调 Cancel, got %d", got)
 	}
-	e.turn("hello") // 同步跑：第一个 Run 边界应消费取消意图
+	e.turn("hello", "req-pending-cancel") // 同步跑：第一个 Run 边界应消费取消意图
 
 	if got := fake.runCount(); got != 0 {
 		t.Fatal("取消意图必须在 Run 之前生效（不得发起 Run）")

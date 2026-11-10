@@ -72,8 +72,8 @@ type Engine struct {
 	skills    []SkillItem
 
 	// ── turn 生命周期记账（e.mu 守护，成对读写在 uistate.go 的 helper）──
-	// curRequestID 是当前 turn 里最近一次 Run 的 requestID：Interrupt 据此调
-	// runner.Cancel 精确终止在途 run。逐次 Run 重铸（见 turn 的重试循环）。
+	// curRequestID 是当前 turn 的 requestID（请求粒度）：由 SubmitInput 铸造、
+	// 错误重试沿用同一个。Interrupt 据此调 runner.Cancel 精确终止在途 run。
 	curRequestID string
 	// pendingCancel 是"取消意图"粘滞位：Esc 落在 runner 注册表空窗（注册前
 	// <3ms 窗口或重试退避间隙，Cancel 查不到 run）时置位，由 turn 在下一个

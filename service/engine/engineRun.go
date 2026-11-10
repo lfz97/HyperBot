@@ -12,12 +12,11 @@ import (
 // ---------- 一轮对话 ----------
 
 type AgentError struct {
-	Error         error
-	ErrorType     string
-	PartialOutput string
+	Error     error
+	ErrorType string
 }
 
-// turn 跑一轮对话：调 runner 流式执行，失败时按重试控制器自动重试（纠正 prompt + 退避）；
+// turn 跑一轮对话：调 runner 流式执行，失败时按重试控制器自动重试（干净重放 + 退避）；
 // 预算耗尽则交还用户，等下一次输入充值。中断（Esc→Interrupt）不充值：已注册的 run
 // 由 runner.Cancel 立即终止；注册表空窗（退避间隙）的取消意图由 retry.cancelRequested
 // 在退避 tick / Run 边界生效（见 uistate.go Interrupt 与 retry_controller.go）。
@@ -64,12 +63,13 @@ func (e *Engine) turn(prompt string, reqID string) {
 			(*e).setNotice(NoticeCancelled, "")
 			return
 		}
-		// 纠正 prompt：把错误与已产出的部分输出喂回去，让模型调整后续输出。
-		if err.PartialOutput != "" {
-			prompt = fmt.Sprintf("之前的对话发生了错误，错误信息是: %s, 之前的输出内容是: %s, 请基于这些信息调整你的回答并继续完成对话", err.Error, err.PartialOutput)
-		} else {
-			prompt = fmt.Sprintf("之前的对话发生了错误，错误信息是: %s, 请基于这个信息调整你的回答并继续完成对话", err.Error)
-		}
+		// 干净重试：原 prompt 已作为未回复的 user 消息留在 session 尾部
+		// （失败尝试零 assistant 落盘），重试以空 invocation 发起——session
+		// 零新写入、模型视图回到原上下文，失败与重试对模型完全隐形（实验9
+		// 验证，等价 pi 的"干净重放"语义）。不喂错误详情：预算耗尽只可能由
+		// 零输出失败（网络/API 类）触发，模型修复不了 500——喂回去只会往
+		// session 里落一条永久噪音消息污染后续每一轮上下文。
+		prompt = ""
 	}
 }
 
@@ -121,13 +121,11 @@ func (e *Engine) agentRunOnce(Ctx context.Context, userPrompt string, reqID stri
 		// 在源头打印，与下面的 TerminalError 分支保持一致：每类错误只打一次。
 		(*e).appendTyped("error", err.Error())
 		return &AgentError{
-			Error:         err,
-			ErrorType:     "RunError",
-			PartialOutput: "",
+			Error:     err,
+			ErrorType: "RunError",
 		}
 	}
 
-	partialOutput := ""
 	for event := range eventChan {
 		//只有terminal error才会中断对话，其他error直接continue
 		if event.Error != nil {
@@ -135,9 +133,8 @@ func (e *Engine) agentRunOnce(Ctx context.Context, userPrompt string, reqID stri
 				err = fmt.Errorf("event returned TerminalError: %v", event.Error)
 				(*e).appendTyped("error", err.Error())
 				return &AgentError{
-					Error:         err,
-					ErrorType:     "TerminalError",
-					PartialOutput: partialOutput,
+					Error:     err,
+					ErrorType: "TerminalError",
 				}
 			}
 			continue
@@ -149,7 +146,6 @@ func (e *Engine) agentRunOnce(Ctx context.Context, userPrompt string, reqID stri
 			for _, choice := range (*(*event).Response).Choices {
 
 				(*e).emitChoice(choice, (*(*event).Response).IsPartial)
-				gatherPartialOutput(&partialOutput, choice, (*(*e).AgentRunner_p).Stream)
 			}
 
 		}
@@ -157,7 +153,7 @@ func (e *Engine) agentRunOnce(Ctx context.Context, userPrompt string, reqID stri
 			// 取消检测挂到框架的完成事件上（原 ctx.Done 分支已随桥接删除）：
 			// RunOutcome 只在 run 被显式取消（Cancel）或超时时非 nil。尽力而为
 			// ——取消后完成事件的投递可能被已取消的 ctx 掐断（框架 WARN 可见），
-			// 可靠兜底见 turn 成功分支的 pendingCancel 消费。
+			// 可靠兜底见 turn 成功分支的 cancelRequested 消费。
 			if event.RunOutcome != nil {
 				(*e).setNotice(NoticeCancelled, "")
 			}
@@ -168,16 +164,4 @@ func (e *Engine) agentRunOnce(Ctx context.Context, userPrompt string, reqID stri
 
 	return nil
 
-}
-
-// gatherPartialOutput 收集失败前已产出的部分输出，供重试时喂回模型。
-// 不能靠框架 session 代替：流式 delta 一律不落盘，中途失败时本轮 assistant 文本在
-// session 里一个字都没有（框架的补救机制默认关闭，且只在 ctx 取消时触发，覆盖不到
-// TerminalError），这里是唯一记录。只累积 Content，不含 ReasoningContent / ToolCalls。
-func gatherPartialOutput(Container_p *string, Choice model.Choice, Stream bool) {
-	if Stream {
-		*Container_p += Choice.Delta.Content
-	} else {
-		*Container_p += Choice.Message.Content
-	}
 }

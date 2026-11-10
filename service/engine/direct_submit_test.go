@@ -23,6 +23,7 @@ import (
 type fakeManagedRunner struct {
 	mu        sync.Mutex
 	runIDs    []string
+	messages  []string // 每次 Run 收到的 invocation 消息内容
 	cancelled []string
 	runCalled chan struct{}
 	cur       chan *event.Event
@@ -33,7 +34,7 @@ func newFakeManagedRunner() *fakeManagedRunner {
 }
 
 func (f *fakeManagedRunner) Run(
-	_ context.Context, _ string, _ string, _ model.Message, opts ...agent.RunOption,
+	_ context.Context, _ string, _ string, msg model.Message, opts ...agent.RunOption,
 ) (<-chan *event.Event, error) {
 	var ro agent.RunOptions
 	for _, o := range opts {
@@ -42,6 +43,7 @@ func (f *fakeManagedRunner) Run(
 	ch := make(chan *event.Event)
 	f.mu.Lock()
 	f.runIDs = append(f.runIDs, ro.RequestID)
+	f.messages = append(f.messages, msg.Content)
 	f.cur = ch
 	f.mu.Unlock()
 	f.runCalled <- struct{}{}
@@ -90,6 +92,23 @@ func (f *fakeManagedRunner) closeCurrent() {
 	if ch != nil {
 		close(ch)
 	}
+}
+
+// sendCurrent 向当前事件通道发一个事件后关闭（模拟带 terminal error 的收场）。
+func (f *fakeManagedRunner) sendCurrent(evt *event.Event) {
+	f.mu.Lock()
+	ch := f.cur
+	f.mu.Unlock()
+	if ch != nil {
+		ch <- evt
+		close(ch)
+	}
+}
+
+func (f *fakeManagedRunner) sentMessages() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.messages...)
 }
 
 func newDirectSubmitEngine(fake *fakeManagedRunner) *Engine {
@@ -226,6 +245,47 @@ func TestPendingCancelNotLeakedToNextTurn(t *testing.T) {
 	}
 	if got := noticeKind(t, e); got == NoticeCancelled {
 		t.Fatal("取消意图泄漏：下一轮被误取消")
+	}
+}
+
+func TestRetryIsCleanEmptyInvocation(t *testing.T) {
+	fake := newFakeManagedRunner()
+	e := newDirectSubmitEngine(fake)
+
+	if !e.SubmitInput("Q1") {
+		t.Fatal("空闲时必须接受提交")
+	}
+	<-fake.runCalled // 第一次 Run 已发起
+
+	// 压缩退避间隔（重铸已随 SubmitInput 同步完成，改 gap 只影响本轮节奏）
+	e.mu.Lock()
+	e.retry.gap = 5 * time.Millisecond
+	e.mu.Unlock()
+
+	// 第一次 Run 以 terminal error 收场（零 assistant 产出）
+	fake.sendCurrent(&event.Event{Response: &model.Response{
+		Done:  true,
+		Error: &model.ResponseError{Type: "api_error", Message: "boom"},
+	}})
+
+	<-fake.runCalled // 重试的第二次 Run
+	fake.closeCurrent()
+	waitIdle(t, e)
+
+	msgs := fake.sentMessages()
+	if len(msgs) != 2 {
+		t.Fatalf("Run 次数=%d, want 2（首次+重试）: %v", len(msgs), msgs)
+	}
+	if msgs[0] != "Q1" {
+		t.Fatalf("首次 invocation=%q, want 原始输入", msgs[0])
+	}
+	if msgs[1] != "" {
+		t.Fatalf("重试 invocation=%q, want 空消息（干净重试，不喂错误详情）", msgs[1])
+	}
+	// 错误已记录（交还用户可读），错误详情没有变成发给模型的 prompt
+	recs := e.Records()
+	if len(recs) == 0 {
+		t.Fatal("terminal error 应产生错误记录")
 	}
 }
 

@@ -2,7 +2,7 @@ package engine
 
 import "time"
 
-// 错误自动重试预算：策略与状态的自洽单元，供 AgentStart 的 Run 主循环、
+// 错误自动重试预算：策略与状态的自洽单元，供 SubmitInput 的充值点、
 // turn 重试循环与 agentRunOnce 使用。
 
 const (

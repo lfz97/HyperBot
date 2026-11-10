@@ -179,6 +179,8 @@ func (e *Engine) RunStateJSON() string {
 }
 
 // setRunning 标记 agent 是否在运行（指示器/提示条/Esc 行为的依据）。
+// 生产路径的置位/复位走 tryClaimRunning/endTurn（单临界区成对操作），
+// 本方法保留给测试直接模拟忙碌态。
 func (e *Engine) setRunning(running bool) {
 	e.mu.Lock()
 	e.runState.Running = running
@@ -273,7 +275,7 @@ func templateModelFields(m config.Model) map[string]string {
 	}
 }
 
-// bootStateSnapshot 读取启动状态（agentLoop 的横幅 gate 用）。
+// bootStateSnapshot 读取启动状态（Run 的横幅 gate 用）。
 func (e *Engine) bootStateSnapshot() string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -321,31 +323,91 @@ func (e *Engine) setSkillItems(items []SkillItem) {
 
 // ── 消费端 → 引擎 ────────────────────────────────────────
 
-// SubmitInput 提交一行用户输入。引擎忙（无人接收）时返回 false，
-// 消费端（TUI）应保留输入框内容——与旧版 unbuffered chan + default 行为一致。
+// SubmitInput 提交一行用户输入：空闲则同步占坑并异步发起一轮 turn（直通 runner）；
+// 忙碌（turn 进行中，含重试退避）返回 false，消费端（TUI）应保留输入框内容。
+// 占坑必须同步发生在 go turn 之前：engine 侧标志位是唯一的提交门——runner 的
+// 注册表要等 Run 深处 registerRun 才落账（实测注册前窗口 <3ms，见
+// window_measure_test.go），靠查 runner 判忙存在双放行窗口。
+// 斜杠命令不经过这里：语义与注册表在前端（service/tui/handler.go），后端只暴露能力接口。
 func (e *Engine) SubmitInput(line string) bool {
-	select {
-	case e.inputCh <- line:
+	if strings.TrimSpace(line) == "" {
+		//空输入：充值预算即返（前端已兜底，双保险；不占坑不发起 turn）
+		(*e).errBudget.recharge()
 		return true
-	default:
+	}
+	if !e.tryClaimRunning() {
 		return false
 	}
+	//任何用户输入都充值错误预算（挪自原 agentLoop；占坑成功后失败路径只剩 turn 内部）
+	(*e).errBudget.recharge()
+	(*e).appendTyped(RecUser, line)
+	go e.turn(line)
+	return true
 }
 
-// Interrupt 提交一次中断信号（前端 Esc 时调用）。引擎运行循环读取该通道判定中断：
-// 运行期的桥接 goroutine 消费信号并取消当前轮 ctx；非运行期无接收方，返回 false
-// 可安全忽略。无缓冲通道保证信号不会跨回合残留。
+// Interrupt 提交一次中断（前端 Esc 时调用）。两级生效：
+//  1. runner.Cancel(curRequestID)——run 已注册（绝大多数时刻），框架内传播取消；
+//  2. pendingCancel 粘滞位——Esc 落在 runner 注册表空窗（注册前窗口或重试退避
+//     间隙，Cancel 查不到）时由 turn 在下一个 Run 边界消费。
+// 非运行期返回 false 可安全忽略。返回值语义是"信号已接收"，不是"已停止"——
+// 停止判定只认 TUI 帧拉取的 running 状态（Esc 丢失于空窗时指示器继续转，
+// 用户再按一次即命中已注册的 run，无需显式重试逻辑）。
 func (e *Engine) Interrupt() bool {
-	select {
-	case e.interruptCh <- struct{}{}:
-		return true
-	default:
+	e.mu.Lock()
+	if !e.runState.Running {
+		e.mu.Unlock()
 		return false
 	}
+	e.pendingCancel = true
+	id := e.curRequestID
+	e.mu.Unlock()
+
+	if id != "" && (*e).AgentRunner_p != nil && (*(*e).AgentRunner_p).Runner != nil {
+		(*(*e).AgentRunner_p).Runner.Cancel(id) //注册表命中则立即生效；miss 交给 pendingCancel
+	}
+	return true
 }
 
-// InterruptChan 返回中断信号通道（桥接 goroutine 读取）。
-func (e *Engine) InterruptChan() <-chan struct{} { return e.interruptCh }
+// ── turn 生命周期状态机（curRequestID / pendingCancel / running 的唯一入口）──
+
+// tryClaimRunning 原子地"查忙+占坑"：check-then-set 收在同一临界区，
+// SubmitInput 的提交门因此无竞态（调用方仅 TUI 单事件循环，这里仍收敛成
+// 原子操作——防御未来出现第二调用方）。
+func (e *Engine) tryClaimRunning() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.runState.Running {
+		return false
+	}
+	e.runState.Running = true
+	return true
+}
+
+// endTurn 收尾 turn：pendingCancel 与 running 必须同一临界区复位。拆开的活窗口：
+// 先放 running 再清 pending 之间，Interrupt 会重新置位一个永远无人消费的
+// 取消意图，泄漏到下一轮导致下一条输入被立即取消。顺序反过来同理。
+func (e *Engine) endTurn() {
+	e.mu.Lock()
+	e.pendingCancel = false
+	e.runState.Running = false
+	e.mu.Unlock()
+}
+
+// consumePendingCancel 读取并清除取消意图（turn 在每个 Run 边界调用）。
+func (e *Engine) consumePendingCancel() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	pending := e.pendingCancel
+	e.pendingCancel = false
+	return pending
+}
+
+// setCurRequestID 记账当前 Run 的 requestID（turn 逐次尝试时更新）。
+func (e *Engine) setCurRequestID(id string) {
+	e.mu.Lock()
+	e.curRequestID = id
+	e.mu.Unlock()
+}
 
 // ── 会话恢复弹框 ──────────────────────────────────────────
 

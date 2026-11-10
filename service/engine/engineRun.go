@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
+
 	"trpc.group/trpc-go/trpc-agent-go/agent"
 	"trpc.group/trpc-go/trpc-agent-go/model"
 )
@@ -18,34 +20,42 @@ type AgentError struct {
 }
 
 // turn 跑一轮对话：调 runner 流式执行，失败时按错误预算自动重试（纠正 prompt + 退避）；
-// 预算耗尽则交还用户，等下一次输入充值。中断（Esc）不充值。
+// 预算耗尽则交还用户，等下一次输入充值。中断（Esc→Interrupt）不充值：已注册的 run
+// 由 runner.Cancel 立即终止；注册表空窗（注册前窗口/退避间隙）的取消意图由
+// pendingCancel 在下一个 Run 边界生效（见 uistate.go Interrupt）。
+// 占坑（running）由 SubmitInput 同步完成，这里只负责收尾。
 func (e *Engine) turn(prompt string) {
-	// 中断桥接：框架流式只认 ctx，把中断通道信号转成 ctx 取消。
-	// runDone 在回合结束时 close，桥接随之退出——信号不会跨回合残留。
-	Ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	runDone := make(chan struct{})
-	defer close(runDone)
-	go func() {
-		select {
-		case <-(*e).interruptCh:
-			cancel()
-		case <-runDone:
-		}
-	}()
-
-	// defer 复位是 panic 安全：runOnce 跑的是框架代码，panic 时指示器不能永远转下去
-	(*e).setRunning(true)
-	defer (*e).setRunning(false)
+	// defer 复位是 panic 安全：runOnce 跑的是框架代码，panic 时指示器不能永远转下去。
+	// endTurn 单临界区清 pendingCancel+running 的理由见其注释。
+	defer (*e).endTurn()
 
 	for {
-		err := e.agentRunOnce(Ctx, prompt)
-		if err == nil { //正常结束，或被用户取消（"会话已取消"提示已由 runOnce 打过）
+		if (*e).consumePendingCancel() {
+			// Esc 落在空窗的取消意图：在这里兑现（注册前窗口实测 <3ms，
+			// 更常见于退避 sleep 期间——错误预算重试间隙里 runner 侧没有在途 run）。
+			(*e).setNotice(NoticeCancelled, "")
+			return
+		}
+		// 每次尝试是一个独立请求：requestID 逐次重铸并记账（Interrupt 据此 Cancel；
+		// 失败的 run 已注销，同 ID 复用虽无冲突，但逐次重铸让 requestID 与
+		// "一次 Run"严格一一对应，事件流 event.RequestID 可据此归轮）。
+		reqID := uuid.NewString()
+		(*e).setCurRequestID(reqID)
+		err := e.agentRunOnce(context.Background(), prompt, reqID)
+		if err == nil { //正常结束，或被用户取消
+			// 取消的提示兜底：完成事件（RunOutcome）的投递会被已取消的 ctx
+			// 掐断（框架 EmitEventWithTimeout 在 ctx done 后丢事件，实测 WARN
+			// 可见），runOnce 里的 RunOutcome 检测因此不可靠。Interrupt 置位的
+			// pendingCancel 是取消意图的可靠记账，在成功分支消费它：
+			// run 被取消 → 此刻必然残留 true；正常完成 → 无残留不误报。
+			if (*e).consumePendingCancel() {
+				(*e).setNotice(NoticeCancelled, "")
+			}
 			return
 		}
 		n, exhausted := (*e).errBudget.fail()
 		if exhausted {
-			// 放弃自动重试，把控制权交还用户：Run 循环回到等输入，下一次提交
+			// 放弃自动重试，把控制权交还用户：SubmitInput 回到可占坑状态，下一次提交
 			// 用户输入时充值。预算不在这里充值——耗尽只可能由零输出失败触发。
 			(*e).appendTyped("error", fmt.Sprintf("failed %d times in a row, auto-retry stopped. Check network/config and try again.", n))
 			return
@@ -66,7 +76,9 @@ func (e *Engine) turn(prompt string) {
 
 // agentRunOnce 把一个 prompt 交给 runner 执行：流式事件转发给 TUI、
 // 处理取消、收集失败前的部分输出。返回 nil 表示成功或被取消。
-func (e *Engine) agentRunOnce(Ctx context.Context, userPrompt string) *AgentError {
+// reqID 由调用方（turn）铸造：WithRequestID 传入后 runner 把它注入每个
+// 事件的 event.RequestID，并据此支持 Cancel/RunStatus（见 Interrupt）。
+func (e *Engine) agentRunOnce(Ctx context.Context, userPrompt string, reqID string) *AgentError {
 	eventChan, err := (*(*e).AgentRunner_p).Runner.Run(
 		Ctx,
 		(*(*e).Config_p).User.UserID,
@@ -75,6 +87,7 @@ func (e *Engine) agentRunOnce(Ctx context.Context, userPrompt string) *AgentErro
 			Role:    model.RoleUser,
 			Content: userPrompt,
 		},
+		agent.WithRequestID(reqID), //调用方记账：中断/状态查询按此 id 定位本 run
 		agent.WithToolCallArgumentsJSONRepairEnabled(true), //开启工具调用参数的JSON修复功能，解决因模型输出格式不规范导致的工具调用失败问题
 		// 开启 pre-LLM 延迟诊断 span（含 compaction 的 summary/rebuild 两段）：
 		// Langfuse 只收 OTel span，不开则压缩阶段在 trace 里是黑盒。
@@ -109,12 +122,6 @@ func (e *Engine) agentRunOnce(Ctx context.Context, userPrompt string) *AgentErro
 			continue
 
 		}
-		select {
-		case <-Ctx.Done():
-			(*e).setNotice(NoticeCancelled, "")
-			return nil
-		default:
-		}
 		if (*event).Response != nil && len((*(*event).Response).Choices) > 0 {
 
 			(*e).errBudget.recharge() // 收到任何带 Choices 的 Response 事件（含流式部分块）即归零。
@@ -126,6 +133,13 @@ func (e *Engine) agentRunOnce(Ctx context.Context, userPrompt string) *AgentErro
 
 		}
 		if event.IsRunnerCompletion() {
+			// 取消检测挂到框架的完成事件上（原 ctx.Done 分支已随桥接删除）：
+			// RunOutcome 只在 run 被显式取消（Cancel）或超时时非 nil。尽力而为
+			// ——取消后完成事件的投递可能被已取消的 ctx 掐断（框架 WARN 可见），
+			// 可靠兜底见 turn 成功分支的 pendingCancel 消费。
+			if event.RunOutcome != nil {
+				(*e).setNotice(NoticeCancelled, "")
+			}
 			break
 		}
 

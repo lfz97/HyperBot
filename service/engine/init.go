@@ -70,13 +70,24 @@ type Engine struct {
 	startup   []string
 	startupOK bool
 	skills    []SkillItem
-	inputCh   chan string
 
-	interruptCh chan struct{}
+	// ── turn 生命周期记账（e.mu 守护，成对读写在 uistate.go 的 helper）──
+	// curRequestID 是当前 turn 里最近一次 Run 的 requestID：Interrupt 据此调
+	// runner.Cancel 精确终止在途 run。逐次 Run 重铸（见 turn 的重试循环）。
+	curRequestID string
+	// pendingCancel 是"取消意图"粘滞位：Esc 落在 runner 注册表空窗（注册前
+	// <3ms 窗口或重试退避间隙，Cancel 查不到 run）时置位，由 turn 在下一个
+	// Run 边界消费。必须在 endTurn 的同一临界区内与 running 一起复位——
+	// 拆开会让 Interrupt 在两步之间置位的意图泄漏到下一轮（详见 endTurn）。
+	pendingCancel bool
 }
 
 type Agentrunner struct {
-	Runner    runner.Runner
+	// ManagedRunner 而非基础 Runner：engine 的中断链路（Interrupt → Cancel）
+	// 需要 requestID 级控制原语。runner 由 newRunner 自构造（具体类型必然
+	// 实现全部能力接口），无需逗号断言与降级路径（对比 openclaw gateway 的
+	// 外部注入场景）。
+	Runner    runner.ManagedRunner
 	Stream    bool
 	SessionId string
 }
@@ -107,8 +118,14 @@ func (e *Engine) newRunner() error {
 		runner.WithSessionService((*e).SessionService_p),
 		runner.WithMemoryService((*e).SqliteMemoryService),
 	)
+	// 自构造的 runner 必然实现 ManagedRunner；逗号断言失败=框架契约回归，
+	// 走 error 而非 panic（TUI 侧有装配错误的呈现路径）。
+	mr, ok := Runner.(runner.ManagedRunner)
+	if !ok {
+		return errors.New("runner does not implement ManagedRunner (framework contract regression)")
+	}
 	(*e).AgentRunner_p = &Agentrunner{
-		Runner: Runner,
+		Runner: mr,
 		Stream: (*(*e).Config_p).Model.Stream,
 	}
 

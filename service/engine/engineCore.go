@@ -16,12 +16,10 @@ import (
 // GetEngineService 创建引擎实例（轻量：只装配字段，不触盘）。生命周期统一由 Run 驱动。
 func GetEngineService(name string) *Engine {
 	return &Engine{
-		Agentname:   name,
-		inputCh:     make(chan string),
-		interruptCh: make(chan struct{}),
-		notice:      notice{Kind: NoticeNone},
-		errBudget:   newErrorBudget(defaultErrorMaxTimes, defaultErrorSleepGap),
-		bootState:   BootBooting,
+		Agentname: name,
+		notice:    notice{Kind: NoticeNone},
+		errBudget: newErrorBudget(defaultErrorMaxTimes, defaultErrorSleepGap),
+		bootState: BootBooting,
 	}
 }
 
@@ -176,9 +174,11 @@ func normalizeModelForm(vals map[string]string) map[string]string {
 	return out
 }
 
-// Run 启动引擎完整生命周期：先同步完成 Init，再启动主循环 AgentStart（goroutine 由其内部负责）。
-// Init 出错（fatal 状态已置）时直接返回，引擎 goroutine 自然结束——渲染致命屏、
-// 等按键、退出进程由 TUI 完成（进程生命周期归 shell 所有，引擎只报告状态）。
+// Run 启动引擎生命周期：同步完成 Init，随后做一次性启动收尾（会话 ID 与横幅）。
+// 输入不再由常驻循环消费：TUI 每次 SubmitInput 直通 runner 发起 turn
+// （门与记账见 uistate.go，执行见 engineRun.go），Init 出错（fatal 状态已置）
+// 时直接返回，引擎 goroutine 自然结束——渲染致命屏、等按键、退出进程由 TUI
+// 完成（进程生命周期归 shell 所有，引擎只报告状态）。
 func (e *Engine) Run() {
 	if err := e.Init(); err != nil {
 		//幂等兜底：防 Init 的错误路径漏设 fatal（那会让 TUI 停在 booting 黑屏挂死）。
@@ -186,7 +186,14 @@ func (e *Engine) Run() {
 		e.setFatal(FatalError, err.Error(), true)
 		return
 	}
-	e.AgentStart()
+	// 挪自原 agentLoop 启动段：会话 ID 只在此生成一次，输入驱动不再重置。
+	e.newSessionID()
+	// 启动横幅只在此组装一次（bootstrap/newRunner 均已完成）。
+	// 首次启动例外：此时还是模板配置，等 ApplyFirstStartupConfig 提交后
+	// 以真实值组装（本函数此刻可能还没跑到，gate 保证不抢在配置页前面）。
+	if e.bootStateSnapshot() == BootReady {
+		(*e).setStartupInfo((*e).startupInfoLines())
+	}
 }
 
 // absorb 把 bootstrap 检查产物（路径、日志句柄）拷入引擎字段，
@@ -212,33 +219,9 @@ func (e *Engine) parkWithFatal(style string, text string, waitKey bool) {
 	select {}
 }
 
-// AgentStart 启动引擎主循环（goroutine 内读用户输入、分类分发，直到退出），
-// 调用方无需自行起 goroutine。错误预算的状态流转见 errorBudget。
-func (e *Engine) AgentStart() {
-	go e.agentLoop()
-}
-
-// agentLoop 主循环本体：读用户输入、分类分发，直到退出。
-func (e *Engine) agentLoop() {
-	e.newSessionID()
-	// 启动横幅只在此组装一次（bootstrap/newRunner 均已完成）。
-	// 首次启动例外：此时还是模板配置，等 ApplyFirstStartupConfig 提交后
-	// 以真实值组装（本函数此刻可能还没跑到，gate 保证不抢在配置页前面）。
-	if e.bootStateSnapshot() == BootReady {
-		(*e).setStartupInfo((*e).startupInfoLines())
-	}
-	for {
-		line := <-(*e).inputCh
-		(*e).errBudget.recharge() //任何用户输入都充值（空输入也是，无害）
-
-		if strings.TrimSpace(line) == "" { //空输入，重新等待（前端已兜底，双保险）
-			continue
-		}
-		//斜杠命令不经过这里：语义与注册表在前端（service/tui/handler.go），后端只暴露能力接口
-		(*e).appendTyped(RecUser, line)
-		e.turn(line)
-	}
-}
+// agentLoop 已删除：输入消费从"常驻循环读 channel"改为"SubmitInput 直通"。
+// 它的串行化职责由 SubmitInput 的同步占坑（tryClaimRunning）承接，其余遗留
+// 职责各自归位：errBudget 充值与用户记录在 SubmitInput，会话 ID 与横幅在 Run。
 
 // ── 斜杠命令的后端能力接口（前端注册表见 service/tui/handler.go）──────
 

@@ -161,14 +161,14 @@ func TestSubmitInputGateBusyAndIdle(t *testing.T) {
 	}
 }
 
-func TestSubmitInputEmptyNoTurn(t *testing.T) {
+func TestSubmitInputEmptyRejected(t *testing.T) {
 	fake := newFakeManagedRunner()
 	e := newDirectSubmitEngine(fake)
 
-	if !e.SubmitInput("") {
-		t.Fatal("空输入应返回 true（接收但不开轮，旧语义保留）")
+	if e.SubmitInput("") {
+		t.Fatal("空输入必须拒绝（return false）")
 	}
-	if !e.SubmitInput("   ") {
+	if e.SubmitInput("   ") {
 		t.Fatal("纯空白输入同上")
 	}
 	if e.isRunning() {
@@ -176,6 +176,20 @@ func TestSubmitInputEmptyNoTurn(t *testing.T) {
 	}
 	if got := fake.runCount(); got != 0 {
 		t.Fatalf("空输入不得触发 Run，got %d", got)
+	}
+	// 空输入不得动预算：预算充值语义只剩"流式健康证据"一源（轮内），
+	// 意外的空提交不是任何证据——静默充值会让耗尽的预算假装健康。
+	e.mu.Lock()
+	e.retry.streak = 2
+	e.mu.Unlock()
+	if e.SubmitInput("") {
+		t.Fatal("空输入必须拒绝")
+	}
+	e.mu.Lock()
+	streak := e.retry.streak
+	e.mu.Unlock()
+	if streak != 2 {
+		t.Fatalf("空输入不得动预算: streak=%d, want 2", streak)
 	}
 }
 

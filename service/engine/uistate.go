@@ -332,15 +332,16 @@ func (e *Engine) setSkillItems(items []SkillItem) {
 
 // SubmitInput 提交一行用户输入：空闲则同步占坑并异步发起一轮 turn（直通 runner）；
 // 忙碌（turn 进行中，含重试退避）返回 false，消费端（TUI）应保留输入框内容。
+// 空输入同样返回 false（拒绝）：TUI 侧已挡空（handler.go），此处是防御；
+// 不充值预算——错误预算的充值语义只有两源（真实用户输入、流式健康证据），
+// 意外的空提交不是任何证据，静默充值会让耗尽的预算假装健康。
 // 占坑必须同步发生在 go turn 之前：engine 侧标志位是唯一的提交门——runner 的
 // 注册表要等 Run 深处 registerRun 才落账（实测注册前窗口 <3ms，见
 // window_measure_test.go），靠查 runner 判忙存在双放行窗口。
 // 斜杠命令不经过这里：语义与注册表在前端（service/tui/handler.go），后端只暴露能力接口。
 func (e *Engine) SubmitInput(line string) bool {
 	if strings.TrimSpace(line) == "" {
-		//空输入：充值预算即返（前端已兜底，双保险；不占坑不发起 turn）
-		(*e).retryRecharge()
-		return true
+		return false //空输入拒绝：占坑/充值/turn 一概不发生
 	}
 	if !e.tryClaimRunning() {
 		return false
@@ -350,8 +351,8 @@ func (e *Engine) SubmitInput(line string) bool {
 	// 落在"占坑完成→重铸完成"间隙的 Esc 会写在旧控制器上被重铸丢弃。
 	// 与 Interrupt 同在 TUI 事件循环（单 goroutine），此处不存在交错。
 	e.newTurnRetry()
-	//任何用户输入都充值错误预算（挪自原 agentLoop；占坑成功后失败路径只剩 turn 内部）
-	(*e).retryRecharge()
+	// 注：原"用户输入充值预算"随每轮重铸消解——新控制器 streak 本就归零；
+	// 预算充值语义只剩轮内一源（agentRunOnce 的流式健康证据）。
 	(*e).appendTyped(RecUser, line)
 	// requestID 请求粒度，调用方铸造：一次用户请求一个 ID，错误重试沿用
 	// （见 turn 注释），事件流/Langfuse 可整轮归因。同步铸好并记账——

@@ -14,7 +14,7 @@ import (
 )
 
 // failOnceModel 第一次调用返回 terminal error 响应，之后正常回答。
-type failOnceModel struct{ gatedModel }
+type failOnceModel struct{ *gatedModel }
 
 func (m *failOnceModel) GenerateContent(
 	ctx context.Context, req *model.Request,
@@ -56,7 +56,7 @@ func (m *failOnceModel) GenerateContent(
 
 func TestCleanRetrySamePrompt(t *testing.T) {
 	gm := newGatedModel("unused-fail-slot", "A1-RETRY") // 2 个闸：调用#1 失败（failOnceModel 覆写），调用#2 成功
-	fm := &failOnceModel{gatedModel: *gm}
+	fm := &failOnceModel{gatedModel: gm}
 	ag := llmagent.New("retry-agent", llmagent.WithModel(fm))
 	r := runner.NewRunner("retry-app", ag)
 	defer r.Close()

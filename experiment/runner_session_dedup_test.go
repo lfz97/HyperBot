@@ -61,7 +61,7 @@ func (s *dedupeSessionService) AppendEvent(
 
 func TestCleanRetryViaSessionDedup(t *testing.T) {
 	gm := newGatedModel("unused", "A1-CLEAN-RETRY")
-	fm := &failOnceModel{gatedModel: *gm}
+	fm := &failOnceModel{gatedModel: gm}
 	ag := llmagent.New("dedup-agent", llmagent.WithModel(fm))
 
 	svc := &dedupeSessionService{Service: inmemory.NewSessionService()}
@@ -117,7 +117,7 @@ func TestCleanRetryMarkerDesign(t *testing.T) {
 	const retryMarker = "[RETRY]"
 
 	gm := newGatedModel("unused", "A1-MARKER-RETRY")
-	fm := &failOnceModel{gatedModel: *gm}
+	fm := &failOnceModel{gatedModel: gm}
 
 	// 件③：BeforeModel 剥离。注意框架会把连续 user 消息合并为一条（"\n\n" 拼接，
 	// 实测 "Q1\n\n[RETRY]"），所以按分段过滤：user 消息按 \n\n 拆开，丢掉恰为

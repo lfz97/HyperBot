@@ -284,12 +284,8 @@ func templateModelFields(m config.Model) map[string]string {
 	}
 }
 
-// bootStateSnapshot 读取启动状态（Run 的横幅 gate 用）。
-func (e *Engine) bootStateSnapshot() string {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.bootState
-}
+// bootStateSnapshot 已删除：唯一调用方是原 agentLoop/Run 的横幅 gate，
+// 横幅改由 Init 就绪尾段直接组装（先于 BootReady 写入），gate 不复存在。
 
 // ── 静态数据 ─────────────────────────────────────────────
 

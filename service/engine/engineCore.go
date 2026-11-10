@@ -13,7 +13,8 @@ import (
 	"trpc.group/trpc-go/trpc-agent-go/log"
 )
 
-// GetEngineService 创建引擎实例（轻量：只装配字段，不触盘）。生命周期统一由 Run 驱动。
+// GetEngineService 创建引擎实例（轻量：只装配字段，不触盘）。
+// 启动入口是 Init（boot.go 以 goroutine 异步调用）：成功返回即完全就绪。
 func GetEngineService(name string) *Engine {
 	return &Engine{
 		Agentname: name,
@@ -24,13 +25,25 @@ func GetEngineService(name string) *Engine {
 	}
 }
 
-// Init 完成环境检查（bootstrap），把检查产物拷入引擎后由引擎装配运行时资产，
-// 最后构造 runner。检查与装配的分工见 bootstrap.go / assemble.go。
+// Init 完成环境检查（bootstrap）与运行时装配。**成功返回即引擎完全就绪**：
+// 会话 ID、启动横幅、boot 态一步到位，调用方（boot.go）无需 post-Init 收尾，
+// 也无需处理错误返回。检查与装配的分工见 bootstrap.go / assemble.go。
 // 首次启动（Check 创建了默认配置）不再驻留退出：引擎照常装配模板配置，
-// 置 bootState=config，由 TUI 弹配置页收集模型配置后 ApplyFirstStartupConfig 收尾。
-// 出错路径 setFatal 后返回 error（渲染与退出由 TUI 完成），Run 据此跳过
-// AgentStart——错误不 return 掉进主循环会带着 nil Config_p panic。
-func (e *Engine) Init() error {
+// 置 bootState=config，由 TUI 弹配置页收集模型配置后 ApplyFirstStartupConfig
+// 收尾（会话 ID 与横幅由它以真实配置生成——config 态在此不生成，配置页是
+// 模态的、无对话）。
+// 错误路径 setFatal 后返回 error（渲染与退出由 TUI 完成）：各路径的显式
+// setFatal 保留（提前置位更早可见），defer 幂等覆盖写兜底防漏——任何
+// return err 都带 fatal 终态，否则 TUI 停在 booting 黑屏挂死（原 Run 的
+// 兜底职责并入此处）。
+func (e *Engine) Init() (err error) {
+	// 幂等兜底（挪自原 Run）：漏设 fatal 的错误路径会让 TUI 停在 booting
+	// 黑屏挂死。setFatal 是覆盖写，显式路径已设过时无害。
+	defer func() {
+		if err != nil {
+			e.setFatal(FatalError, err.Error(), true)
+		}
+	}()
 	env, err := Check()
 	if err != nil {
 		e.setFatal(FatalError, err.Error(), true)
@@ -64,6 +77,11 @@ func (e *Engine) Init() error {
 		e.setBootState(BootConfigNeeded, templateModelFields(e.Config_p.Model))
 		return nil
 	}
+	// 挪自原 Run 尾段：就绪路径的会话 ID 与启动横幅在此一次完成。
+	// 横幅先于 BootReady 写入——保证"观察到 Ready ⇒ 横幅已就绪"（TUI 的
+	// startupOK gate 依赖此序，否则 ready 态可能空帧一轮）。
+	e.newSessionID()
+	e.setStartupInfo((*e).startupInfoLines())
 	e.setBootState(BootReady, nil)
 	return nil
 }
@@ -175,27 +193,8 @@ func normalizeModelForm(vals map[string]string) map[string]string {
 	return out
 }
 
-// Run 启动引擎生命周期：同步完成 Init，随后做一次性启动收尾（会话 ID 与横幅）。
-// 输入不再由常驻循环消费：TUI 每次 SubmitInput 直通 runner 发起 turn
-// （门与记账见 uistate.go，执行见 engineRun.go），Init 出错（fatal 状态已置）
-// 时直接返回，引擎 goroutine 自然结束——渲染致命屏、等按键、退出进程由 TUI
-// 完成（进程生命周期归 shell 所有，引擎只报告状态）。
-func (e *Engine) Run() {
-	if err := e.Init(); err != nil {
-		//幂等兜底：防 Init 的错误路径漏设 fatal（那会让 TUI 停在 booting 黑屏挂死）。
-		//setFatal 是覆盖写，Init 已设过时无害。
-		e.setFatal(FatalError, err.Error(), true)
-		return
-	}
-	// 挪自原 agentLoop 启动段：会话 ID 只在此生成一次，输入驱动不再重置。
-	e.newSessionID()
-	// 启动横幅只在此组装一次（bootstrap/newRunner 均已完成）。
-	// 首次启动例外：此时还是模板配置，等 ApplyFirstStartupConfig 提交后
-	// 以真实值组装（本函数此刻可能还没跑到，gate 保证不抢在配置页前面）。
-	if e.bootStateSnapshot() == BootReady {
-		(*e).setStartupInfo((*e).startupInfoLines())
-	}
-}
+// Run 已删除：原职责全部并入 Init（就绪尾段 + fatal 幂等兜底，见其注释）。
+// 启动入口收敛为 boot.go 的 go e.Init()——Init 成功返回即完全就绪。
 
 // absorb 把 bootstrap 检查产物（路径、日志句柄）拷入引擎字段，
 // 并上屏启动期收集的非致命提示。运行时对象的装配在 Init 后续步骤完成。
@@ -278,7 +277,8 @@ func (e *Engine) newSessionID() {
 }
 
 // startupInfoLines 拼出启动横幅的信息行（label 补齐到 13 列），宽度截断交给 TUI。
-// 调用时机在 AgentStart 第一轮，此时 bootstrap/newRunner/newSessionID 均已完成。
+// 调用时机在 Init 就绪尾段（newSessionID 之后、BootReady 写入之前），
+// 此时 bootstrap/newRunner/newSessionID 均已完成。
 func (e *Engine) startupInfoLines() []string {
 	cfg := (*e).Config_p.Model
 	cwd := (*e).CWD

@@ -21,7 +21,7 @@ import (
 
 func TestCleanRetryEmptyMessage(t *testing.T) {
 	gm := newGatedModel("unused", "A1-EMPTY-RETRY")
-	fm := &failOnceModel{gatedModel: *gm}
+	fm := &failOnceModel{gatedModel: gm}
 	ag := llmagent.New("empty-agent", llmagent.WithModel(fm))
 	r := runner.NewRunner("empty-app", ag)
 	defer r.Close()
@@ -74,7 +74,7 @@ func TestCleanRetryEmptyMessage(t *testing.T) {
 func TestCleanRetryEmptyViaRewriter(t *testing.T) {
 	const retryMarker = "[RETRY]"
 	gm := newGatedModel("unused", "A1-REWRITER-RETRY")
-	fm := &failOnceModel{gatedModel: *gm}
+	fm := &failOnceModel{gatedModel: gm}
 
 	ag := llmagent.New("rw-agent", llmagent.WithModel(fm))
 	r := runner.NewRunner("rw-app", ag)

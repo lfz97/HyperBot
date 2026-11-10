@@ -26,32 +26,24 @@ func GetEngineService(name string) *Engine {
 }
 
 // Init 完成环境检查（bootstrap）与运行时装配。**成功返回即引擎完全就绪**：
-// 会话 ID、启动横幅、boot 态一步到位，调用方（boot.go）无需 post-Init 收尾，
-// 也无需处理错误返回。检查与装配的分工见 bootstrap.go / assemble.go。
+// 会话 ID、启动横幅、boot 态一步到位，调用方无需 post-Init 收尾。
+// 检查与装配的分工见 bootstrap.go / assemble.go。
 // 首次启动（Check 创建了默认配置）不再驻留退出：引擎照常装配模板配置，
 // 置 bootState=config，由 TUI 弹配置页收集模型配置后 ApplyFirstStartupConfig
 // 收尾（会话 ID 与横幅由它以真实配置生成——config 态在此不生成，配置页是
 // 模态的、无对话）。
-// 错误路径 setFatal 后返回 error（渲染与退出由 TUI 完成）：各路径的显式
-// setFatal 保留（提前置位更早可见），defer 幂等覆盖写兜底防漏——任何
-// return err 都带 fatal 终态，否则 TUI 停在 booting 黑屏挂死（原 Run 的
-// 兜底职责并入此处）。
-func (e *Engine) Init() (err error) {
-	// 幂等兜底（挪自原 Run）：漏设 fatal 的错误路径会让 TUI 停在 booting
-	// 黑屏挂死。setFatal 是覆盖写，显式路径已设过时无害。
-	defer func() {
-		if err != nil {
-			e.setFatal(FatalError, err.Error(), true)
-		}
-	}()
+// 错误处理分两类路径，不混用机制：启动路径由调用方（boot.go）同步处理——
+// 错误直接上抛，main 打印退出（此时 TUI 未启动、终端未进 raw mode，
+// 无需 fatal 态渲染，故此处不再 setFatal）；TUI 运行期的致命路径
+// （refresh 的 parkWithFatal、ApplyFirstStartupConfig 的 flush 失败）
+// 才走 setFatal 由 TUI 渲染终态。
+func (e *Engine) Init() error {
 	env, err := Check()
 	if err != nil {
-		e.setFatal(FatalError, err.Error(), true)
 		return err
 	}
 	e.absorb(env)
 	if err := e.flush(); err != nil {
-		e.setFatal(FatalError, err.Error(), true)
 		return err
 	}
 	if (*e).Config_p.Observability.Enabled {

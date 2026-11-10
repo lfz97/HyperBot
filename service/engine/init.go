@@ -50,8 +50,9 @@ type Engine struct {
 	taskTools   *taskruntask.Tools
 	worker      atomic.Pointer[llmagent.LLMAgent]
 
-	// errBudget：连续错误自动重试预算，状态流转见 errorBudget.go
-	errBudget errorBudget
+	// retry：重试控制器。构造期不注入——每轮 turn 由 SubmitInput 重铸
+	// （跨轮零残留），状态流转见 retry_controller.go
+	retry retryController
 
 	// 启动状态（BootXxx 常量，经 FirstStartupJSON 暴露给 TUI）：
 	// booting → （首次启动）config → ready，或 booting → ready。
@@ -70,20 +71,27 @@ type Engine struct {
 	startup   []string
 	startupOK bool
 	skills    []SkillItem
-	inputCh   chan string
 
-	interruptCh chan struct{}
+	// ── turn 生命周期记账（e.mu 守护，成对读写在 uistate.go 的 helper）──
+	// curRequestID 是当前 turn 的 requestID（请求粒度）：由 SubmitInput 铸造、
+	// 错误重试沿用同一个。Interrupt 据此调 runner.Cancel 精确终止在途 run。
+	// 取消意图与重试观察态在 retry（retry_controller.go），不在此处。
+	curRequestID string
 }
 
 type Agentrunner struct {
-	Runner    runner.Runner
+	// ManagedRunner 而非基础 Runner：engine 的中断链路（Interrupt → Cancel）
+	// 需要 requestID 级控制原语。runner 由 newRunner 自构造（具体类型必然
+	// 实现全部能力接口），无需逗号断言与降级路径（对比 openclaw gateway 的
+	// 外部注入场景）。
+	Runner    runner.ManagedRunner
 	Stream    bool
 	SessionId string
 }
 
 // newRunner 构造 runner（双具名 agent）与 taskrun 后台任务面。返回 error 由
-// 调用方按语境处理：Init（引擎 goroutine）可 parkWithFatal，ApplyFirstStartupConfig
-// （TUI 事件循环 goroutine）只可 setFatal——不能在 TUI goroutine 上驻留。
+// 调用方按语境处理：Init 直接上抛（boot 同步链路），ApplyFirstStartupConfig
+// setFatal 后返回（TUI 渲染终态——不能驻留 TUI 事件循环 goroutine）。
 func (e *Engine) newRunner() error {
 	Runner := runner.NewRunnerWithAgentFactory(
 		(*e).Agentname,
@@ -107,8 +115,14 @@ func (e *Engine) newRunner() error {
 		runner.WithSessionService((*e).SessionService_p),
 		runner.WithMemoryService((*e).SqliteMemoryService),
 	)
+	// 自构造的 runner 必然实现 ManagedRunner；逗号断言失败=框架契约回归，
+	// 走 error 而非 panic（TUI 侧有装配错误的呈现路径）。
+	mr, ok := Runner.(runner.ManagedRunner)
+	if !ok {
+		return errors.New("runner does not implement ManagedRunner (framework contract regression)")
+	}
 	(*e).AgentRunner_p = &Agentrunner{
-		Runner: Runner,
+		Runner: mr,
 		Stream: (*(*e).Config_p).Model.Stream,
 	}
 
@@ -144,10 +158,16 @@ func (e *Engine) refresh() error {
 	return nil
 }
 
+// loadConfig 热重载配置：软失败——加载失败保留上一代配置并告警，不打断本轮。
+// 理由：配置损坏通常是"改了一半/写坏"，按观测后端同款软失败处理（对比启动/
+// 重装配路径的 assembleConfig 硬失败 error 链路，见 Init/ApplyFirstStartupConfig）
+// ——本轮沿用上一代配置继续跑，用户看到告警；修好后下一轮 refresh 自动生效。
+// 零反馈不可接受：静默沿用旧配置会让人以为改动已生效。
 func (e *Engine) loadConfig() {
 	c, err := config.LoadConfig((*e).HyperBotConfigPath)
 	if err != nil {
-		(*e).parkWithFatal(FatalError, fmt.Sprintf("Failed to load config: %v (press any key to exit)", err), true)
+		(*e).setNotice(NoticeWarning, fmt.Sprintf("config reload failed, using previous config: %v", err))
+		return
 	}
 	(*e).Config_p = c
 }
